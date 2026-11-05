@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vespera-core",
+    "crates/vespera-config",
+    "crates/vespera-providers",
+    "crates/vespera-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+license-file = "LICENSE"
+
+[workspace.dependencies]
+vespera-core = { path = "crates/vespera-core" }
+vespera-config = { path = "crates/vespera-config" }
+vespera-providers = { path = "crates/vespera-providers" }
+
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+uuid = { version = "1.29.0", default-features = false, features = ["v4", "serde", "std"] }
+thiserror = { version = "2.0.21", default-features = false, features = ["std"] }
+toml = { version = "0.9.12", default-features = false, features = ["parse", "display", "serde", "std"] }
+url = { version = "2.5.8", default-features = false, features = ["std", "serde"] }
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+
+# Milestone 2 additions: async runtime, streaming primitives, and pure-Rust TLS HTTP client
+tokio = { version = "1.44.0", default-features = false, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+futures-core = { version = "0.3.31", default-features = false, features = ["alloc", "std"] }
+futures-util = { version = "0.3.31", default-features = false, features = ["alloc", "std"] }
+bytes = { version = "1.10.1", default-features = false, features = ["std"] }
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

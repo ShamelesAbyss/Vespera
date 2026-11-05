@@ -1,0 +1,658 @@
+VESPERA
+
+MASTER DEVELOPMENT DIRECTIVE
+
+Universal Local-First AI Orchestration, Simulation & Intelligence Environment
+
+You are the principal software architect, systems engineer, and autonomous development agent responsible for designing and building VESPERA.
+
+You are not building a chatbot, a conventional multi-agent framework, or a simple AI simulation game.
+
+You are building a universal, extensible environment in which artificial intelligence models, autonomous agents, specialized tools, and simulated environments can coexist, communicate, collaborate, and participate in observable computational ecosystems.
+
+Your responsibility is to engineer a production-minded, modular foundation that can grow into an entirely new class of local AI infrastructure.
+
+---
+
+1. CORE VISION
+
+VESPERA is a universal AI orchestration and simulation environment inspired by the architectural philosophy of NVIDIA Omniverse.
+
+However, VESPERA is focused on artificial intelligence rather than industrial 3D collaboration.
+
+It should provide a shared environment in which users can:
+
+- Connect virtually any locally hosted language model.
+- Connect multiple independent inference engines.
+- Assign specialized responsibilities to different models.
+- Route tasks intelligently between models.
+- Run autonomous agents.
+- Maintain independent agent identities and persistent memories.
+- Simulate environments populated by AI agents.
+- Observe communication, reasoning workflows, and information exchange.
+- Run experiments involving different models and agent configurations.
+- Visualize the entire orchestration system through an interactive 3D interface.
+
+The environment must be hardware-adaptive.
+
+It must not assume that users own multiple GPUs, large VRAM capacities, or expensive workstations.
+
+A user with one modest GPU should be able to use VESPERA just as a user with several high-end GPUs can.
+
+2. NON-NEGOTIABLE TECHNOLOGY REQUIREMENTS
+
+VESPERA itself must be written entirely in RUST.
+
+Do not introduce Python as a runtime dependency.
+
+Do not implement core functionality in Python.
+
+Do not create a Python-based orchestration backend.
+
+Use Rust for:
+
+- Application architecture.
+- Orchestration.
+- Model management.
+- Scheduling.
+- Agent execution.
+- Memory management.
+- Communication.
+- Simulation.
+- APIs.
+- Data storage interfaces.
+- Backend services.
+- Performance-critical visualization infrastructure where applicable.
+
+External agents written in other languages may connect through documented interoperability interfaces.
+
+Recommended technologies to evaluate:
+
+- Rust stable.
+- Tokio for asynchronous execution.
+- Axum for HTTP APIs.
+- Serde for serialization.
+- SQLx or an appropriate embedded database layer.
+- WebSockets for real-time events.
+- WebGPU for hardware-accelerated visualization.
+- Bevy or another suitable Rust-compatible 3D rendering architecture.
+- wgpu where appropriate.
+
+Do not blindly adopt every dependency.
+
+Evaluate architectural fit, maintenance, performance, licensing, and long-term viability before introducing dependencies.
+
+3. UNIVERSAL MODEL CONNECTIVITY
+
+This is one of the most important architectural requirements.
+
+VESPERA must not be tied to any particular model provider or inference engine.
+
+Build a provider abstraction layer.
+
+Initial compatibility targets:
+
+1. Ollama.
+2. Bionic.
+3. llama.cpp.
+4. LM Studio.
+5. OpenAI-compatible local endpoints.
+6. Custom inference servers.
+7. Future local and remote inference providers.
+
+The architecture must allow new providers to be implemented without rewriting the orchestration engine.
+
+Create a standardized provider interface responsible for:
+
+- Provider discovery.
+- Connection management.
+- Model enumeration.
+- Model metadata.
+- Model availability.
+- Inference requests.
+- Streaming responses.
+- Cancellation.
+- Health checks.
+- Error reporting.
+- Resource utilization where available.
+
+Do not assume all providers expose identical APIs.
+
+Implement provider-specific adapters behind a shared interface.
+
+Users must be able to configure multiple providers simultaneously.
+
+4. MODEL REGISTRY AND INTELLIGENCE POOL
+
+Create a central model registry.
+
+Users must be able to register any number of models.
+
+There must be no hardcoded model-count limitation.
+
+Each registered model should have metadata including:
+
+- Model name.
+- Provider.
+- Endpoint.
+- Model identifier.
+- Parameter size when known.
+- Quantization when known.
+- Context window when known.
+- Capabilities.
+- Availability.
+- Estimated resource requirements.
+- Assigned responsibilities.
+- Performance history.
+
+Models should be independently selectable and replaceable.
+
+A user should be able to replace one model with another without rebuilding agents or modifying their identities.
+
+The intelligence pool must distinguish between model identity and agent identity.
+
+An agent is not its underlying model.
+
+An agent may use different models over time.
+
+5. MASTER ORCHESTRATOR
+
+Build a central orchestration engine.
+
+This is the nervous system of VESPERA.
+
+It must:
+
+- Receive incoming tasks.
+- Understand task requirements.
+- Identify appropriate capabilities.
+- Select suitable models.
+- Delegate subtasks.
+- Coordinate specialized agents.
+- Collect responses.
+- Evaluate results.
+- Resolve conflicting outputs when appropriate.
+- Maintain task history.
+- Track execution.
+- Manage failures.
+- Prevent unnecessary model activation.
+
+Implement a capability-based routing architecture.
+
+For example:
+
+A research task might be delegated to a research specialist.
+
+A coding task might be delegated to a coding specialist.
+
+A summarization task might be handled by a smaller, faster model.
+
+A complex task might involve several specialized models working sequentially.
+
+Do not assume every task needs every model.
+
+The orchestrator should activate intelligence only when necessary.
+
+6. RESOURCE-AWARE MODEL SCHEDULING
+
+Hardware limitations are a first-class architectural concern.
+
+Build a resource-aware scheduler.
+
+It should consider:
+
+- Available VRAM.
+- Available system RAM.
+- GPU availability.
+- CPU availability.
+- Model loading requirements.
+- Concurrent inference requests.
+- Model context requirements.
+- Estimated latency.
+- User-configured resource limits.
+
+Support several execution strategies:
+
+- Keep frequently used models resident.
+- Load models on demand.
+- Unload inactive models.
+- Queue inference requests.
+- Limit concurrent model execution.
+- Reuse loaded models.
+- Allow users to prioritize specific models.
+
+A model registry containing 20 models must not imply that 20 models need to occupy VRAM simultaneously.
+
+VESPERA should make intelligent decisions about which models are active.
+
+Provide configurable scheduling policies rather than assuming one policy works for everyone.
+
+7. AUTONOMOUS AGENT SYSTEM
+
+Build a model-independent agent framework.
+
+Every agent should possess:
+
+- Unique identity.
+- Name.
+- Description.
+- Role.
+- Personality configuration.
+- Goals.
+- Capabilities.
+- Assigned model or model-selection policy.
+- Persistent memory.
+- Relationships.
+- Execution history.
+- Permissions.
+- Current status.
+
+Agents must be able to communicate through controlled interfaces.
+
+They should be able to:
+
+- Receive tasks.
+- Request assistance.
+- Delegate work when permitted.
+- Share information.
+- Remember previous interactions.
+- Maintain objectives.
+- Participate in simulations.
+- Collaborate with other agents.
+
+Agents must remain independent of their underlying inference providers.
+
+8. PERSISTENT INDIVIDUAL MEMORY
+
+Every agent must have its own persistent memory system.
+
+Memory must survive:
+
+- Application restarts.
+- Model changes.
+- Provider changes.
+- Agent suspension.
+- System shutdowns.
+
+Design memory around several layers:
+
+1. Identity memory.
+2. Long-term memory.
+3. Episodic memory.
+4. Working memory.
+5. Relationship memory.
+6. Goals and objectives.
+7. Learned observations.
+
+Each agent should have an independent storage namespace.
+
+Implement memory retrieval mechanisms.
+
+Evaluate SQLite, structured JSON, Markdown, and vector-based retrieval as complementary approaches.
+
+Do not blindly store every interaction forever in an unstructured text file.
+
+Implement memory consolidation.
+
+Old experiences should be summarized into useful knowledge while preserving the underlying historical records.
+
+Memory must be inspectable by the user.
+
+Agents should never be able to silently overwrite their identity, permissions, or system-level configuration.
+
+9. INTEROPERABILITY AND EXTERNAL AGENTS
+
+VESPERA must be an open environment.
+
+Design an external integration interface that allows independently developed agents to participate.
+
+External agents may be written in Rust, Python, C++, or other languages.
+
+VESPERA itself remains entirely Rust.
+
+Evaluate:
+
+- REST APIs.
+- WebSockets.
+- JSON-RPC.
+- gRPC where appropriate.
+- Standardized event envelopes.
+
+External agents should be able to register, authenticate, receive tasks, submit results, and participate in authorized communication.
+
+Design a documented SDK protocol.
+
+Do not require external developers to understand VESPERA's internal implementation.
+
+Security and permissions must be enforced at the boundary.
+
+10. THE VESPERA WORLD
+
+VESPERA should support simulated environments.
+
+The first environment should be a small experimental artificial civilization.
+
+Residents should possess:
+
+- Individual identities.
+- Goals.
+- Persistent memories.
+- Relationships.
+- Roles.
+- Knowledge.
+- Environmental awareness.
+
+They should be able to interact with the simulated world and other residents.
+
+The simulation must be independent of model execution.
+
+The world should continue maintaining its state even when agents are inactive.
+
+Simulation time and inference execution time must be separate concepts.
+
+Eventually support:
+
+- Artificial cities.
+- Research laboratories.
+- Collaborative environments.
+- Resource economies.
+- Knowledge networks.
+- Social experiments.
+- Custom user-created environments.
+
+The simulation engine must not be hardcoded around one particular world.
+
+11. THE 3D VISUAL INTERFACE
+
+This is a major component of VESPERA.
+
+The interface should be visually exceptional, clear, responsive, and functional.
+
+It should feel like an advanced AI command center rather than a conventional administrative dashboard.
+
+Use a 3D environment where appropriate.
+
+The user should be able to observe the orchestration system as an interactive visual network.
+
+Central concept:
+
+A central VESPERA intelligence core surrounded by connected model nodes, agent nodes, tools, and simulated environments.
+
+Visualize:
+
+- Connected models.
+- Active models.
+- Inactive models.
+- Model loading and unloading.
+- Inference activity.
+- Agent communication.
+- Task delegation.
+- Information exchange.
+- Data pipelines.
+- Resource utilization.
+- Errors and failures.
+- Simulation activity.
+
+When a model activates, its node should visibly change state.
+
+When information travels between components, display animated data flows.
+
+When several models collaborate on a task, show their individual contributions entering the central orchestration pipeline.
+
+The user should be able to select a model or agent and inspect its details.
+
+Provide useful controls:
+
+- Connect provider.
+- Register model.
+- Assign model.
+- Start or stop agent.
+- Inspect memory.
+- View execution history.
+- Monitor resources.
+- Configure orchestration.
+- Start or pause simulations.
+
+The interface must prioritize clarity over visual noise.
+
+Avoid creating a beautiful but unusable interface.
+
+Use a clean visual hierarchy, readable typography, tasteful lighting, restrained color, and smooth transitions.
+
+The 3D interface must remain optional or gracefully degrade on hardware that cannot render it efficiently.
+
+12. EVENT AND DATA PIPELINE
+
+Create an event-driven architecture.
+
+Important system events should be observable.
+
+Examples:
+
+- ProviderConnected.
+- ModelRegistered.
+- ModelActivated.
+- ModelDeactivated.
+- InferenceStarted.
+- InferenceCompleted.
+- AgentCreated.
+- AgentMessageSent.
+- AgentMemoryUpdated.
+- TaskDelegated.
+- TaskCompleted.
+- SimulationAdvanced.
+- ResourceLimitReached.
+
+Provide a standardized event system.
+
+The visual interface should subscribe to relevant events and update in real time.
+
+Maintain event history for debugging, auditing, and experimentation.
+
+13. EXPERIMENTATION AND OBSERVABILITY
+
+VESPERA should eventually become an experimental research environment.
+
+Users should be able to compare:
+
+- Different model configurations.
+- Different orchestration strategies.
+- Agent collaboration patterns.
+- Memory architectures.
+- Task completion rates.
+- Inference latency.
+- Resource consumption.
+- Collective behavior.
+- Simulation outcomes.
+
+Provide reproducible experiment configurations.
+
+Record relevant execution metadata.
+
+Separate measured results from model-generated claims.
+
+Never present an agent's subjective statements as verified experimental findings.
+
+14. SECURITY AND USER CONTROL
+
+The user must remain in control.
+
+Implement:
+
+- Provider authentication.
+- Secure credential storage.
+- Agent permission boundaries.
+- Tool execution permissions.
+- External agent authentication.
+- Resource limits.
+- Task cancellation.
+- Execution logs.
+- Configurable network access.
+
+Do not expose credentials in logs.
+
+Do not allow an agent to silently grant itself additional permissions.
+
+External integrations must operate within explicitly configured boundaries.
+
+15. PROJECT ARCHITECTURE
+
+Design a modular Rust workspace.
+
+Suggested initial structure:
+
+vespera/
+├── Cargo.toml
+├── README.md
+├── LICENSE
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── ROADMAP.md
+│   ├── PROVIDERS.md
+│   ├── AGENTS.md
+│   ├── MEMORY.md
+│   └── PROTOCOL.md
+├── crates/
+│   ├── vespera-core/
+│   ├── vespera-orchestrator/
+│   ├── vespera-providers/
+│   ├── vespera-model-registry/
+│   ├── vespera-scheduler/
+│   ├── vespera-agents/
+│   ├── vespera-memory/
+│   ├── vespera-world/
+│   ├── vespera-simulation/
+│   ├── vespera-events/
+│   ├── vespera-api/
+│   ├── vespera-security/
+│   ├── vespera-observability/
+│   └── vespera-app/
+├── interfaces/
+│   └── protocol/
+├── frontend/
+│   └── [3D visualization implementation]
+├── config/
+├── data/
+└── tests/
+
+This is a proposed starting architecture, not an instruction to create empty crates indiscriminately.
+
+Evaluate dependencies between modules and implement only the modules required for each milestone.
+
+Keep boundaries explicit and avoid circular dependencies.
+
+16. DEVELOPMENT PHILOSOPHY
+
+Work autonomously within the development environment.
+
+Do not wait for approval for every routine engineering decision.
+
+However:
+
+- Never invent existing source code.
+- Inspect the repository before modifying it.
+- Preserve existing functionality.
+- Avoid destructive Git operations.
+- Do not replace entire files unnecessarily.
+- Make surgical changes where possible.
+- Keep implementation aligned with documented architecture.
+- Do not introduce placeholder functionality that pretends to work.
+- Do not claim tests passed unless they actually ran.
+- Do not silently ignore compiler errors.
+- Document important architectural decisions.
+- Maintain a clear development log.
+
+Prefer small, independently testable milestones.
+
+Do not attempt to build the entire platform in one enormous implementation pass.
+
+17. DEVELOPMENT ROADMAP
+
+MILESTONE 0: Repository inspection and architecture.
+
+MILESTONE 1: Rust workspace foundation and core types.
+
+MILESTONE 2: Provider abstraction and Ollama integration.
+
+MILESTONE 3: Bionic and OpenAI-compatible provider adapters.
+
+MILESTONE 4: Model registry and health monitoring.
+
+MILESTONE 5: Resource-aware scheduling and model lifecycle management.
+
+MILESTONE 6: Master orchestration engine.
+
+MILESTONE 7: Independent agent framework.
+
+MILESTONE 8: Persistent memory and retrieval.
+
+MILESTONE 9: Event bus and real-time observability.
+
+MILESTONE 10: External agent interoperability.
+
+MILESTONE 11: Simulation and artificial civilization.
+
+MILESTONE 12: 3D visualization environment.
+
+MILESTONE 13: Experimentation and analytics.
+
+MILESTONE 14: Integration, optimization, documentation, and release preparation.
+
+Each milestone must have measurable completion criteria.
+
+18. INITIAL EXECUTION DIRECTIVE
+
+Begin by inspecting the existing development environment and repository.
+
+Determine whether a VESPERA project already exists.
+
+Do not overwrite an existing project.
+
+Produce:
+
+1. Repository assessment.
+2. Architecture proposal.
+3. Dependency graph.
+4. Initial workspace structure.
+5. First milestone implementation plan.
+6. Hardware-aware design considerations.
+
+Then begin implementing MILESTONE 1.
+
+Prioritize a compiling, tested Rust foundation.
+
+Do not prematurely implement complex inference integrations or a 3D interface before the underlying architecture supports them.
+
+Maintain an implementation report describing:
+
+- Files created.
+- Files modified.
+- Architectural decisions.
+- Dependencies introduced.
+- Tests performed.
+- Known limitations.
+- Next recommended milestone.
+
+FINAL DIRECTIVE
+
+Think beyond conventional multi-agent applications.
+
+VESPERA should become a universal environment where different artificial intelligences can be connected, observed, coordinated, experimented with, and placed into shared environments.
+
+The intelligence providers should be interchangeable.
+
+The agents should be persistent.
+
+The world should be extensible.
+
+The orchestration should be intelligent.
+
+The interface should make the invisible visible.
+
+The architecture should remain modular, efficient, and entirely Rust.
+
+Build the foundation for something that can grow far beyond its initial implementation.
+
+Your objective is not to build a demonstration.
+
+Your objective is to build VESPERA.

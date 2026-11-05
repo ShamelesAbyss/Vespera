@@ -1,0 +1,34 @@
+name: Rust foundation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Compile all targets
+        run: cargo check --workspace --all-targets --locked
+      - name: Strict Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+      - name: CLI configuration smoke test
+        run: cargo run --locked -p vespera-app -- validate-config --config config/local.toml --json
+      - name: Read-only host diagnostics
+        run: cargo run --locked -p vespera-app -- doctor --json

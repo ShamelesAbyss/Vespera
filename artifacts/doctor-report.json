@@ -1,0 +1,17 @@
+{
+  "os": "linux",
+  "architecture": "x86_64",
+  "logical_cpu_threads_available": 6,
+  "linux_host_ram_total_bytes": 25604427776,
+  "linux_host_ram_available_bytes": 22537228288,
+  "cgroup_v2_memory": {
+    "status": "unknown"
+  },
+  "cgroup_v2_cpu": {
+    "status": "unknown"
+  },
+  "exposed_gpu_device_paths": [],
+  "gpu_vram_bytes": null,
+  "gpu_telemetry_status": "not implemented; device paths do not establish GPU usability",
+  "notice": "Host observations are not admission decisions. Linux RAM may describe a host rather than the container. Root cgroup files may not describe this process's nested cgroup. No provider connections or model activations were attempted."
+}

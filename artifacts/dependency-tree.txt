@@ -1,0 +1,12 @@
+vespera-app v0.1.0 (/home/ubuntu/vespera/crates/vespera-app)
+[2m├──[0m clap v4.6.7
+[2m├──[0m serde v1.0.229
+[2m├──[0m serde_json v1.0.154
+[2m├──[0m thiserror v2.0.21
+[2m├──[0m vespera-config v0.1.0 (/home/ubuntu/vespera/crates/vespera-config)
+[2m└──[0m vespera-core v0.1.0 (/home/ubuntu/vespera/crates/vespera-core)
+[2m [0m   [96m[1m[dev-dependencies][39m[22m
+
+vespera-config v0.1.0 (/home/ubuntu/vespera/crates/vespera-config) [33m[2m(*)[39m[22m
+
+vespera-core v0.1.0 (/home/ubuntu/vespera/crates/vespera-core) [33m[2m(*)[39m[22m

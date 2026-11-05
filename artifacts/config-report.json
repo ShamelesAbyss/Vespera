@@ -1,0 +1,15 @@
+{
+  "valid": true,
+  "schema_version": 1,
+  "providers_declared": 1,
+  "models_registered": 1,
+  "agents_declared": 1,
+  "allow_remote": false,
+  "resource_budget": {
+    "ram_bytes": 4294967296,
+    "vram_bytes": 0,
+    "max_concurrent_inferences": 1,
+    "max_context_tokens": 4096
+  },
+  "notice": "Configuration is internally valid. Provider availability, model fit, inference, and persistent memory have not been tested or started."
+}

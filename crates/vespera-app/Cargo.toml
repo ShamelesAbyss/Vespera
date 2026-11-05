@@ -1,0 +1,23 @@
+[package]
+name = "vespera-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+description = "Native command-line entry point for the VESPERA foundation"
+
+[[bin]]
+name = "vespera"
+path = "src/main.rs"
+
+[dependencies]
+vespera-core.workspace = true
+vespera-config.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
