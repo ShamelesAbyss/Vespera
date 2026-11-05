@@ -1216,6 +1216,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vespera-model-registry"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "vespera-core",
+ "vespera-providers",
+]
+
+[[package]]
 name = "vespera-providers"
 version = "0.1.0"
 dependencies = [

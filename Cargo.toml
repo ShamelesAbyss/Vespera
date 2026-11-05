@@ -1,10 +1,11 @@
-[workspace]
+﻿[workspace]
 resolver = "2"
 members = [
     "crates/vespera-core",
     "crates/vespera-config",
     "crates/vespera-providers",
-    "crates/vespera-app",
+    "crates/vespera-model-registry",
+    "crates/vespera-app"
 ]
 
 [workspace.package]
@@ -38,3 +39,6 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+
+

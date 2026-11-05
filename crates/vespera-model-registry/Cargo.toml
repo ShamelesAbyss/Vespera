@@ -1,0 +1,21 @@
+﻿[package]
+name = "vespera-model-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Central model registry, metadata catalog, and health monitor for VESPERA"
+
+[dependencies]
+vespera-core.workspace = true
+vespera-providers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
