@@ -24,6 +24,12 @@ use vespera_providers::{
 /// Error taxonomy for resource-aware scheduling operations.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
+    /// Admission requires explicit RAM and VRAM estimates, including explicit CPU-only zero VRAM.
+    #[error("model {model_id} has unknown resource estimates")]
+    UnknownResources {
+        /// Model whose estimates are incomplete.
+        model_id: ModelId,
+    },
     /// Registry lookup error for model or provider.
     #[error("registry error during scheduling: {0}")]
     Registry(#[from] RegistryError),
@@ -208,8 +214,12 @@ impl ResourceScheduler {
                 }
                 loaded_on_demand = false;
             } else {
-                let model_ram = model_reg.estimated_resources.ram_bytes.unwrap_or(0);
-                let model_vram = model_reg.estimated_resources.vram_bytes.unwrap_or(0);
+                let (Some(model_ram), Some(model_vram)) = (
+                    model_reg.estimated_resources.ram_bytes,
+                    model_reg.estimated_resources.vram_bytes,
+                ) else {
+                    return Err(SchedulerError::UnknownResources { model_id });
+                };
                 let request = ResourceRequest {
                     ram_bytes: model_ram,
                     vram_bytes: model_vram,
