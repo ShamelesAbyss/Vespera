@@ -1183,6 +1183,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vespera-agents"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "tokio",
+ "vespera-core",
+ "vespera-model-registry",
+ "vespera-providers",
+ "vespera-scheduler",
+]
+
+[[package]]
 name = "vespera-app"
 version = "0.1.0"
 dependencies = [

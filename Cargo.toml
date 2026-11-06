@@ -6,6 +6,7 @@ members = [
     "crates/vespera-providers",
     "crates/vespera-model-registry",
     "crates/vespera-scheduler",
+    "crates/vespera-agents",
     "crates/vespera-app"
 ]
 
@@ -40,6 +41,7 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
 
 
 
