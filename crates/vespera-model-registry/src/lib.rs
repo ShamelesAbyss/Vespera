@@ -1,4 +1,4 @@
-//! Central model registry and health monitoring engine for VESPERA.
+﻿//! Central model registry and health monitoring engine for VESPERA.
 //!
 //! Implements Milestone 4:
 //! - Thread-safe central registry for any number of models.
@@ -100,6 +100,18 @@ impl ModelRegistry {
     pub async fn register_provider(&self, provider: Arc<dyn InferenceProvider>) {
         let mut providers = self.providers.write().await;
         providers.insert(provider.provider_id(), provider);
+    }
+
+    /// Looks up a registered inference provider by its ID.
+    pub async fn get_provider(
+        &self,
+        provider_id: ProviderId,
+    ) -> Result<Arc<dyn InferenceProvider>, RegistryError> {
+        let providers = self.providers.read().await;
+        providers
+            .get(&provider_id)
+            .cloned()
+            .ok_or(RegistryError::ProviderNotRegistered { provider_id })
     }
 
     /// Registers a model into the intelligence pool.
