@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Native World Simulation Mode
 
+Verified implementation checkpoint `33497ce968c335329b8c6616e7e6cf920ba6faa5` was pushed to `main`.
+
 The deterministic engine checkpoint `7298a07726e2175639d6f4a674b06c81d6932fb8` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42342843092). Added `vespera-view --world` with committed resident, site and depot meshes, encounter links, a contextual inspector and shared camera controls. A background observer refreshes SQLite state. The window is read-only by default. Explicit opt-in enables revision-fenced movement, activity, step and playback controls. The graphical dependency stays optional.
 
 Windows validation passed 216 offline workspace tests, the SDK doctest, strict Clippy and rustdoc, the graphics build and the graphics control test. Desktop checks verified persistence after reopening, resident picking, movement, activation, playback and pause. Read-only input left the revision unchanged, and a separate CLI commit appeared in the running window. The scene labels world state as simulated.
