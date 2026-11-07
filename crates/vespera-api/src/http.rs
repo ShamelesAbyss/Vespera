@@ -1,6 +1,7 @@
 //! Bounded HTTP/1 service for an explicitly approved set of local workers.
 
 mod auth;
+mod subscription;
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -13,7 +14,7 @@ use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderMap};
+use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -22,7 +23,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify, Semaphore, mpsc};
 use tokio::task::JoinSet;
 use vespera_core::{AgentId, BrokerEventCursor, Capability, Task, TaskId, TaskState};
 
@@ -113,8 +114,6 @@ impl Service {
     }
 
     fn apply(&mut self, principal: Principal, bytes: &[u8]) -> Result<Reply, HttpError> {
-        const STORAGE_UNAVAILABLE: HttpError =
-            HttpError(StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable");
         if self.storage_failed {
             return Err(STORAGE_UNAVAILABLE);
         }
@@ -129,15 +128,18 @@ impl Service {
             }
             Principal::Worker(worker) => work(&mut self.broker, worker, decode(bytes)?),
         };
+        self.persist(revoked.filter(|_| result.is_ok()))?;
+        result
+    }
+
+    fn persist(&mut self, revoked: Option<AgentId>) -> Result<(), HttpError> {
         if let Some(store) = &mut self.store
-            && store
-                .flush(&mut self.broker, revoked.filter(|_| result.is_ok()), false)
-                .is_err()
+            && store.flush(&mut self.broker, revoked, false).is_err()
         {
             self.storage_failed = true;
             return Err(STORAGE_UNAVAILABLE);
         }
-        result
+        Ok(())
     }
 }
 
@@ -189,23 +191,31 @@ impl Server {
     /// Serve until the listener fails or the caller drops this future.
     pub async fn serve(self) -> Result<(), ServerError> {
         let mut connections = JoinSet::new();
+        let live_slots = Arc::new(Semaphore::new(8));
+        let changed = Arc::new(Notify::new());
         loop {
             tokio::select! {
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 accepted = self.listener.accept(), if connections.len() < MAX_CONNECTIONS => {
                     let (stream, _) = accepted?;
                     let state = Arc::clone(&self.service);
+                    let slots = Arc::clone(&live_slots);
+                    let changed = Arc::clone(&changed);
                     connections.spawn(async move {
+                        let (upgrade_tx, mut upgrade_rx) = mpsc::channel(1);
                         let mut builder = http1::Builder::new();
                         builder
                             .timer(TokioTimer::new())
                             .header_read_timeout(Duration::from_secs(5))
-                            .max_buf_size(16 * 1024)
-                            .keep_alive(false);
+                            .max_buf_size(16 * 1024);
                         let connection = builder.serve_connection(TokioIo::new(stream), service_fn(
-                            move |request| dispatch(Arc::clone(&state), request),
-                        ));
-                        let _ = tokio::time::timeout(Duration::from_secs(15), connection).await;
+                            |request| dispatch(&state, request, &slots, &changed, &upgrade_tx),
+                        )).with_upgrades();
+                        if matches!(tokio::time::timeout(Duration::from_secs(15), connection).await, Ok(Ok(())))
+                            && let Ok(subscription) = upgrade_rx.try_recv()
+                        {
+                            subscription.run(&state, &changed).await;
+                        }
                     });
                 }
             }
@@ -257,15 +267,32 @@ enum WorkerRequest {
 }
 
 async fn dispatch(
-    state: Arc<Mutex<Service>>,
+    state: &Mutex<Service>,
     request: Request<Incoming>,
+    slots: &Arc<Semaphore>,
+    changed: &Notify,
+    upgrade: &mpsc::Sender<subscription::Subscription>,
 ) -> Result<Reply, Infallible> {
-    Ok(handle(&state, request)
-        .await
-        .unwrap_or_else(HttpError::reply))
+    let result = match request.uri().path() {
+        "/v2/operator/events" | "/v2/worker/events" => {
+            subscription::open(state, request, slots, upgrade).await
+        }
+        _ => handle(state, request, changed).await,
+    };
+    let mut reply = result.unwrap_or_else(HttpError::reply);
+    if reply.status() != StatusCode::SWITCHING_PROTOCOLS {
+        reply
+            .headers_mut()
+            .insert(CONNECTION, HeaderValue::from_static("close"));
+    }
+    Ok(reply)
 }
 
-async fn handle(state: &Mutex<Service>, request: Request<Incoming>) -> Result<Reply, HttpError> {
+async fn handle(
+    state: &Mutex<Service>,
+    request: Request<Incoming>,
+    changed: &Notify,
+) -> Result<Reply, HttpError> {
     let (parts, body) = request.into_parts();
     let path = parts.uri.path();
     let expected_method = match path {
@@ -297,7 +324,9 @@ async fn handle(state: &Mutex<Service>, request: Request<Incoming>) -> Result<Re
     let bytes = read_body(&parts.headers, body).await?;
     let mut service = state.lock().await;
     service.auth.verify(proof, path, &bytes)?;
-    service.apply(principal, &bytes)
+    let result = service.apply(principal, &bytes);
+    changed.notify_waiters();
+    result
 }
 
 async fn read_body(headers: &HeaderMap, body: Incoming) -> Result<Bytes, HttpError> {
@@ -406,6 +435,8 @@ fn work(
 struct HttpError(StatusCode, &'static str);
 
 const UNAUTHORIZED: HttpError = HttpError(StatusCode::UNAUTHORIZED, "unauthorized");
+const STORAGE_UNAVAILABLE: HttpError =
+    HttpError(StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable");
 
 impl HttpError {
     fn reply(self) -> Reply {

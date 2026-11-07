@@ -16,14 +16,14 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) struct Transport {
     client: Client,
-    base: String,
-    path: &'static str,
+    pub(super) address: SocketAddr,
+    pub(super) path: &'static str,
     principal: String,
     key: hmac::Key,
 }
 
 #[derive(Deserialize)]
-struct Session {
+pub(super) struct Session {
     session_id: Uuid,
     elapsed_ms: u64,
 }
@@ -48,7 +48,7 @@ impl Transport {
             .map_err(|_| ClientError::ClientInitialization)?;
         Ok(Self {
             client,
-            base: format!("http://{}", SocketAddr::new(address.ip(), address.port())),
+            address: SocketAddr::new(address.ip(), address.port()),
             path,
             principal,
             key: hmac::Key::new(hmac::HMAC_SHA256, &key.0),
@@ -60,19 +60,9 @@ impl Transport {
         if body.len() > MAX_BODY {
             return Err(ClientError::RequestTooLarge);
         }
-        let response = self
-            .client
-            .get(format!("{}/v2/session", self.base))
-            .send()
-            .await
-            .map_err(transport_error)?;
-        let session: Session = Reply(response).json(StatusCode::OK).await?;
-        if session.session_id.is_nil() {
-            return Err(ClientError::UnexpectedResponse { status: 200 });
-        }
-        let authorization = self.proof(session, &body)?;
+        let authorization = self.proof(self.session().await?, "POST", self.path, &body)?;
         self.client
-            .post(format!("{}{}", self.base, self.path))
+            .post(format!("http://{}{}", self.address, self.path))
             .header(AUTHORIZATION, authorization)
             .header(CONTENT_TYPE, "application/json")
             .body(body)
@@ -82,7 +72,27 @@ impl Transport {
             .map_err(transport_error)
     }
 
-    fn proof(&self, session: Session, body: &[u8]) -> Result<HeaderValue, ClientError> {
+    pub(super) async fn session(&self) -> Result<Session, ClientError> {
+        let response = self
+            .client
+            .get(format!("http://{}/v2/session", self.address))
+            .send()
+            .await
+            .map_err(transport_error)?;
+        let session: Session = Reply(response).json(StatusCode::OK).await?;
+        if session.session_id.is_nil() {
+            return Err(ClientError::UnexpectedResponse { status: 200 });
+        }
+        Ok(session)
+    }
+
+    pub(super) fn proof(
+        &self,
+        session: Session,
+        method: &str,
+        target: &str,
+        body: &[u8],
+    ) -> Result<HeaderValue, ClientError> {
         use std::fmt::Write;
 
         let Session {
@@ -92,8 +102,8 @@ impl Transport {
         let nonce = Uuid::new_v4();
         let mut context = hmac::Context::with_key(&self.key);
         let prefix = format!(
-            "{SCHEME}\nPOST\n{}\n{}\n{session_id}\n{elapsed_ms}\n{nonce}\n",
-            self.path, self.principal
+            "{SCHEME}\n{method}\n{target}\n{}\n{session_id}\n{elapsed_ms}\n{nonce}\n",
+            self.principal
         );
         context.update(prefix.as_bytes());
         context.update(body);
@@ -109,6 +119,16 @@ impl Transport {
         header.set_sensitive(true);
         Ok(header)
     }
+}
+
+pub(super) fn error_code(bytes: &[u8]) -> Option<ErrorCode> {
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        error: ErrorCode,
+    }
+    serde_json::from_slice::<ErrorBody>(bytes)
+        .ok()
+        .map(|body| body.error)
 }
 
 pub(super) struct Reply(Response);
@@ -153,13 +173,7 @@ impl Reply {
             });
         }
         let code = if self.is_json() {
-            #[derive(Deserialize)]
-            struct ErrorBody {
-                error: ErrorCode,
-            }
-            serde_json::from_slice::<ErrorBody>(&self.bytes().await?)
-                .ok()
-                .map(|body| body.error)
+            error_code(&self.bytes().await?)
         } else {
             None
         };

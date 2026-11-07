@@ -294,6 +294,7 @@ Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 ```
 
 See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
+For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
 ### Durable broker mode
 

@@ -19,6 +19,7 @@
 //! }
 //! ```
 
+mod subscription;
 mod transport;
 
 use std::collections::BTreeSet;
@@ -28,9 +29,11 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use subscription::EventSubscription;
 pub use vespera_core::{
-    AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, Capability, EventEnvelope,
-    EventKind, ExternalAttempt, ExternalTaskChange, Task, TaskId, TaskState,
+    AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, BrokerStreamEnd,
+    BrokerStreamFrame, Capability, EventEnvelope, EventKind, ExternalAttempt, ExternalTaskChange,
+    Task, TaskId, TaskState,
 };
 
 use transport::Transport;
@@ -75,6 +78,8 @@ pub enum ClientError {
     Timeout,
     #[error("worker HTTP exchange failed")]
     Transport,
+    #[error("worker service sent an unexpected WebSocket frame")]
+    InvalidEventFrame,
     #[error("worker HTTP response exceeds the body limit")]
     ResponseTooLarge,
     #[error("worker service sent an unexpected response (HTTP {status})")]
@@ -111,6 +116,9 @@ pub enum ErrorCode {
     NonceCapacity,
     Capacity,
     StorageUnavailable,
+    InvalidUpgrade,
+    InvalidCursor,
+    SubscriptionCapacity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +215,13 @@ struct Renewal {
 pub struct OperatorClient(Transport);
 
 impl OperatorClient {
+    /// Subscribe to live broker events with the operator's cursor.
+    pub async fn subscribe(
+        &self,
+        after: Option<BrokerEventCursor>,
+    ) -> Result<EventSubscription, ClientError> {
+        EventSubscription::connect(&self.0, after).await
+    }
     /// Read a page of observed broker events, including all workers.
     pub async fn replay(
         &self,
@@ -262,6 +277,13 @@ impl OperatorClient {
 pub struct WorkerClient(Transport);
 
 impl WorkerClient {
+    /// Subscribe to live events for this worker's assigned attempts.
+    pub async fn subscribe(
+        &self,
+        after: Option<BrokerEventCursor>,
+    ) -> Result<EventSubscription, ClientError> {
+        EventSubscription::connect(&self.0, after).await
+    }
     /// Read a page of events about attempts assigned to this worker.
     pub async fn replay(
         &self,

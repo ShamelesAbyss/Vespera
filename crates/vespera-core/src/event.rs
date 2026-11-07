@@ -51,6 +51,31 @@ pub struct BrokerEventPage {
     pub has_more: bool,
 }
 
+/// Messages delivered as text frames by a broker event subscription.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BrokerStreamFrame {
+    Ready {
+        after: BrokerEventCursor,
+        discarded_through: u64,
+    },
+    Event {
+        entry: BrokerEventEntry,
+    },
+    End {
+        reason: BrokerStreamEnd,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerStreamEnd {
+    Lifetime,
+    Unauthorized,
+    CursorExpired,
+    StorageUnavailable,
+}
+
 /// Typed event payloads, not proof that the described activity has occurred.
 ///
 /// The `kind` discriminator uses snake_case. Payloads contain domain IDs rather

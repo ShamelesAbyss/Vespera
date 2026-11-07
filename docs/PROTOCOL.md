@@ -59,7 +59,7 @@ Application errors carry `{"error":"code"}`.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Durable mode also records it in the database. In memory-only mode, remove a revoked worker from the access file before restarting. Protected remote transport and live push delivery remain open.
+Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP and WebSockets, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Durable mode also records it in the database. In memory-only mode, remove a revoked worker from the access file before restarting. Protected remote transport remains open.
 
 ### Broker event replay
 
@@ -67,7 +67,23 @@ Replay reads a bounded page over the same signed operator or worker endpoint. A 
 
 Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. A cursor from a different feed yields 409. A cursor older than retained history yields 410. A cursorless replay reports how far retention has advanced in `discarded_through`.
 
-In memory-only mode, feeds reset when the process restarts. With `--broker-db`, retained events and cursors survive a restart with the same database and principal. Revocation removes the worker's feed and signing authority. Starting with a policy that omits a worker retires that worker's feed. Reintroducing the worker later starts a new stream. Replay uses HTTP polling. Live streaming remains roadmap work.
+In memory-only mode, feeds reset when the process restarts. With `--broker-db`, retained events and cursors survive a restart with the same database and principal. Revocation removes the worker's feed and signing authority. Starting with a policy that omits a worker retires that worker's feed. Reintroducing the worker later starts a new stream.
+
+### Live WebSocket subscriptions
+
+Upgrade an HTTP/1.1 `GET /v2/operator/events` or `GET /v2/worker/events` to WebSocket version 13 with the usual WebSocket handshake headers. To resume, append `?after=<stream_id>:<sequence>` with the canonical lowercase hyphenated UUID and decimal sequence. Leave the request body empty. Use the same HMAC authorization header and nonce rules as HTTP actions. In the signature prefix use `GET` instead of `POST` and sign the full path and query exactly as sent. No WebSocket subprotocol or application request frames are required.
+
+Before switching protocols, the server validates the proof, role, cursor and subscription quota. The route returns `400 invalid_upgrade` for a malformed handshake, `400 invalid_cursor` for a malformed query, `401 unauthorized` for a failed proof, `409 foreign_cursor` or `410 cursor_expired` for an invalid resume and `503 subscription_capacity` if all live slots are in use.
+
+| Text frame `type` | Additional fields | Meaning |
+| --- | --- | --- |
+| `ready` | `after`, `discarded_through` | Confirm the start position and the retention boundary |
+| `event` | `entry` | One ordered event envelope and cursor, with the same shape as a replay entry |
+| `end` | `reason` | The service is closing the stream |
+
+End reasons are `lifetime`, `unauthorized`, `cursor_expired` and `storage_unavailable`. Revocation stops further reads from that worker's feed. A frame authorized before revocation can already be in flight. Control frames are supported, and incoming application data closes the stream. The service limits incoming messages and frames to 4 KiB. It allows eight subscriptions within the overall 32-connection limit, stops subscriptions after 60 seconds and bounds each write to two seconds. A slow consumer or a broken connection can be disconnected before an end frame arrives.
+
+Keep the cursor only after processing its event. Reconnect with that cursor and a new proof, or use HTTP replay to catch up. A resumed client can see events it already processed if its saved cursor lagged. Deduplicate by event ID if needed. After a retention gap, obtain a fresh view of known tasks before continuing from retained history.
 
 ### Durable broker recovery
 
@@ -89,18 +105,20 @@ Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shar
 
 | Client | Methods |
 | --- | --- |
-| `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)`, `replay(Option<BrokerEventCursor>, u32)` |
-| `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)`, `replay(Option<BrokerEventCursor>, u32)` |
+| `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)`, `replay(Option<BrokerEventCursor>, u32)`, `subscribe(Option<BrokerEventCursor>)` |
+| `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)`, `replay(Option<BrokerEventCursor>, u32)`, `subscribe(Option<BrokerEventCursor>)` |
 
 Every call fetches the server's session and signs the request with a fresh nonce. The client permits 15 seconds for each HTTP exchange, caps JSON responses at 512 KiB, and disables proxies, redirects and automatic retries. `claim()` returns `Ok(None)` for 204. `ClientError::Rejected` carries the HTTP status and a typed `ErrorCode` when the server sends a known code.
 
 After an uncertain submit, inspect the original task ID. For an uncertain completion, retry with the same fence and content. If a claim's response was lost, allow the lease to expire before expecting another claim. The caller owns worker polling, execution deadlines and retry timing.
 
+`EventSubscription::next().await` returns typed `BrokerStreamFrame` values and `None` on a clean close. To resume, call `subscribe` again with the last processed cursor. The SDK uses a 15-second WebSocket connection and handshake timeout and a 65-second read timeout for each `next` call.
+
 Build the Rust API reference with `cargo doc -p vespera-sdk --no-deps --locked`. The crate documentation includes a worker example and `cargo test -p vespera-sdk --locked` compile-checks it. [SDK source and example](../crates/vespera-sdk/src/lib.rs)
 
 ## Future interoperability draft
 
-The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover live subscriptions.
+The draft sections below describe remaining Milestone 9 and 10 work. A broader resource-oriented HTTP API is planned. Remote deployments require protected transport and explicit opt-in.
 
 ## Authentication and registration — draft
 

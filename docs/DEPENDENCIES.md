@@ -28,11 +28,11 @@ The CLI enables Tokio `signal` to route Ctrl+C through owned cancellation rather
 
 ## Deferred dependencies
 
-The loopback worker service enables HTTP/1 server support in the existing Hyper dependency. It uses Hyper-util's Tokio adapters, HTTP Body Util's streaming size limit, Ring's HMAC-SHA256 and Subtle's constant-time equality for MAC and key comparisons. Ring was already locked for Rustls. Enabling Hyper server mode added only `httpdate 1.0.3` to the lockfile. The standalone SDK uses Reqwest with default features disabled, Ring and the shared domain and serialization types. It adds no third-party package or version. WebSocket event transport remains deferred.
+The loopback worker service uses Hyper HTTP/1, Hyper-util's Tokio adapters and HTTP Body Util's streaming size limit. Authentication uses Ring HMAC-SHA256 and Subtle constant-time equality. The SDK uses Reqwest with default features disabled for HTTP. The broker and SDK both use Tokio Tungstenite 0.30 for WebSocket handshakes and framing. The lockfile adds its dependency subtree without changing existing package versions. SHA-1 is used for the WebSocket handshake accept value. Request authentication still uses HMAC-SHA256.
 
 SQLite storage now uses exactly `rusqlite 0.41.1` with default features disabled and explicit `libsqlite3-sys`/`bundled` features. The native source bundle reports SQLite 3.54.1; FTS5 is exercised by actual retrieval tests. No separate database server, SQLCipher, loadable extensions, generated bindings or Wasm SQLite backend is enabled. The build requires a C compiler in addition to Rust. Optional vectors remain deferred until their provenance, rebuild/resource limits and retrieval quality can be verified.
 
-Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC is deferred: REST plus WebSockets is the initial draft interoperability direction, not a deployed server.
+Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC remains deferred.
 
 No Python runtime, Python orchestration backend, JS frontend, bundled model weights, vendor SDK, or GPU runtime is required by the current first-party application. Node.js was used only as an initial development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements. Explicit CLI operations now call real provider adapters; a compatible daemon/model must be independently installed/configured for live inference.
 

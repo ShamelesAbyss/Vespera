@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use vespera_core::{AgentId, TaskId};
 use vespera_sdk::{
-    ClientError, ErrorCode, EventKind, ExternalTaskChange, OperatorClient, SigningKey, Submission,
-    TaskState, WorkerClient,
+    BrokerStreamEnd, BrokerStreamFrame, ClientError, ErrorCode, EventKind, EventSubscription,
+    ExternalTaskChange, OperatorClient, SigningKey, Submission, TaskState, WorkerClient,
 };
 
 const OPERATOR: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -39,6 +39,18 @@ struct Wire {
 
 impl Wire {
     async fn sign(&self, role: &str, principal: &str, token: &str, body: &str) -> String {
+        self.sign_target("POST", &format!("/v2/{role}"), principal, token, body)
+            .await
+    }
+
+    async fn sign_target(
+        &self,
+        method: &str,
+        target: &str,
+        principal: &str,
+        token: &str,
+        body: &str,
+    ) -> String {
         let session: Value = self
             .client
             .get(format!("{}/v2/session", self.base))
@@ -58,7 +70,7 @@ impl Wire {
             .map(|i| u8::from_str_radix(&token[i..i + 2], 16).unwrap())
             .collect();
         let bytes = format!(
-            "Vespera-HMAC-SHA256\nPOST\n/v2/{role}\n{principal}\n{session_id}\n{elapsed}\n{nonce}\n{body}"
+            "Vespera-HMAC-SHA256\n{method}\n{target}\n{principal}\n{session_id}\n{elapsed}\n{nonce}\n{body}"
         );
         let signature = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, &key), bytes.as_bytes());
         let mac = signature
@@ -605,4 +617,174 @@ fn serve_rejects_non_loopback_before_loading_policy() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("requires a numeric loopback address")
     );
+}
+
+async fn live_frame(stream: &mut EventSubscription) -> BrokerStreamFrame {
+    tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn websocket_delivers_scoped_events_resumes_and_observes_revocation() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let (_process, base) = launch(first, second);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let other = WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let wire = Wire {
+        client: Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+        base,
+        first,
+        second,
+    };
+    let cursor = worker.replay(None, 1).await.unwrap().next_cursor;
+    let target = format!(
+        "/v2/worker/events?after={}:{}",
+        cursor.stream_id, cursor.sequence
+    );
+    let proof = wire
+        .sign_target("GET", &target, &first.to_string(), FIRST, "")
+        .await;
+    let upgrade = |path: &str| {
+        wire.client
+            .get(format!("{}{path}", wire.base))
+            .header("connection", "Upgrade")
+            .header("upgrade", "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .header("authorization", &proof)
+    };
+    assert_eq!(
+        upgrade("/v2/worker/events").send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        upgrade(&target).send().await.unwrap().status(),
+        StatusCode::SWITCHING_PROTOCOLS
+    );
+    assert_eq!(
+        upgrade(&target).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let mut live = worker.subscribe(None).await.unwrap();
+    let mut isolated = other.subscribe(None).await.unwrap();
+    let mut overview = operator.subscribe(None).await.unwrap();
+    assert!(
+        matches!(live_frame(&mut live).await, BrokerStreamFrame::Ready {
+        after, discarded_through: 0
+    } if after.sequence == 0)
+    );
+    assert!(matches!(
+        live_frame(&mut isolated).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    assert!(matches!(
+        live_frame(&mut overview).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    let task_id = TaskId::new();
+    operator
+        .submit(&Submission {
+            task_id,
+            prompt: "Live subscription fixture".into(),
+            required_capabilities: ["text-generation".parse().unwrap()].into(),
+            eligible_workers: [first].into(),
+            lifetime_seconds: 60,
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    let lease = worker.claim().await.unwrap().unwrap();
+    assert!(
+        matches!(live_frame(&mut overview).await, BrokerStreamFrame::Event { entry }
+        if matches!(entry.event.kind, EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::Submitted, task_id: submitted, ..
+        } if submitted == task_id))
+    );
+    let BrokerStreamFrame::Event { entry } = live_frame(&mut live).await else {
+        panic!("missing live claim event");
+    };
+    assert!(matches!(entry.event.kind, EventKind::ExternalTaskChanged {
+        change: ExternalTaskChange::Claimed, attempt: Some(attempt), ..
+    } if attempt.attempt_id == lease.fence.attempt_id));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), isolated.next())
+            .await
+            .is_err()
+    );
+    drop(live);
+    worker.complete(lease.fence, "result").await.unwrap();
+    let mut resumed = worker.subscribe(Some(entry.cursor)).await.unwrap();
+    assert!(
+        matches!(live_frame(&mut resumed).await, BrokerStreamFrame::Ready {
+        after, ..
+    } if after == entry.cursor)
+    );
+    let BrokerStreamFrame::Event { entry: completion } = live_frame(&mut resumed).await else {
+        panic!("missing resumed completion event");
+    };
+    assert!(matches!(
+        completion.event.kind,
+        EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::Completed,
+            ..
+        }
+    ));
+    assert_eq!(completion.cursor.sequence, entry.cursor.sequence + 1);
+    assert!(matches!(
+        other.subscribe(Some(entry.cursor)).await,
+        Err(ClientError::Rejected { status: 409, .. })
+    ));
+    operator.revoke(first).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut resumed).await,
+        BrokerStreamFrame::End {
+            reason: BrokerStreamEnd::Unauthorized
+        }
+    ));
+    assert!(matches!(
+        worker.subscribe(None).await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+}
+
+#[tokio::test]
+async fn subscription_quota_keeps_http_actions_available() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let (_process, base) = launch(first, second);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let mut subscriptions = Vec::new();
+    for _ in 0..8 {
+        subscriptions.push(worker.subscribe(None).await.unwrap());
+    }
+    assert!(matches!(
+        worker.subscribe(None).await,
+        Err(ClientError::Rejected { status: 503, .. })
+    ));
+    assert!(worker.claim().await.unwrap().is_none());
+    drop(subscriptions.pop());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match worker.subscribe(None).await {
+                Ok(_) => break,
+                Err(ClientError::Rejected { status: 503, .. }) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await
+                }
+                Err(error) => panic!("unexpected reconnect error: {error}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
 }

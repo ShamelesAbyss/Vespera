@@ -24,8 +24,8 @@ pub use agent::{AgentDefinition, AgentIdentity, AgentStatus, ModelSelectionPolic
 pub use capability::Capability;
 pub use error::DomainError;
 pub use event::{
-    BrokerEventCursor, BrokerEventEntry, BrokerEventPage, EVENT_SCHEMA_VERSION, EventEnvelope,
-    EventKind, ExternalAttempt, ExternalTaskChange,
+    BrokerEventCursor, BrokerEventEntry, BrokerEventPage, BrokerStreamEnd, BrokerStreamFrame,
+    EVENT_SCHEMA_VERSION, EventEnvelope, EventKind, ExternalAttempt, ExternalTaskChange,
 };
 pub use id::{AgentId, EventId, MemoryId, ModelId, ProviderId, TaskId};
 pub use memory::{MemoryLayer, MemoryNamespace, MemoryRecord};

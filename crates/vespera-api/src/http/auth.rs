@@ -102,13 +102,21 @@ impl Authentication {
         path: &str,
         body: &[u8],
     ) -> Result<(), HttpError> {
-        self.verify_at(proof, path, body, self.elapsed_ms())
+        self.verify_at(proof, ("POST", path), body, self.elapsed_ms())
+    }
+
+    pub(super) fn verify_upgrade(
+        &mut self,
+        proof: Proof<'_>,
+        target: &str,
+    ) -> Result<(), HttpError> {
+        self.verify_at(proof, ("GET", target), b"", self.elapsed_ms())
     }
 
     fn verify_at(
         &mut self,
         proof: Proof<'_>,
-        path: &str,
+        (method, target): (&str, &str),
         body: &[u8],
         now: u64,
     ) -> Result<(), HttpError> {
@@ -126,7 +134,7 @@ impl Authentication {
             hmac::Context::with_key(&hmac::Key::new(hmac::HMAC_SHA256, &credential.secret));
         context.update(
             format!(
-                "{SCHEME}\nPOST\n{path}\n{}\n{}\n{}\n{}\n",
+                "{SCHEME}\n{method}\n{target}\n{}\n{}\n{}\n{}\n",
                 proof.principal_text, proof.session, proof.issued_ms, proof.nonce
             )
             .as_bytes(),
@@ -262,22 +270,32 @@ mod tests {
         let nonce = Uuid::new_v4();
         assert!(
             current
-                .verify_at(proof(previous.session, 5, nonce), PATH, BODY, 5)
+                .verify_at(proof(previous.session, 5, nonce), ("POST", PATH), BODY, 5)
                 .is_err()
         );
         assert!(
             current
-                .verify_at(proof(current.session, 5, nonce), PATH, BODY, 4)
+                .verify_at(proof(current.session, 5, nonce), ("POST", PATH), BODY, 4)
                 .is_err()
         );
         assert!(
             current
-                .verify_at(proof(current.session, 5, nonce), PATH, BODY, 5 + WINDOW_MS)
+                .verify_at(
+                    proof(current.session, 5, nonce),
+                    ("POST", PATH),
+                    BODY,
+                    5 + WINDOW_MS
+                )
                 .is_err()
         );
         assert!(
             current
-                .verify_at(proof(current.session, 5, nonce), PATH, BODY, 4 + WINDOW_MS)
+                .verify_at(
+                    proof(current.session, 5, nonce),
+                    ("POST", PATH),
+                    BODY,
+                    4 + WINDOW_MS
+                )
                 .is_ok()
         );
     }
@@ -289,18 +307,33 @@ mod tests {
         let issued = 5;
         for nonce in std::iter::once(first).chain((1..MAX_NONCES).map(|_| Uuid::new_v4())) {
             assert!(
-                auth.verify_at(proof(auth.session, issued, nonce), PATH, BODY, issued)
-                    .is_ok()
+                auth.verify_at(
+                    proof(auth.session, issued, nonce),
+                    ("POST", PATH),
+                    BODY,
+                    issued
+                )
+                .is_ok()
             );
         }
         let next = Uuid::new_v4();
         let error = auth
-            .verify_at(proof(auth.session, issued, next), PATH, BODY, issued)
+            .verify_at(
+                proof(auth.session, issued, next),
+                ("POST", PATH),
+                BODY,
+                issued,
+            )
             .err()
             .unwrap();
         assert_eq!(error.0, StatusCode::TOO_MANY_REQUESTS);
         let error = auth
-            .verify_at(proof(auth.session, issued, first), PATH, BODY, issued)
+            .verify_at(
+                proof(auth.session, issued, first),
+                ("POST", PATH),
+                BODY,
+                issued,
+            )
             .err()
             .unwrap();
         assert_eq!(error.0, StatusCode::UNAUTHORIZED);
@@ -308,15 +341,20 @@ mod tests {
         assert!(
             auth.verify_at(
                 proof(auth.session, after_expiry, next),
-                PATH,
+                ("POST", PATH),
                 BODY,
                 after_expiry
             )
             .is_ok()
         );
         assert!(
-            auth.verify_at(proof(auth.session, issued, first), PATH, BODY, after_expiry)
-                .is_err()
+            auth.verify_at(
+                proof(auth.session, issued, first),
+                ("POST", PATH),
+                BODY,
+                after_expiry
+            )
+            .is_err()
         );
     }
 }
