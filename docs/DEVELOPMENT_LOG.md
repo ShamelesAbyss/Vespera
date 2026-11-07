@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Durable local completion journal
+
+Previous checkpoint `692bd44b7404997df94995ca5f992dbd070a7cd5` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42333919135). Added the `vespera-events` crate and `events init/replay` commands. SQLite transactions append events and advance retention together. Replay uses one read-only snapshot with journal-specific cursors, ordered bounded pages and explicit expiry. Duplicate IDs are idempotent for matching retained envelopes. The new crate reuses locked dependencies.
+
+Agent and workflow CLI execution can opt into recording successful completions in an existing journal. Publication preserves typed correlation IDs and uses static source labels. Journal failure preserves the execution report and returns nonzero. Completion publication is separate from inference and memory persistence, leaving a potential process-exit gap. Local journal access is governed by filesystem permissions. Live subscriptions, additional lifecycle events and durable audit coordination remain open.
+
+Validation passed 190 offline workspace tests, strict Clippy and rustdoc, and the optimized workspace build. Four journal tests cover reopening, ordering, retention, cursor fencing, duplicate conflicts, foreign files, read-only access and injected trim failure. The subprocess test passed in debug and release builds. It exercises agent and workflow completion, metadata-only replay across invocations and missing-journal preflight.
+
 ## 2026-11-06 — Opt-in durable memory during agent inference
 
 Previous checkpoint `b490c0ec62fe8a4f76e39c1797fc8c6a9f4e1539` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42333437601). Single-agent execution now accepts an explicitly retrieved memory snapshot and separately offers generated result retention. The CLI checks grants and opens the requested existing database before provider requests. The agent runtime checks the snapshot owner and read grant again. Provider preflight validates the same messages sent during inference.

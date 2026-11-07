@@ -552,6 +552,67 @@ fn run_fixture_workflow(
 }
 
 #[test]
+fn completion_events_replay_across_cli_processes_without_payload_text() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let journal = directory.0.join("events.sqlite3");
+    let path = journal.to_str().unwrap();
+    let missing = run_fixture_agent(&directory, &config, &["--resume", "--event-journal", path]);
+    assert!(!missing.status.success());
+    assert!(fixture.captured().is_empty());
+    assert!(!journal.exists());
+    assert!(
+        execute(&["events", "--journal", path, "init", "--retention", "2"])
+            .status
+            .success()
+    );
+    let agent = run_fixture_agent(&directory, &config, &["--resume", "--event-journal", path]);
+    assert!(
+        agent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&agent.stderr)
+    );
+    let workflow = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow_value().to_string(),
+        &["--resume", "--event-journal", path],
+    );
+    assert!(
+        workflow.status.success(),
+        "{}",
+        String::from_utf8_lossy(&workflow.stderr)
+    );
+    let agent: serde_json::Value = serde_json::from_slice(&agent.stdout).unwrap();
+    let workflow: serde_json::Value = serde_json::from_slice(&workflow.stdout).unwrap();
+    let replay = execute(&["events", "--journal", path, "replay", "--limit", "1"]);
+    assert!(replay.status.success());
+    let page: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+    let first = &page["entries"][0]["event"];
+    assert_eq!(first["kind"]["kind"], "inference_completed");
+    assert_eq!(first["correlation_task_id"], agent["task_id"]);
+    assert!(first.get("prompt").is_none());
+    assert!(first.get("response").is_none());
+    assert_eq!(page["next_cursor"], agent["event_publication"]["cursor"]);
+    assert_eq!(page["has_more"], true);
+    let cursor = format!(
+        "{}:{}",
+        page["next_cursor"]["journal_id"].as_str().unwrap(),
+        page["next_cursor"]["sequence"].as_i64().unwrap()
+    );
+    let replay = execute(&["events", "--journal", path, "replay", "--after", &cursor]);
+    assert!(replay.status.success());
+    let page: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+    let second = &page["entries"][0]["event"];
+    assert_eq!(second["kind"]["kind"], "task_completed");
+    assert_eq!(second["correlation_task_id"], workflow["task_id"]);
+    assert_eq!(page["next_cursor"], workflow["event_publication"]["cursor"]);
+    assert_eq!(page["has_more"], false);
+}
+
+#[test]
 fn workflow_cli_executes_dependencies_and_reports_provenance_and_cleanup() {
     for compatible in [false, true] {
         let fixture = HttpFixture::new(false);

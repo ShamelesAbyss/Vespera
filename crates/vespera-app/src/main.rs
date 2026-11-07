@@ -2,6 +2,7 @@
 
 mod commands;
 mod doctor;
+mod event_commands;
 mod memory_commands;
 
 use std::path::PathBuf;
@@ -56,6 +57,8 @@ enum Command {
     RunWorkflow(RunWorkflowArgs),
     /// Explicit offline durable memory operations; never start model providers.
     Memory(memory_commands::MemoryArgs),
+    /// Initialize a local event journal or replay a bounded JSON page.
+    Events(event_commands::EventArgs),
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
@@ -73,6 +76,9 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct RunAgentArgs {
+    /// Append successful inference completion to an existing local journal.
+    #[arg(long)]
+    event_journal: Option<PathBuf>,
     /// Retrieve a literal phrase from a UTF-8 file and attach matching owned memories.
     #[arg(long)]
     memory_query_file: Option<PathBuf>,
@@ -110,6 +116,9 @@ struct RunAgentArgs {
 
 #[derive(Debug, Args)]
 struct RunWorkflowArgs {
+    /// Append successful workflow completion to an existing local journal.
+    #[arg(long)]
+    event_journal: Option<PathBuf>,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
     /// Strict UTF-8 JSON workflow, at most one MiB.
@@ -141,6 +150,8 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error(transparent)]
+    Journal(#[from] vespera_events::JournalError),
     #[error("{0}")]
     Storage(#[from] vespera_memory::StorageError),
     #[error("invalid bounded memory input: {0}")]
@@ -227,6 +238,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::Memory(args) => memory_commands::run(args).await?,
+        Command::Events(args) => event_commands::run(args).await?,
         Command::ValidateConfig { config, json } => {
             let config = AppConfig::load(config)?;
             let report = ConfigReport {

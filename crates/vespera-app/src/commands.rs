@@ -1,5 +1,5 @@
 //! CLI operation handlers; service behavior lives in the application runtime.
-use crate::{AppError, RunAgentArgs, RunWorkflowArgs};
+use crate::{AppError, RunAgentArgs, RunWorkflowArgs, event_commands};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -10,7 +10,9 @@ use vespera_agents::{ExecutionOptions, MemoryContext, TaskExecutionResult};
 use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime, check_providers};
 use vespera_config::AppConfig;
-use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId, TaskState};
+use vespera_core::{
+    EventKind, MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId, TaskState,
+};
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
 use vespera_orchestrator::{Workflow, WorkflowReport};
@@ -22,6 +24,8 @@ struct WorkflowRunReport {
     workflow: Option<WorkflowReport>,
     error: Option<String>,
     cleanup: CleanupReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_publication: Option<event_commands::Publication>,
 }
 
 pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> {
@@ -38,6 +42,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let workflow: Workflow = serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
     workflow.validate()?;
     let task_id = workflow.task.id;
+    let journal = event_commands::prepare(args.event_journal).await?;
     let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
     let cancel = CancellationToken::new();
     let outcome = cancellable(
@@ -57,6 +62,22 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let succeeded = workflow
         .as_ref()
         .is_some_and(|report| report.task.state == TaskState::Completed);
+    let event_publication = if let Some(journal) = journal.filter(|_| succeeded) {
+        Some(
+            event_commands::record(
+                journal,
+                "run-workflow",
+                task_id,
+                EventKind::TaskCompleted { task_id },
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    let journal_failed = event_publication
+        .as_ref()
+        .is_some_and(event_commands::Publication::failed);
     if args.json {
         println!(
             "{}",
@@ -64,7 +85,8 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 task_id,
                 workflow,
                 error: error.as_ref().map(ToString::to_string),
-                cleanup
+                cleanup,
+                event_publication
             })?
         );
     } else {
@@ -94,6 +116,9 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     }
     if !succeeded {
         return Err(AppError::WorkflowFailed);
+    }
+    if journal_failed {
+        return Err(vespera_events::JournalError::Database.into());
     }
     if cleanup_failed {
         return Err(AppError::CleanupFailed);
@@ -151,6 +176,8 @@ struct RunReport {
     stored_memory_id: Option<MemoryId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_publication: Option<event_commands::Publication>,
 }
 
 pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
@@ -164,6 +191,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     if prompt.len() > 65_536 || prompt.trim().is_empty() {
         return Err(AppError::InvalidPrompt);
     }
+    let journal = event_commands::prepare(args.event_journal).await?;
     let mut required = Vec::new();
     if args.memory_query_file.is_some() {
         required.push(Permission::MemoryRead);
@@ -242,6 +270,26 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Ok(execution) => (Some(execution), None),
         Err(error) => (None, Some(error)),
     };
+    let event_publication = if let (Some(journal), Some(execution)) = (journal, &execution) {
+        Some(
+            event_commands::record(
+                journal,
+                "run-agent",
+                task_id,
+                EventKind::InferenceCompleted {
+                    task_id,
+                    model_id: execution.model_id,
+                    agent_id: Some(execution.agent_id),
+                },
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    let journal_failed = event_publication
+        .as_ref()
+        .is_some_and(event_commands::Publication::failed);
     let persistence = if let (Some(store), Some(execution)) = (result_store, &execution) {
         let actor = execution.agent_id;
         let content = execution.response.content.clone();
@@ -280,6 +328,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             cleanup,
             stored_memory_id,
             memory_error: memory_error.as_ref().map(ToString::to_string),
+            event_publication,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -307,6 +356,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     }
     if let Some(error) = memory_error {
         return Err(error);
+    }
+    if journal_failed {
+        return Err(vespera_events::JournalError::Database.into());
     }
     if cleanup_failed {
         return Err(AppError::CleanupFailed);

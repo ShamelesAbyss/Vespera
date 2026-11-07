@@ -16,6 +16,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
+| `events` | Initialize a local journal or replay a JSON page | None. Local SQLite access. |
 
 Every command supports `--help`; the root supports `--version`. All except
 `doctor` take `--config <PATH>` (default `config/local.toml`). Each command supports
@@ -214,3 +215,17 @@ Use these options on `run-agent` after initializing a database with `memory init
 Retrieval examines the first eight matches in namespace order. Whole records that fit within an 8 KiB serialized JSON message are sent as untrusted user content before the original task prompt. This is a byte limit. Provider tokenization and context handling still apply. The JSON execution report lists included IDs in `memory_context_ids` when at least one record is attached. The stored task snapshot keeps the original prompt.
 
 A retained response carries the accepted task ID and appears as `stored_memory_id` in the JSON report. Storage failure returns nonzero with `memory_error` and preserves the completed execution evidence. File and database preparation and post-inference persistence run on blocking workers outside the inference deadline.
+
+## Local completion journal
+
+```powershell
+New-Item -ItemType Directory -Force data | Out-Null
+.\target\release\vespera.exe events --journal data/events.sqlite3 init --retention 10000
+.\target\release\vespera.exe events --journal data/events.sqlite3 replay --limit 100
+```
+
+`events` uses `data/events.sqlite3` by default and prints JSON. `init` requires an existing parent directory. Retention is fixed at initialization and accepts 1 to 100,000 events. The default is 10,000. `replay` opens the existing file read-only and returns 1 to 256 records per page. The default is 100. Pass `--after <journal-UUID:sequence>` using the fields of `next_cursor` to continue. Check `has_more` for another page and `discarded_through` for the retention boundary. An expired, foreign or future cursor returns nonzero.
+
+Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to append a successful completion to an initialized journal. Single-agent runs emit `inference_completed`. Workflows emit `task_completed` for the root. Reports include the committed cursor or an append error in `event_publication`. Append failure returns nonzero while preserving the execution report. Publication is a separate post-execution transaction, so a process exit between execution and publication can leave a gap.
+
+Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. This interface provides pull-based history. Live subscriptions and broader lifecycle events are separate roadmap work.

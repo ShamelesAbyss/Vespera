@@ -1278,6 +1278,7 @@ dependencies = [
  "vespera-agents",
  "vespera-config",
  "vespera-core",
+ "vespera-events",
  "vespera-memory",
  "vespera-model-registry",
  "vespera-orchestrator",
@@ -1304,6 +1305,18 @@ dependencies = [
  "serde_json",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "vespera-events"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+ "vespera-core",
 ]
 
 [[package]]

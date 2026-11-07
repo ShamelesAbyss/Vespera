@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The nine-crate workspace has 185 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Durable events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
+**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The ten-crate workspace has 190 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Live event delivery, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -38,7 +38,8 @@ flowchart TD
 | `vespera-agents` | Independent identities, permissions, bounded in-process memory/messages/history and actual inference |
 | `vespera-orchestrator` | Bounded sequential workflows, provenance, retry/failure history and explicit output evaluation |
 | `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
-| `vespera-app` | Runtime composition, diagnostics and eight top-level CLI commands |
+| `vespera-events` | Local SQLite completion journal with bounded retention and cursor replay |
+| `vespera-app` | Runtime composition, diagnostics and nine top-level CLI commands |
 
 `config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/local.private.toml` are ignored. No database, server listener or graphical application starts automatically.
 
@@ -94,6 +95,7 @@ For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in 
 | `provider-health` | Explicit bounded provider health polling, without model loading |
 | `run-agent` | One actual bounded agent task, followed by cleanup reporting |
 | `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
+| `events` | Initialize a local journal or replay a bounded JSON page |
 | `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |
 
 Every command supports `--help` and `--json`; the root supports `--version`. All except `doctor` accept `--config PATH`, defaulting to `config/local.toml`. The [complete CLI reference](docs/CLI.md) documents every option, range, default, exit behavior and JSON limitation.
