@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-06 — Live execution and current onboarding
+
+Verified source checkpoint: `136e1b3214b2b910683d869fe74d054c0dcffb24`, pushed. Ubuntu CI [42323808303](https://github.com/ShamelesAbyss/Vespera/actions/runs/42323808303) passed. Windows release CLI executed two bounded nonstreaming tasks against Ollama 0.40.13 / hermes3:8b: native and compatible `/v1` both returned exactly `OK`, with 20 prompt tokens and two output tokens. Native execution took 18,505 ms overall; the separate compatible sample took 7,582 ms. Different residency/context conditions prevent comparative benchmark claims.
+
+Native unload was acknowledged and the next residency list was empty. Compatible cleanup retained a ProviderManaged reservation; separate explicit native operator cleanup was acknowledged and final residency was empty. No weights were downloaded. The inventory command started the installed Windows daemon during discovery; it remains idle. The sanitized artifact excludes private paths, complete inventory and credentials.
+
+A compatible task admitted at 512 tokens produced provider-reported context allocation of 65,536 tokens. Reported VRAM stayed below the six-GiB estimate in this observation only. Compatible APIs have no portable allocation setting; native preload currently uses backend defaults before contextual inference. Request preflight and contextual preparation are the next priorities. External/startup allocations and per-request overhead remain unreconciled.
+
+Replaced stale root onboarding with actual architecture, commands, setup, provider/agent semantics, limitations and licensing. Updated supporting docs. Validation: JSON parsing and provenance/state/content/cleanup assertions, README local links, executable help agreement, sanitized artifact inspection and Git diff/whitespace review. Source is unchanged from the fully validated checkpoint. Full-platform work remains ongoing.
+
 ## 2026-11-06 — Operational CLI composition and executable HTTP integration
 
 Previous verified checkpoint: `aee7e24a7caddbe0e38dc951f7493fa237e581da`, pushed to the recovery branch. Public GitHub Actions evidence independently confirms successful Ubuntu runs for `aee7e24` ([42321278020](https://github.com/ShamelesAbyss/Vespera/actions/runs/42321278020)), `566f6d7` ([42320678469](https://github.com/ShamelesAbyss/Vespera/actions/runs/42320678469)) and `0eb16a7` ([42319792636](https://github.com/ShamelesAbyss/Vespera/actions/runs/42319792636)).

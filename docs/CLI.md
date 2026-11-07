@@ -127,3 +127,9 @@ offline inventory, child-process credentials, prompt limits and command deadline
 These fixtures are not live model inference or a product/version compatibility
 matrix. See [PROVIDERS.md](PROVIDERS.md), [AGENTS.md](AGENTS.md),
 [REGISTRY.md](REGISTRY.md) and [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).
+
+## Live execution evidence (2026-11-06)
+
+Two bounded release CLI tasks against Ollama 0.40.13 / hermes3:8b returned `OK`: native and compatible `/v1`. See the [sanitized artifact](../artifacts/live-ollama-2026-11-06.json). This is one backend/model version and nonstreaming execution, not universal compatibility or a benchmark. Native unload was acknowledged. Compatible residency was cleaned up by a separate explicit native operator request, not by the compatible adapter.
+
+A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting; scheduler context is a logical constraint rather than proof of actual backend allocation. Native inference sends its context setting, but current native preload may initially allocate the backend default. Estimates must account for backend behavior; external/startup allocations and per-request overhead remain unreconciled.

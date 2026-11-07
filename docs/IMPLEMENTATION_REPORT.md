@@ -199,3 +199,9 @@ Bionic's exact product/version/API is unresolved. It has not been equated with a
 Begin **Milestone 2: provider abstraction and Ollama integration**. Design an object-safe asynchronous Rust provider contract with explicit enumeration, metadata, bounded requests, streaming, cancellation, health, error taxonomy, optional telemetry, and lifecycle support negotiation. Implement one real Ollama adapter, enforcing transport policy and secret redaction. Use local fixtures for fragmented/malformed streams, cancellation races, timeouts, and unsupported capabilities; keep live-provider tests explicit opt-in.
 
 Only after those contracts are tested should scheduling, orchestration, persistent execution, and optional 3D visualization be added. No next-milestone functionality is falsely advertised by the current CLI.
+
+## Live execution evidence (2026-11-06)
+
+Two bounded release CLI tasks against Ollama 0.40.13 / hermes3:8b returned `OK`: native and compatible `/v1`. See the [sanitized artifact](../artifacts/live-ollama-2026-11-06.json). This is one backend/model version and nonstreaming execution, not universal compatibility or a benchmark. Native unload was acknowledged. Compatible residency was cleaned up by a separate explicit native operator request, not by the compatible adapter.
+
+A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting; scheduler context is a logical constraint rather than proof of actual backend allocation. Native inference sends its context setting, but current native preload may initially allocate the backend default. Estimates must account for backend behavior; external/startup allocations and per-request overhead remain unreconciled.

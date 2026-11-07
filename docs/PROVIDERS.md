@@ -137,3 +137,9 @@ they are not records of a live server version:
   [generation/keep-alive](https://docs.ollama.com/api/generate),
   [model details](https://docs.ollama.com/api-reference/show-model-details), and
   [running models](https://docs.ollama.com/api/ps).
+
+## Live execution evidence (2026-11-06)
+
+Two bounded release CLI tasks against Ollama 0.40.13 / hermes3:8b returned `OK`: native and compatible `/v1`. See the [sanitized artifact](../artifacts/live-ollama-2026-11-06.json). This is one backend/model version and nonstreaming execution, not universal compatibility or a benchmark. Native unload was acknowledged. Compatible residency was cleaned up by a separate explicit native operator request, not by the compatible adapter.
+
+A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting; scheduler context is a logical constraint rather than proof of actual backend allocation. Native inference sends its context setting, but current native preload may initially allocate the backend default. Estimates must account for backend behavior; external/startup allocations and per-request overhead remain unreconciled.

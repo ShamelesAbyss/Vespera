@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-11-06",
+  "timezone": "America/Los_Angeles",
+  "observed_at_utc": "2026-11-07T01:29:46.2227298Z",
+  "source_commit": "136e1b3214b2b910683d869fe74d054c0dcffb24",
+  "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "platform": "Windows x86_64",
+  "provider": "Ollama",
+  "provider_version": "0.40.13",
+  "model": "hermes3:8b",
+  "model_digest": "4f6b83f30b62bc3d0cf9be09266db222805ee815c8fd7d8b38f863f655be78b7",
+  "model_quantization": "Q4_0",
+  "limits": {
+    "declared_context_tokens": 512,
+    "max_output_tokens": 8,
+    "command_timeout_seconds": 120,
+    "estimated_model_ram_bytes": 6442450944,
+    "estimated_model_vram_bytes": 6442450944,
+    "configured_ram_budget_bytes": 8589934592,
+    "configured_vram_budget_bytes": 6442450944
+  },
+  "native_run": {
+    "task_id": "ec26512d-e69d-4d49-b637-158d277478db",
+    "task_state": "completed",
+    "execution": {
+      "task": {
+        "id": "ec26512d-e69d-4d49-b637-158d277478db",
+        "prompt": "Reply with exactly the two letters OK and nothing else.",
+        "required_capabilities": [],
+        "state": "completed"
+      },
+      "agent_id": "33333333-3333-4333-8333-333333333333",
+      "model_id": "22222222-2222-4222-8222-222222222222",
+      "provider_id": "11111111-1111-4111-8111-111111111111",
+      "lease_id": "0a651553-00b0-4dd9-abbd-e486c019d31c",
+      "response": {
+        "provider_id": "11111111-1111-4111-8111-111111111111",
+        "model_name": "hermes3:8b",
+        "content": "OK",
+        "finish_reason": "stop",
+        "metrics": {
+          "client_elapsed_ms": 9060,
+          "prompt_tokens": 20,
+          "completion_tokens": 2,
+          "provider_load_duration_ms": 5922,
+          "provider_eval_duration_ms": 40
+        }
+      },
+      "elapsed_ms": 18505
+    },
+    "error": null,
+    "cleanup": {
+      "drained": true,
+      "unloaded_models": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "remaining_models": [],
+      "unload_errors": {}
+    }
+  },
+  "compatible_run": {
+    "task_id": "d444199e-1ea7-430d-9dfa-a4fc85080ecf",
+    "task_state": "completed",
+    "execution": {
+      "task": {
+        "id": "d444199e-1ea7-430d-9dfa-a4fc85080ecf",
+        "prompt": "Reply with exactly the two letters OK and nothing else.",
+        "required_capabilities": [],
+        "state": "completed"
+      },
+      "agent_id": "33333333-3333-4333-8333-333333333333",
+      "model_id": "22222222-2222-4222-8222-222222222222",
+      "provider_id": "11111111-1111-4111-8111-111111111111",
+      "lease_id": "2fe0b9a6-8449-4635-97b3-dbd3b335343c",
+      "response": {
+        "provider_id": "11111111-1111-4111-8111-111111111111",
+        "model_name": "hermes3:8b",
+        "content": "OK",
+        "finish_reason": "stop",
+        "metrics": {
+          "client_elapsed_ms": 7582,
+          "prompt_tokens": 20,
+          "completion_tokens": 2,
+          "provider_load_duration_ms": null,
+          "provider_eval_duration_ms": null
+        }
+      },
+      "elapsed_ms": 7582
+    },
+    "error": null,
+    "cleanup": {
+      "drained": true,
+      "unloaded_models": [],
+      "remaining_models": [
+        {
+          "model_id": "22222222-2222-4222-8222-222222222222",
+          "state": "ProviderManaged",
+          "reserved_ram_bytes": 6442450944,
+          "reserved_vram_bytes": 6442450944
+        }
+      ],
+      "unload_errors": {}
+    }
+  },
+  "native_backend_observation_after_compatible_run": {
+    "provider_reported_total_resident_bytes": 13856218807,
+    "provider_reported_vram_bytes": 6027634278,
+    "computed_host_ram_bytes": 7828584529,
+    "provider_reported_allocated_context_tokens": 65536
+  },
+  "compatible_cleanup": {
+    "method": "out-of-band native Ollama unload after the compatible run",
+    "acknowledged": true,
+    "provider_reported_resident_models_after": 0
+  },
+  "scope": "Two bounded non-streaming smoke samples on one local backend/model; not a performance benchmark or a universal compatibility claim",
+  "limitations": [
+    "Resource reservations were conservative estimates, not measured model RAM/VRAM guarantees.",
+    "The compatible adapter does not enforce a portable backend context allocation or implement explicit unload.",
+    "Backend residency was observed through the native Ollama endpoint, not fabricated as compatible-adapter telemetry.",
+    "Only runtime elapsed time is observed by Vespera; token counts and provider durations are provider-reported.",
+    "The first native run confirmed unload through Vespera; compatible cleanup used the native operator endpoint explicitly."
+  ],
+  "github_ci": {
+    "source_commit": "136e1b3214b2b910683d869fe74d054c0dcffb24",
+    "run_id": 42323808303,
+    "conclusion": "success",
+    "platform": "ubuntu-latest"
+  }
+}
