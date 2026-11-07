@@ -2,7 +2,7 @@
 
 ## 2026-11-07 — Request memory in Atlas
 
-Verified implementation checkpoint `1c8e6eab3aa9c42451c9cb17065631e71ab2b86c` was pushed to `main`.
+Verified implementation checkpoint `1c8e6eab3aa9c42451c9cb17065631e71ab2b86c` was pushed to `main` and passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42422206226).
 
 Machine shows a green node when a validated local inference request includes retrieved memory. The count is attached to the exact running lease after request construction. The task inspector distinguishes zero included records from unavailable evidence. Version 4 carries counts, and the viewer still accepts versions 1 through 3. Memory queries, content and record IDs stay out of telemetry.
 
