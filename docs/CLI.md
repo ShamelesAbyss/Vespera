@@ -277,6 +277,8 @@ cargo run --locked -p vespera-app -- world --database $world run --revision $sta
 
 This command commits ticks and legal choices. At each reasoning boundary it waits up to the request deadline before resuming ticks. Invalid choices, provider failures and request deadlines appear in the attempt report, and the run continues with deterministic ticks. A competing world writer can make a pending action or next tick stale. The run then stops, preserving commits already made. Ctrl+C also stops the run and reports its committed progress. Use the read-only 3D window to observe changes from the running CLI.
 
+In World Mode, an amber outline marks a resident preparing a model request, which can include health checks, queueing and loading. A cyan outline marks an observed active local inference lease. Select the resident to inspect the phase and task. This is runtime evidence alongside simulated state. It describes local activity, and provider-side progress is unavailable. Short phases can fall between samples. The status leaves the view after completion, a revision change or two seconds without a heartbeat. The last committed choice stays in the resident inspector. This live display applies to scheduled runs.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

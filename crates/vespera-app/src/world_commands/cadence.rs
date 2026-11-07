@@ -6,9 +6,9 @@ use clap::Args;
 use serde::Serialize;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
 use vespera_config::AppConfig;
-use vespera_core::{AgentId, AgentStatus};
+use vespera_core::{AgentId, AgentStatus, Task, TaskId};
 use vespera_providers::CancellationToken;
-use vespera_world::{World, WorldError, WorldStore};
+use vespera_world::{ReasoningPhase, ReasoningStatus, World, WorldError, WorldStore};
 
 use super::{DecisionAttempt, execution_options, plan, update_current};
 use crate::AppError;
@@ -46,6 +46,8 @@ struct Progress {
     committed_ticks: u32,
     last_committed_revision: u64,
     attempts: Vec<DecisionAttempt>,
+    #[serde(skip)]
+    pending_task: Option<TaskId>,
 }
 
 #[derive(Serialize)]
@@ -97,13 +99,17 @@ pub(super) async fn run(database: &Path, args: RunArgs) -> Result<(), AppError> 
         last_committed_revision: args.revision,
         ..Progress::default()
     };
-    let result = tokio::select! {
+    let mut result = tokio::select! {
         biased;
         signal = tokio::signal::ctrl_c() => {
             Err(if signal.is_ok() { RuntimeError::Cancelled } else { RuntimeError::Signal }.into())
         }
         result = advance(database, &args, &runtime, world, &mut progress) => result,
     };
+    if let Some(task) = progress.pending_task.take() {
+        let clear = WorldStore::clear_reasoning(database, task).map_err(AppError::from);
+        result = result.and(clear);
+    }
     if let Err(error) = &result
         && let Some(last) = progress.attempts.last_mut()
         && last.committed_revision.is_none()
@@ -153,27 +159,20 @@ async fn advance(
             .push(DecisionAttempt::new(resident, revision));
         let attempt = progress.attempts.last_mut().expect("inserted attempt");
         let (task, options) = plan(&world, resident, revision)?;
-        let cancel = CancellationToken::new();
-        let observed = tokio::time::timeout(
-            timeout,
-            runtime.run_agent(
-                resident,
-                task,
-                execution_options(timeout),
-                false,
-                cancel.clone(),
-            ),
-        )
-        .await;
-        let choice = match observed {
-            Ok(result) => result
-                .map_err(AppError::from)
-                .and_then(|observed| attempt.choose(observed, &options)),
-            Err(_) => {
-                cancel.cancel();
-                Err(RuntimeError::Deadline.into())
-            }
+        let task_id = task.id;
+        progress.pending_task = Some(task_id);
+        let mut status = ReasoningStatus {
+            resident,
+            task_id,
+            revision,
+            phase: ReasoningPhase::Preparing {},
+            observed_unix_ms: crate::memory_commands::current_timestamp()?,
         };
+        WorldStore::observe_reasoning(database, &world, status)?;
+        let observed = infer(database, &world, runtime, task, timeout, &mut status).await?;
+        let choice = observed
+            .map_err(AppError::from)
+            .and_then(|observed| attempt.choose(observed, &options));
         match choice {
             Ok(choice) => {
                 world = attempt.commit(database, &world, choice)?;
@@ -186,6 +185,52 @@ async fn advance(
                 }
             }
         }
+        WorldStore::clear_reasoning(database, task_id)?;
+        progress.pending_task = None;
     }
     Ok(())
+}
+
+async fn infer(
+    database: &Path,
+    world: &World,
+    runtime: &VesperaRuntime,
+    task: Task,
+    timeout: Duration,
+    status: &mut ReasoningStatus,
+) -> Result<Result<vespera_agents::TaskExecutionResult, RuntimeError>, AppError> {
+    let cancel = CancellationToken::new();
+    let work = tokio::time::timeout(
+        timeout,
+        runtime.run_agent(
+            status.resident,
+            task,
+            execution_options(timeout),
+            false,
+            cancel.clone(),
+        ),
+    );
+    tokio::pin!(work);
+    let cadence = Duration::from_millis(400);
+    let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + cadence, cadence);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut work => {
+                return Ok(result.unwrap_or_else(|_| {
+                    cancel.cancel();
+                    Err(RuntimeError::Deadline)
+                }));
+            }
+            _ = heartbeat.tick() => {
+                status.phase = runtime.agents().active_inference(status.task_id).map_or(
+                    ReasoningPhase::Preparing {},
+                    |(model_id, provider_id)| ReasoningPhase::InferenceActive { model_id, provider_id },
+                );
+                status.observed_unix_ms = crate::memory_commands::current_timestamp()?;
+                WorldStore::observe_reasoning(database, world, *status)?;
+            }
+        }
+    }
 }

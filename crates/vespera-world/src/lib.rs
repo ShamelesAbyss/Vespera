@@ -155,6 +155,35 @@ pub struct ModelDecision {
     pub revision: u64,
 }
 
+/// Runtime observations stored separately from deterministic simulation state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReasoningPhase {
+    Preparing {},
+    InferenceActive {
+        model_id: ModelId,
+        provider_id: ProviderId,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningStatus {
+    pub resident: AgentId,
+    pub task_id: TaskId,
+    pub revision: u64,
+    pub phase: ReasoningPhase,
+    pub observed_unix_ms: u64,
+}
+
+impl ReasoningStatus {
+    pub fn is_fresh(self, unix_ms: u64) -> bool {
+        unix_ms
+            .checked_sub(self.observed_unix_ms)
+            .is_some_and(|age| age < 2000)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Memory {

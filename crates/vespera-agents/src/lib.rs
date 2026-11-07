@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use vespera_core::{
     AgentDefinition, AgentId, AgentStatus, Capability, DomainError, MemoryId, MemoryLayer, ModelId,
-    ModelSelectionPolicy, Permission, Task, TaskId, TaskState,
+    ModelSelectionPolicy, Permission, ProviderId, Task, TaskId, TaskState,
 };
 use vespera_model_registry::{ModelRegistration, ModelRegistry, RegistryError};
 use vespera_providers::CancellationToken;
@@ -366,6 +366,14 @@ impl AgentRuntime {
             .tasks
             .get(&task_id)
             .map(|task| task.state)
+    }
+
+    /// Read identities from an admitted local inference lease without exposing its payload.
+    pub fn active_inference(&self, task_id: TaskId) -> Option<(ModelId, ProviderId)> {
+        lock_state(&self.state)
+            .executions
+            .get(&task_id)
+            .map(|execution| (execution.model_id, execution.provider_id))
     }
 
     /// Cancel accepted queued work for its recorded owner. Running work must use

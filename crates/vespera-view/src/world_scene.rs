@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use tokio::sync::watch;
 use vespera_core::AgentId;
-use vespera_world::{Position, Role, Snapshot, World, WorldError, WorldStore};
+use vespera_world::{
+    Position, ReasoningPhase, ReasoningStatus, Role, Snapshot, World, WorldError, WorldStore,
+};
 
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
 
@@ -16,6 +18,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 struct Observation {
     world: World,
     status: &'static str,
+    reasoning: Option<ReasoningStatus>,
+    completed_controls: u64,
 }
 
 enum Action {
@@ -36,6 +40,8 @@ struct View {
     allow_control: bool,
     world: World,
     status: &'static str,
+    reasoning: Option<ReasoningStatus>,
+    completed_controls: u64,
     pending: bool,
     scene_dirty: bool,
     playing: bool,
@@ -69,7 +75,7 @@ pub(super) fn run(
     allow_control: bool,
     reduced_motion: bool,
 ) -> Result<(), WorldError> {
-    let world = WorldStore::read(&path)?;
+    let (world, reasoning) = read_observed(&path)?;
     let state = world.snapshot();
     let home_distance = f32::from(state.width.max(state.depth))
         .mul_add(1.35, 4.0)
@@ -77,6 +83,8 @@ pub(super) fn run(
     let (observations, updates) = watch::channel(Observation {
         world: world.clone(),
         status: "Database connected",
+        reasoning,
+        completed_controls: 0,
     });
     let (commands, actions) = mpsc::sync_channel(1);
     std::thread::spawn(move || observe(path, observations, actions));
@@ -87,6 +95,8 @@ pub(super) fn run(
             allow_control,
             world,
             status: "Database connected",
+            reasoning,
+            completed_controls: 0,
             pending: false,
             scene_dirty: true,
             playing: false,
@@ -109,26 +119,44 @@ pub(super) fn run(
     Ok(())
 }
 
+fn read_observed(path: &std::path::Path) -> Result<(World, Option<ReasoningStatus>), WorldError> {
+    let now = SystemTime::UNIX_EPOCH
+        .elapsed()
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0);
+    WorldStore::read_observed(path, now)
+}
+
 fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Receiver<Command>) {
     while !updates.is_closed() {
         let (result, is_control) = match actions.recv_timeout(POLL_INTERVAL) {
             Ok(command) => (
-                WorldStore::update(&path, |world| apply(world, command)),
+                WorldStore::update(&path, |world| apply(world, command)).map(|world| (world, None)),
                 true,
             ),
-            Err(RecvTimeoutError::Timeout) => (WorldStore::read(&path), false),
+            Err(RecvTimeoutError::Timeout) => (read_observed(&path), false),
             Err(RecvTimeoutError::Disconnected) => return,
         };
         match result {
-            Ok(world) => {
+            Ok((world, reasoning)) => {
                 updates.send_if_modified(|last| {
                     let status = if is_control {
                         "World change committed"
                     } else {
                         "Database connected"
                     };
-                    if is_control || last.world != world || last.status == "Database unavailable" {
-                        *last = Observation { world, status };
+                    if is_control
+                        || last.world != world
+                        || last.reasoning != reasoning
+                        || last.status == "Database unavailable"
+                    {
+                        last.world = world;
+                        last.status = status;
+                        last.reasoning = reasoning;
+                        if is_control {
+                            last.completed_controls = last.completed_controls.wrapping_add(1);
+                        }
                         true
                     } else {
                         false
@@ -144,8 +172,12 @@ fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Re
                     _ => "Database unavailable",
                 };
                 updates.send_if_modified(|last| {
-                    let changed = last.status != status;
+                    let changed = last.status != status || last.reasoning.is_some();
                     last.status = status;
+                    last.reasoning = None;
+                    if is_control {
+                        last.completed_controls = last.completed_controls.wrapping_add(1);
+                    }
                     is_control || changed
                 });
             }
@@ -241,16 +273,25 @@ fn receive(mut view: ResMut<View>) {
     if !view.updates.has_changed().unwrap_or(false) {
         return;
     }
-    let (world, status) = {
+    let (world, status, reasoning, completed_controls) = {
         let update = view.updates.borrow_and_update();
-        (update.world.clone(), update.status)
+        (
+            update.world.clone(),
+            update.status,
+            update.reasoning,
+            update.completed_controls,
+        )
     };
     if view.world != world {
         view.world = world;
         view.scene_dirty = true;
     }
     view.status = status;
-    view.pending = false;
+    view.reasoning = reasoning;
+    if view.completed_controls != completed_controls {
+        view.completed_controls = completed_controls;
+        view.pending = false;
+    }
     if status == "Database unavailable" {
         view.playing = false;
     }
@@ -457,6 +498,22 @@ fn links(view: Res<View>, selected: Res<Selected>, mut gizmos: Gizmos) {
             grid,
         );
     }
+    if let Some(reasoning) = view.reasoning
+        && let Some(resident) = state
+            .residents
+            .iter()
+            .find(|resident| resident.id == reasoning.resident)
+    {
+        let color = match reasoning.phase {
+            ReasoningPhase::Preparing {} => Color::srgb(1.0, 0.66, 0.20),
+            ReasoningPhase::InferenceActive { .. } => Color::srgb(0.28, 0.90, 1.0),
+        };
+        let center = place(resident.position, &state, 0.08);
+        gizmos.cube(
+            Transform::from_translation(center).with_scale(Vec3::new(0.9, 0.15, 0.9)),
+            color,
+        );
+    }
     if let Some(Object::Resident(id)) = selected.0
         && let Some(resident) = state.residents.iter().find(|resident| resident.id == id)
     {
@@ -483,6 +540,17 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
                     resident.position.x, resident.position.z, resident.carried, resident.relationships.len(),
                     state.residents.iter().filter_map(|other| resident.relationships.get(&other.id).map(|count| format!("{}: {count} encounters", other.name))).take(4).collect::<Vec<_>>().join("\n")
                 );
+                if let Some(reasoning) = view.reasoning.filter(|status| status.resident == id) {
+                    let phase = match reasoning.phase {
+                        ReasoningPhase::Preparing {} => "Preparing model request".into(),
+                        ReasoningPhase::InferenceActive { model_id, .. } => {
+                            let model = model_id.to_string();
+                            format!("Local inference lease active\nModel {}", &model[..8])
+                        }
+                    };
+                    let task = reasoning.task_id.to_string();
+                    detail.push_str(&format!("\n\nRUNTIME REASONING\n{phase}\nTask {}", &task[..8]));
+                }
                 if let Some(committed) = resident.last_model_decision {
                     use vespera_world::Decision;
                     let action = match committed.decision {

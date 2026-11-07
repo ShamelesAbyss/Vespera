@@ -194,6 +194,7 @@ struct HttpFixture {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
     inference_delay_ms: std::sync::Arc<AtomicU64>,
+    health_delay_ms: std::sync::Arc<AtomicU64>,
 }
 impl HttpFixture {
     fn new(health_denied: bool) -> Self {
@@ -216,6 +217,8 @@ impl HttpFixture {
         let stopped = stop.clone();
         let inference_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
         let delay = inference_delay_ms.clone();
+        let health_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
+        let health_delay = health_delay_ms.clone();
         let worker = std::thread::spawn(move || {
             while !stopped.load(Ordering::SeqCst) {
                 let (mut socket, _) = match listener.accept() {
@@ -294,10 +297,15 @@ impl HttpFixture {
                 };
                 let inference =
                     matches!(request.path.as_str(), "/api/chat" | "/v1/chat/completions");
+                let health = matches!(request.path.as_str(), "/api/version" | "/v1/models");
                 capture.lock().unwrap().push(request);
                 if inference {
                     std::thread::sleep(std::time::Duration::from_millis(
                         delay.load(Ordering::SeqCst),
+                    ));
+                } else if health {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        health_delay.load(Ordering::SeqCst),
                     ));
                 }
                 let response = format!(
@@ -313,6 +321,7 @@ impl HttpFixture {
             stop,
             worker: Some(worker),
             inference_delay_ms,
+            health_delay_ms,
         }
     }
     fn captured(&self) -> Vec<CapturedRequest> {
@@ -573,6 +582,114 @@ fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
             "shared load and unload"
         );
     }
+}
+
+#[test]
+fn world_run_observes_preparation_and_inference_without_advancing_the_world() {
+    use std::time::{Duration, Instant};
+    use vespera_world::{
+        Position, ReasoningPhase, ResidentSpec, Role, World, WorldSpec, WorldStore,
+    };
+
+    let fixture = HttpFixture::with_ollama_answer(false, r#"{"choice":0}"#);
+    fixture.health_delay_ms.store(800, Ordering::SeqCst);
+    fixture.inference_delay_ms.store(1500, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let database = directory.0.join("world.sqlite3");
+    let resident = AGENT.parse().unwrap();
+    let initial = World::new(WorldSpec {
+        seed: 0,
+        width: 5,
+        depth: 5,
+        depot: Position { x: 0, z: 0 },
+        residents: vec![ResidentSpec {
+            id: resident,
+            name: "Fixture".into(),
+            role: Role::Forager,
+            position: Position { x: 2, z: 2 },
+        }],
+        sites: vec![],
+    })
+    .unwrap();
+    WorldStore::initialize(&database, &initial).unwrap();
+    let config = directory.write_config(
+        &runtime_config(&fixture, false, true)
+            .replace("permissions = []", "permissions = [\"simulation_act\"]"),
+    );
+    let now = || u64::try_from(UNIX_EPOCH.elapsed().unwrap().as_millis()).unwrap();
+    assert!(
+        WorldStore::read_observed(&database, now())
+            .unwrap()
+            .1
+            .is_none()
+    );
+    let task = std::thread::scope(|scope| {
+        let child = scope.spawn(|| {
+            execute(&[
+                "world",
+                "--database",
+                database.to_str().unwrap(),
+                "run",
+                "--config",
+                config.to_str().unwrap(),
+                "--revision",
+                "0",
+                "--ticks",
+                "1",
+                "--reason-every",
+                "1",
+                "--tick-ms",
+                "0",
+                "--resident",
+                AGENT,
+                "--resume",
+                "--unload-after",
+            ])
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut preparing = None;
+        let active = loop {
+            let (world, status) = WorldStore::read_observed(&database, now()).unwrap();
+            if let Some(status) = status {
+                assert_eq!(status.resident, resident);
+                let state = world.snapshot();
+                assert_eq!((state.tick, state.revision), (1, 1));
+                assert!(state.residents[0].last_model_decision.is_none());
+                match status.phase {
+                    ReasoningPhase::Preparing {} => preparing = Some(status.task_id),
+                    ReasoningPhase::InferenceActive { .. } => break status,
+                }
+            }
+            assert!(!child.is_finished() && Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        assert_eq!(preparing, Some(active.task_id));
+        assert!(
+            WorldStore::read_observed(&database, now() + 2500)
+                .unwrap()
+                .1
+                .is_none()
+        );
+        let output = child.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        active.task_id
+    });
+    let (committed, status) = WorldStore::read_observed(&database, now()).unwrap();
+    assert!(status.is_none());
+    let state = committed.snapshot();
+    assert_eq!((state.tick, state.revision), (1, 2));
+    assert_eq!(
+        state.residents[0]
+            .last_model_decision
+            .unwrap()
+            .source
+            .task_id,
+        task
+    );
 }
 
 fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str]) -> Output {
