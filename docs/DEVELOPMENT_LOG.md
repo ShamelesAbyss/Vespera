@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Native Swarm delegation view
+
+The Machine scheduler checkpoint `5a22eeaefd43f7e10e8d17bedde2d63ff873d070` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42346207413). Workflows can opt into recording accepted delegations with their attempt IDs, participating agents and root correlation. The journal commits the batch with the terminal outcome in one transaction. Swarm follows that journal read-only and renders independent agents, directional links and inspection context.
+
+Windows validation passed 218 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. The two-agent CLI fixture checked delegation evidence against the actual workflow report. The journal conflict test checked that a rejected batch leaves no partial write. On the desktop, an empty journal showed zero agents. A separate CLI workflow populated the window after commit, and mouse picking, keyboard traversal, filtering and focus exposed the matching attempt and completed outcome.
+
+Workflow evidence is published after cleanup. Swarm does not currently show in-flight attempts, dependency edges or a first-party publisher for authorized message metadata. The next Swarm checkpoint needs those observations from the runtime and broker.
+
 ## 2026-11-06 — Machine scheduler and provider evidence
 
 Verified implementation checkpoint `5a22eeaefd43f7e10e8d17bedde2d63ff873d070` was pushed to `main`.

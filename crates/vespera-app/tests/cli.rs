@@ -633,6 +633,75 @@ fn run_fixture_workflow(
 }
 
 #[test]
+fn workflow_publishes_only_observed_delegations_with_root_correlation() {
+    use vespera_core::EventKind;
+    use vespera_events::Journal;
+
+    const WORKER: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let (_, coordinator) = config.split_once("[[agents]]").unwrap();
+    let worker = coordinator
+        .replace(AGENT, WORKER)
+        .replace("Archivist", "Worker");
+    let config = format!("{config}\n[[agents]]{worker}");
+    let mut workflow = workflow_value();
+    workflow["steps"][0]["candidates"] = serde_json::json!([WORKER]);
+    let journal_path = directory.0.join("swarm.sqlite3");
+    Journal::initialize(&journal_path, 16).unwrap();
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow.to_string(),
+        &[
+            "--resume",
+            "--event-journal",
+            journal_path.to_str().unwrap(),
+            "--record-delegations",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = Journal::open_reader(&journal_path)
+        .unwrap()
+        .replay(None, 16)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 3);
+    let root = workflow["task"]["id"].as_str().unwrap().parse().unwrap();
+    for (index, entry) in entries.iter().take(2).enumerate() {
+        let EventKind::TaskDelegated {
+            task_id,
+            from_agent_id,
+            to_agent_id,
+        } = &entry.event.kind
+        else {
+            panic!("expected delegation");
+        };
+        let attempt = &report["workflow"]["attempts"][index];
+        assert_eq!(attempt["delegated"], true);
+        assert_eq!(attempt["task_id"], task_id.to_string());
+        assert_eq!(attempt["agent_id"], to_agent_id.to_string());
+        assert_eq!(from_agent_id.to_string(), AGENT);
+        assert_eq!(entry.event.correlation_task_id, Some(root));
+    }
+    assert_eq!(
+        entries[2].event.kind,
+        EventKind::TaskCompleted { task_id: root }
+    );
+    assert_eq!(report["event_publication"]["cursor"]["sequence"], 3);
+    let evidence = serde_json::to_string(&entries).unwrap();
+    assert!(!evidence.contains("fixture integrated answer"));
+    assert!(!evidence.contains("Produce one short contribution"));
+}
+
+#[test]
 fn completion_events_replay_across_cli_processes_without_payload_text() {
     let fixture = HttpFixture::new(false);
     let directory = ScratchDirectory::new();

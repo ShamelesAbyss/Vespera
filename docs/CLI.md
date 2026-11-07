@@ -390,6 +390,18 @@ Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to record an obse
 
 Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. Use `follow` for local streaming and `replay` for discrete pages. Network subscriptions and broader lifecycle events remain roadmap work.
 
+### Swarm view
+
+Initialize a private local event journal with the `events init` command above. Add `--record-delegations --event-journal data/events.sqlite3` to a configured `run-workflow` command, then open the view in the same workspace. The view can also be open when the workflow runs.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --swarm data/events.sqlite3
+```
+
+The workflow publishes only delegations that the runtime accepted. Each record carries the attempt and agent IDs and the root workflow correlation. The delegation records and root terminal event commit in one batch after execution and cleanup. Choose retention large enough to retain the whole batch if you need all its records. The journal stores no workflow prompts or generated outputs in this batch.
+
+Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Swarm is read-only and follows new committed records without a broker key. It shows up to 24 agents from its latest 128 relationship observations and labels a pruned journal history. The view can display typed message records already in the journal. CLI workflow publication currently produces delegation and outcome evidence. Live in-flight progress, message publication and dependency edges remain roadmap work.
+
 ### Follow committed events
 
 ```powershell

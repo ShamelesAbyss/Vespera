@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity and persistent simulation state. The fourteen-crate workspace has 217 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, model-driven residents and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 218 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, model-driven residents and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -23,6 +23,8 @@ cargo run --locked -p vespera-view --features graphics -- --machine
 ```
 
 Machine can also inspect scheduler queue counts, estimated reservations and cached provider health from an opted-in local agent or workflow run. Press 4 to inspect that runtime. [Connect a run to Machine](docs/CLI.md#observe-a-local-scheduler)
+
+Open the read-only Swarm view to follow accepted workflow delegations in an initialized local event journal. Cyan arrows identify the delegating and receiving agents, and the inspector correlates each observed attempt with its workflow outcome. [Record and inspect delegations](docs/CLI.md#swarm-view)
 
 Open the same executable in World Simulation Mode with an initialized database.
 

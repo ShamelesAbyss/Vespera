@@ -148,6 +148,9 @@ struct RunWorkflowArgs {
     /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
+    /// Include accepted delegation records alongside the workflow outcome.
+    #[arg(long, requires = "event_journal")]
+    record_delegations: bool,
     /// Publish sampled scheduler counts to a new private local directory.
     #[arg(long)]
     scheduler_telemetry: Option<PathBuf>,

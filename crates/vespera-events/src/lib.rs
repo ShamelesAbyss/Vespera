@@ -155,64 +155,63 @@ impl Journal {
 
     /// Atomically append and trim history. Equal retained events are idempotent.
     pub fn append(&mut self, event: &EventEnvelope) -> Result<Cursor, JournalError> {
-        event
-            .validate()
-            .map_err(|_| JournalError::Invalid("envelope"))?;
-        // Journal publishers supply static source labels and UUID simulation IDs.
-        if !label(&event.source) {
-            return Err(JournalError::Invalid("source label"));
+        self.append_batch(std::slice::from_ref(event))
+    }
+
+    /// Append one bounded batch and trim in a single transaction. Returns the greatest
+    /// sequence of the submitted events, including any matching retained entries.
+    pub fn append_batch(&mut self, events: &[EventEnvelope]) -> Result<Cursor, JournalError> {
+        if events.is_empty() || events.len() > MAX_PAGE as usize {
+            return Err(JournalError::Invalid("batch size"));
         }
-        if let EventKind::SimulationAdvanced { simulation_id, .. } = &event.kind
-            && Uuid::parse_str(simulation_id).is_err()
-        {
-            return Err(JournalError::Invalid("simulation ID"));
-        }
-        let payload = serde_json::to_string(event).map_err(|_| JournalError::Invalid("payload"))?;
-        if payload.len() > 4096 {
-            return Err(JournalError::Invalid("payload size"));
-        }
+        let prepared = events
+            .iter()
+            .map(prepare_event)
+            .collect::<Result<Vec<_>, _>>()?;
         let tx = self
             .0
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db)?;
-        let (journal_id, retention, _) = metadata(&tx)?;
-        let id = event.event_id.to_string();
-        let existing: Option<(i64, String)> = tx
-            .query_row(
-                "SELECT sequence,payload FROM journal_events WHERE event_id=?1",
-                [&id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(db)?;
-        let sequence = if let Some((sequence, previous)) = existing {
-            if previous != payload {
-                return Err(JournalError::Conflict);
-            }
-            sequence
-        } else {
-            tx.execute(
-                "INSERT INTO journal_events(event_id,payload) VALUES(?1,?2)",
-                params![id, payload],
-            )
-            .map_err(db)?;
-            let sequence = tx.last_insert_rowid();
-            let cutoff = sequence - i64::from(retention);
-            if cutoff > 0 {
-                tx.execute("DELETE FROM journal_events WHERE sequence<=?1", [cutoff])
-                    .map_err(db)?;
+        let (journal_id, retention, floor) = metadata(&tx)?;
+        let mut newest = 0;
+        for (id, payload) in prepared {
+            let existing: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT sequence,payload FROM journal_events WHERE event_id=?1",
+                    [&id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(db)?;
+            let sequence = if let Some((sequence, previous)) = existing {
+                if previous != payload {
+                    return Err(JournalError::Conflict);
+                }
+                sequence
+            } else {
                 tx.execute(
-                    "UPDATE journal_meta SET discarded_through=?1 WHERE singleton=1",
-                    [cutoff],
+                    "INSERT INTO journal_events(event_id,payload) VALUES(?1,?2)",
+                    params![id, payload],
                 )
                 .map_err(db)?;
-            }
-            sequence
-        };
+                tx.last_insert_rowid()
+            };
+            newest = newest.max(sequence);
+        }
+        let cutoff = newest - i64::from(retention);
+        if cutoff > floor {
+            tx.execute("DELETE FROM journal_events WHERE sequence<=?1", [cutoff])
+                .map_err(db)?;
+            tx.execute(
+                "UPDATE journal_meta SET discarded_through=?1 WHERE singleton=1",
+                [cutoff],
+            )
+            .map_err(db)?;
+        }
         tx.commit().map_err(db)?;
         Ok(Cursor {
             journal_id,
-            sequence,
+            sequence: newest,
         })
     }
 
@@ -278,6 +277,25 @@ impl Journal {
             has_more,
         })
     }
+}
+
+fn prepare_event(event: &EventEnvelope) -> Result<(String, String), JournalError> {
+    event
+        .validate()
+        .map_err(|_| JournalError::Invalid("envelope"))?;
+    if !label(&event.source) {
+        return Err(JournalError::Invalid("source label"));
+    }
+    if let EventKind::SimulationAdvanced { simulation_id, .. } = &event.kind
+        && Uuid::parse_str(simulation_id).is_err()
+    {
+        return Err(JournalError::Invalid("simulation ID"));
+    }
+    let payload = serde_json::to_string(event).map_err(|_| JournalError::Invalid("payload"))?;
+    if payload.len() > 4096 {
+        return Err(JournalError::Invalid("payload size"));
+    }
+    Ok((event.event_id.to_string(), payload))
 }
 
 fn open(path: &Path, flags: OpenFlags) -> Result<Connection, JournalError> {

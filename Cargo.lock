@@ -5458,6 +5458,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "vespera-core",
+ "vespera-events",
  "vespera-sdk",
  "vespera-world",
 ]

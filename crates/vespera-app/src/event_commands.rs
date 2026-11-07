@@ -160,17 +160,32 @@ impl Publication {
 }
 
 pub(crate) async fn record(
-    mut journal: Journal,
+    journal: Journal,
     source: &'static str,
     task: TaskId,
     kind: EventKind,
 ) -> Publication {
+    record_batch(journal, source, task, vec![kind]).await
+}
+
+pub(crate) async fn record_batch(
+    mut journal: Journal,
+    source: &'static str,
+    task: TaskId,
+    kinds: Vec<EventKind>,
+) -> Publication {
     let result = tokio::task::spawn_blocking(move || {
         let timestamp = crate::memory_commands::current_timestamp()?;
-        let mut event = EventEnvelope::new(source, timestamp, kind)
-            .map_err(|_| JournalError::Invalid("envelope"))?;
-        event.correlation_task_id = Some(task);
-        Ok::<_, AppError>(journal.append(&event)?)
+        let events = kinds
+            .into_iter()
+            .map(|kind| {
+                let mut event = EventEnvelope::new(source, timestamp, kind)
+                    .map_err(|_| JournalError::Invalid("envelope"))?;
+                event.correlation_task_id = Some(task);
+                Ok(event)
+            })
+            .collect::<Result<Vec<_>, JournalError>>()?;
+        Ok::<_, AppError>(journal.append_batch(&events)?)
     })
     .await
     .unwrap_or(Err(JournalError::Database.into()));

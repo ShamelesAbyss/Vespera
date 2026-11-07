@@ -1,5 +1,6 @@
 mod machine_scene;
 mod scene;
+mod swarm_scene;
 mod world_scene;
 
 use std::net::SocketAddr;
@@ -33,6 +34,9 @@ struct Options {
     /// Open a persistent simulation world instead of the broker view.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
     world: Option<PathBuf>,
+    /// Inspect observed agent relationships from an existing local event journal.
+    #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world", "machine"])]
+    swarm: Option<PathBuf>,
     /// Allow the World Mode window to commit simulation controls.
     #[arg(long, requires = "world")]
     allow_world_control: bool,
@@ -48,6 +52,15 @@ enum Update {
 
 fn main() -> ExitCode {
     let options = Options::parse();
+    if let Some(path) = options.swarm {
+        return match swarm_scene::run(path, options.reduced_motion) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if options.machine {
         machine_scene::run(options.scheduler_telemetry, options.reduced_motion);
         return ExitCode::SUCCESS;

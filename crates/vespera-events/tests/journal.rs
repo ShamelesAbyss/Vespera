@@ -62,7 +62,7 @@ fn retained_duplicates_are_idempotent_and_invalid_writes_leave_history_intact() 
     assert_eq!(journal.append(&first).unwrap(), cursor);
     first.occurred_at_unix_ms += 1;
     assert!(matches!(
-        journal.append(&first),
+        journal.append_batch(&[event(), first]),
         Err(JournalError::Conflict)
     ));
     let mut invalid = event();

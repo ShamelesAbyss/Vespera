@@ -65,11 +65,27 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let succeeded = workflow
         .as_ref()
         .is_some_and(|report| report.task.state == TaskState::Completed);
-    let event = workflow
-        .as_ref()
-        .and_then(|report| event_commands::terminal_event(task_id, report.task.state));
-    let event_publication = if let (Some(journal), Some(event)) = (journal, event) {
-        Some(event_commands::record(journal, "run-workflow", task_id, event).await)
+    let event_publication = if let (Some(journal), Some(report)) = (journal, &workflow) {
+        let mut events = Vec::new();
+        if args.record_delegations {
+            events.extend(
+                report
+                    .attempts
+                    .iter()
+                    .filter(|attempt| attempt.delegated)
+                    .map(|attempt| EventKind::TaskDelegated {
+                        task_id: attempt.task_id,
+                        from_agent_id: report.coordinator,
+                        to_agent_id: attempt.agent_id,
+                    }),
+            );
+        }
+        events.extend(event_commands::terminal_event(task_id, report.task.state));
+        if events.is_empty() {
+            None
+        } else {
+            Some(event_commands::record_batch(journal, "run-workflow", task_id, events).await)
+        }
     } else {
         None
     };
