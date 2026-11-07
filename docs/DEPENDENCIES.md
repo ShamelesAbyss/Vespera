@@ -34,7 +34,7 @@ Protected worker transport reuses the locked Rustls and Tokio Rustls packages wi
 
 SQLite storage now uses exactly `rusqlite 0.41.1` with default features disabled and explicit `libsqlite3-sys`/`bundled` features. The native source bundle reports SQLite 3.54.1; FTS5 is exercised by actual retrieval tests. No separate database server, SQLCipher, loadable extensions, generated bindings or Wasm SQLite backend is enabled. The build requires a C compiler in addition to Rust. Optional vectors remain deferred until their provenance, rebuild/resource limits and retrieval quality can be verified.
 
-Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC remains deferred.
+The optional `vespera-view/graphics` feature uses Bevy 0.20.1 and wgpu for the native window, meshes, picking and inspection UI. These dependencies are outside the default headless build and the authoritative orchestration crates. gRPC remains deferred.
 
 No Python runtime, Python orchestration backend, JS frontend, bundled model weights, vendor SDK, or GPU runtime is required by the current first-party application. Node.js was used only as an initial development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements. Explicit CLI operations now call real provider adapters; a compatible daemon/model must be independently installed/configured for live inference.
 

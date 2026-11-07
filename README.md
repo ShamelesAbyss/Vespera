@@ -2,9 +2,19 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded single-agent inference through Ollama and OpenAI-compatible HTTP adapters and serves an authenticated task and messaging broker for approved external workers. The twelve-crate workspace has 214 passing offline tests plus the SDK doctest, and Windows release validation. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, simulation, native 3D and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and renders observed broker activity in a native 3D window. The thirteen-crate workspace has 215 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. The full orchestration view, persistent World Simulation Mode and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
+
+## Native 3D client
+
+The optional Bevy executable renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765
+```
+
+Left-click a task cube or worker sphere to inspect it. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus on the selected object or R to reset the camera. Launch with `--allow-cancel` to enable C on a selected task. Cancellation uses the signed broker API. The view shows retained observations and labels resource measurements as unavailable. Providers, models, memory and richer orchestration telemetry still need integration. World Simulation Mode remains an explicit release requirement. [Broker setup](docs/CLI.md#external-worker-service)
 
 ## Architecture and workspace
 
@@ -46,6 +56,7 @@ flowchart TD
 | `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
 | `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
 | `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
+| `vespera-view` | Observed broker graph and optional native 3D executable |
 | `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
 | `vespera-app` | Runtime composition, diagnostics and ten top-level CLI commands |
 
@@ -127,7 +138,7 @@ Configure agents in TOML with stable independent UUIDs, identity/personality/goa
 
 Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [durable memory](docs/MEMORY.md). The separate `vespera-memory` library now provides permission-checked SQLite persistence, bounded structured/phrase search and atomic consolidation lineage. Its real agent authorization adapter survives model rebinding and supports reopening under a fresh runtime. The explicit `memory` CLI opens storage for operator requests. Use `run-agent --memory-query-file` to attach authorized durable records and `--remember-result` to save an accepted response. Both are explicit options. See the [CLI reference](docs/CLI.md#opt-in-memory-during-inference).
 
-The orchestrator executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan. Automatic decomposition, deterministic simulation and the native 3D command center remain roadmap work. [Orchestrator reference](docs/ORCHESTRATION.md)
+The orchestrator executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan. Automatic decomposition, deterministic simulation and rendering native workflow events remain roadmap work. [Orchestrator reference](docs/ORCHESTRATION.md)
 
 ## External workers
 

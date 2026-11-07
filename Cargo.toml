@@ -12,6 +12,7 @@ members = [
     "crates/vespera-events",
     "crates/vespera-api",
     "crates/vespera-sdk",
+    "crates/vespera-view",
     "crates/vespera-app"
 ]
 

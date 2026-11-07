@@ -2,7 +2,7 @@
 
 ## Current recovery implementation — 2026-11-06
 
-The twelve-crate workspace now integrates real provider adapters, effective-health
+The thirteen-crate workspace now integrates real provider adapters, effective-health
 registry operations, conservative model reservations/lifecycle, bounded priority
 admission, owned inference leases, bounded independent agents and actual task
 inference. The application library composes these services. The CLI implements
@@ -10,7 +10,7 @@ inference. The application library composes these services. The CLI implements
 `run-workflow`, `memory`, `events` and `serve`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-214-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+215-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
 workspace build, and optimized worker HTTP subprocess tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
@@ -27,6 +27,8 @@ Signed WebSocket handshakes use the same principal and cursor rules as replay. S
 The broker and SDK support TLS 1.3 for HTTPS and secure WebSockets. A loopback client exercised both against an explicitly enabled wildcard listener. The subprocess test also checked rejection without remote opt-in, plaintext on a TLS port, untrusted roots and an IP identity mismatch. Cross-host deployment remains untested.
 
 Approved external workers can exchange text over explicitly granted directional routes. Subprocess tests cover private inboxes, acknowledgement, bounded retention, idempotent retries and revocation. Message contents remain process-local.
+
+The optional Bevy orchestration window reads signed broker subscriptions. A Windows desktop smoke test rendered real lease and task transitions, selected objects, focused and reset the camera, and sent a cancellation that independent broker inspection confirmed. The graphics build was validated in the development profile. Full telemetry and World Simulation Mode remain open.
 
 The optional exclusive broker database stores tasks, generations, results and revocations before HTTP responses. A forced subprocess restart verified recovery, same-result retries, fencing, queue order and revocation. A fault-injected transaction verified rollback and a simulated clock rollback verified conservative expiry.
 

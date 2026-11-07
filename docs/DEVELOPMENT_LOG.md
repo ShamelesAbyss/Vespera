@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Native 3D orchestration client
+
+The worker mailbox checkpoint `0c0e57ac26503679190726e6c2a93a0862066e15` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42341391818). Added the optional Bevy/wgpu executable `vespera-view`. Signed broker subscriptions populate task meshes, observed worker meshes and attempt links. Picking exposes observed state and provenance. Camera controls provide orbit, pan, zoom, focus and reset. Cancellation is disabled unless explicitly enabled and uses the signed operator API. The default workspace stays headless.
+
+The 215-test workspace suite and SDK doctest passed. Strict Clippy passed with and without graphics. The Windows graphics development build rendered on a machine with an RTX 4070 Laptop GPU. Desktop checks verified picking, inspector details, camera focus and reset, and cancellation of a queued fixture task. Independent broker inspection confirmed the cancelled state.
+
+The view currently covers external broker tasks and workers on loopback. Unavailable measurements are labeled. Providers, models, native workflows, memory, communication telemetry and persistent World Simulation Mode remain required work. GPU memory and responsiveness benchmarks and other operating systems remain unverified.
+
 ## 2026-11-06 — Authorized worker mailboxes
 
 Verified implementation checkpoint `0c0e57ac26503679190726e6c2a93a0862066e15` was pushed to `main`.

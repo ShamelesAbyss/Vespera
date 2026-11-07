@@ -1,12 +1,13 @@
 # Architecture
 
 Vespera is a local-first Rust orchestration and simulation platform under active
-implementation. The current twelve-crate workspace connects configuration,
+implementation. The current thirteen-crate workspace connects configuration,
 provider HTTP adapters, a model registry, resource scheduling and independent
 agent execution through a native CLI. It also provides bounded sequential
 workflows, SQLite memory and task events, and an authenticated worker service with a
-Rust SDK and opt-in TLS. Automatic orchestration, external agent messaging, simulation,
-native 3D and experimentation remain required milestones.
+Rust SDK and opt-in TLS, directed worker mailboxes, and a native 3D view of
+observed broker activity. Automatic orchestration, persistent simulation,
+complete orchestration visualization and experimentation remain required milestones.
 
 ## Current workspace
 
@@ -27,6 +28,8 @@ flowchart TD
     API --> Core
     Events --> Core
     SDK[vespera-sdk] --> Core
+    View[vespera-view] --> Core
+    View -. graphics feature .-> SDK
     Orchestrator[vespera-orchestrator] --> Agents
     Orchestrator --> Providers
     Orchestrator --> Core
@@ -56,6 +59,7 @@ flowchart TD
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-api` | Bounded HTTP service with role-separated credentials, fenced task attempts and optional TLS |
 | `vespera-sdk` | Async client for v2 operator and worker actions, scoped event replay and WebSocket subscriptions |
+| `vespera-view` | Bounded event projection and optional Bevy window with task and worker picking |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |

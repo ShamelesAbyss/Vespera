@@ -15,7 +15,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
 | 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls and scoped events. Optional SQLite recovers work, revocations and feeds. Opt-in TLS 1.3 supports remote binding. Cross-host deployment and broader authorized messaging remain. |
 | 11: simulation | Pending; independent deterministic world engine required. |
-| 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |
+| 12: 3D command center | The optional Bevy executable projects real broker task and worker events into a selectable 3D graph with camera and cancellation controls. Full orchestration telemetry, World Simulation Mode and hardware validation remain release gates. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
 
 ## Milestone 0 — Repository inspection and architecture
