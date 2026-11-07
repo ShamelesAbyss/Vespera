@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Bounded resident reasoning cadence
 
+Verified implementation checkpoint `ccdb4c4328354732fb8b8e0afe7e3c7506dfe6d0` was pushed to `main`.
+
 The individual model-decision checkpoint `c034dd7c33f54ba7bdbd3836968379f9ba62bc75` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42348529835). Added `world run` to commit a finite series of deterministic ticks and rotate sparse model choices among explicitly approved residents. One scheduler and provider registry serve the roster. Failed or invalid responses leave the world unchanged at that boundary and deterministic ticks resume. Every write is fenced against the observed world.
 
 Windows validation passed 222 offline workspace tests, the SDK doctest, formatting and strict workspace Clippy. The HTTP integration exercised two residents with one shared model load and unload. It compared a run with two invalid choices to a deterministic-only world and found identical persisted state. A real Ollama 0.40.13 / hermes3:8b run committed five ticks, with Aster's and Lark's choices at revisions 3 and 6. The open 3D view showed tick 5, revision 7 and each resident's committed provenance. Unload was acknowledged and the backend reported zero resident models afterward.
