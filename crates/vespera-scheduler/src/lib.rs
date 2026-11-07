@@ -67,6 +67,15 @@ pub enum SchedulerError {
         /// Target model.
         model_id: ModelId,
     },
+    /// A model cannot be reloaded at a different context while locally leased.
+    #[error(
+        "model {model_id} has active leases at context {loaded}; requested context {requested}"
+    )]
+    ContextInUse {
+        model_id: ModelId,
+        loaded: u32,
+        requested: u32,
+    },
     /// The provider did not acknowledge the expected lifecycle target.
     #[error("provider did not acknowledge lifecycle operation for model {model_id}")]
     UnacknowledgedLifecycle {
@@ -197,9 +206,20 @@ struct SchedulerState {
     logical_tick: u64,
     leases: BTreeMap<uuid::Uuid, ModelId>,
     // Retain the actual provider instance so removal/re-registration cannot redirect unload.
-    bound_providers: BTreeMap<ModelId, Arc<dyn InferenceProvider>>,
+    bindings: BTreeMap<ModelId, ModelBinding>,
     admission_started: bool,
     startup: Option<StartupResidency>,
+}
+
+struct ModelBinding {
+    provider: Arc<dyn InferenceProvider>,
+    context_tokens: u32,
+}
+
+enum Preparation {
+    Ready { needs_load: bool },
+    ReloadContext,
+    Evict(ModelId),
 }
 
 struct StartupResidency {
@@ -612,7 +632,7 @@ impl ResourceScheduler {
             if cancel.is_cancelled() {
                 return Err(SchedulerError::Cancelled);
             }
-            let decision = {
+            let decision = 'admission: {
                 let mut state = lock(&self.state);
                 let external = if let Some(startup) = &state.startup {
                     let Some(observed) = startup.providers.get(&model.provider_id) else {
@@ -636,15 +656,13 @@ impl ResourceScheduler {
                     StartupResidencyReport::default()
                 };
                 let existing = state.resident_models.get(&model_id);
+                let binding = state.bindings.get(&model_id);
                 if existing.is_some_and(|entry| {
                     entry.provider_id != model.provider_id
                         || entry.provider_model_identifier != model.provider_model_identifier
                         || entry.ram_bytes != ram_bytes
                         || entry.vram_bytes != vram_bytes
-                }) || state
-                    .bound_providers
-                    .get(&model_id)
-                    .is_some_and(|bound| !Arc::ptr_eq(bound, &provider))
+                }) || binding.is_some_and(|bound| !Arc::ptr_eq(&bound.provider, &provider))
                 {
                     return Err(SchedulerError::RegistrationChanged { model_id });
                 }
@@ -656,12 +674,32 @@ impl ResourceScheduler {
                 }) {
                     return Err(SchedulerError::UncertainResidency { model_id });
                 }
-                let reuse = existing.is_some();
+                let changed_context = existing.zip(binding).filter(|(entry, bound)| {
+                    entry.residency == ResidencyState::Loaded
+                        && bound.context_tokens != context_tokens
+                });
+                let reuse = existing.is_some() && changed_context.is_none();
                 let request = ResourceRequest {
                     ram_bytes: if reuse { 0 } else { ram_bytes },
                     vram_bytes: if reuse { 0 } else { vram_bytes },
                     context_tokens,
                 };
+                let external_usage = ResourceUsage {
+                    ram_bytes: external.ram_bytes,
+                    vram_bytes: external.vram_bytes,
+                    active_inferences: 0,
+                };
+                self.policy.budget.admit(&external_usage, &request)?;
+                if let Some((entry, bound)) = changed_context {
+                    if entry.active_inferences != 0 {
+                        return Err(SchedulerError::ContextInUse {
+                            model_id,
+                            loaded: bound.context_tokens,
+                            requested: context_tokens,
+                        });
+                    }
+                    break 'admission Preparation::ReloadContext;
+                }
                 let accounted = ResourceUsage {
                     ram_bytes: add_memory(
                         state.usage.ram_bytes,
@@ -686,7 +724,13 @@ impl ResourceScheduler {
                             entry.active_inferences += 1;
                             entry.last_used_tick = tick;
                         } else {
-                            state.bound_providers.insert(model_id, provider.clone());
+                            state.bindings.insert(
+                                model_id,
+                                ModelBinding {
+                                    provider: provider.clone(),
+                                    context_tokens,
+                                },
+                            );
                             state.resident_models.insert(
                                 model_id,
                                 ResidentModel {
@@ -703,7 +747,7 @@ impl ResourceScheduler {
                                 },
                             );
                         }
-                        Ok(!reuse)
+                        Preparation::Ready { needs_load: !reuse }
                     }
                     Err(error) => {
                         let candidate = if self.policy.evict_idle_on_pressure
@@ -731,17 +775,19 @@ impl ResourceScheduler {
                         } else {
                             None
                         };
-                        Err((error, candidate))
+                        Preparation::Evict(candidate.ok_or(SchedulerError::BudgetExceeded(error))?)
                     }
                 }
             };
             match decision {
-                Ok(needs_load) => break needs_load,
-                Err((_, Some(candidate))) => {
+                Preparation::Ready { needs_load } => break needs_load,
+                Preparation::ReloadContext => {
+                    self.evict_with_gate_held(model_id, cancel.clone()).await?;
+                }
+                Preparation::Evict(candidate) => {
                     attempted.insert(candidate);
                     self.evict_model(candidate, cancel.clone()).await?;
                 }
-                Err((error, None)) => return Err(SchedulerError::BudgetExceeded(error)),
             }
         };
         let mut loaded_on_demand = false;
@@ -816,6 +862,14 @@ impl ResourceScheduler {
             () = cancel.cancelled() => return Err(SchedulerError::Cancelled),
             guard = gate.lock() => guard,
         };
+        self.evict_with_gate_held(model_id, cancel).await
+    }
+
+    async fn evict_with_gate_held(
+        &self,
+        model_id: ModelId,
+        cancel: CancellationToken,
+    ) -> Result<bool, SchedulerError> {
         if cancel.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
@@ -827,9 +881,9 @@ impl ResourceScheduler {
             }
         };
         let provider = lock(&self.state)
-            .bound_providers
+            .bindings
             .get(&model_id)
-            .cloned()
+            .map(|bound| bound.provider.clone())
             .ok_or(SchedulerError::UncertainResidency { model_id })?;
         if provider.lifecycle_support().explicit_model_unload != LifecycleCapabilityState::Supported
         {
@@ -865,7 +919,7 @@ impl ResourceScheduler {
             state.usage.ram_bytes -= entry.ram_bytes;
             state.usage.vram_bytes -= entry.vram_bytes;
         }
-        state.bound_providers.remove(&model_id);
+        state.bindings.remove(&model_id);
         transition.armed = false;
         Ok(true)
     }

@@ -19,6 +19,7 @@ struct MockProvider {
     load_mode: AtomicUsize,
     unload_mode: AtomicUsize,
     loads: AtomicUsize,
+    last_load_context: AtomicUsize,
     unloads: AtomicUsize,
     entered: tokio::sync::Notify,
     proceed: tokio::sync::Notify,
@@ -31,6 +32,7 @@ impl MockProvider {
             load_mode: AtomicUsize::new(1),
             unload_mode: AtomicUsize::new(1),
             loads: AtomicUsize::new(0),
+            last_load_context: AtomicUsize::new(0),
             unloads: AtomicUsize::new(0),
             entered: tokio::sync::Notify::new(),
             proceed: tokio::sync::Notify::new(),
@@ -213,6 +215,21 @@ impl InferenceProvider for MockProvider {
                 .await
         })
     }
+    fn load_model_with_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        context_tokens: u32,
+        keep_alive: Option<std::time::Duration>,
+        cancel: CancellationToken,
+    ) -> vespera_providers::BoxFuture<
+        'a,
+        Result<ModelLifecycleOutcome, vespera_providers::ProviderError>,
+    > {
+        self.last_load_context
+            .store(context_tokens as usize, Ordering::SeqCst);
+        self.load_model(model_name, keep_alive, cancel)
+    }
+
     fn unload_model<'a>(
         &'a self,
         model_name: &'a str,
@@ -417,6 +434,47 @@ async fn successful_pressure_eviction_and_reuse_account_once() {
     assert_eq!(provider.unloads.load(Ordering::SeqCst), 1);
     assert_eq!(scheduler.resident_models().await[0].model_id, b);
     assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+}
+
+#[tokio::test]
+async fn context_change_fences_active_leases_and_reloads_only_after_acknowledged_unload() {
+    use vespera_scheduler::{ResidencyState, SchedulerError};
+
+    let (scheduler, provider, model, _) = fixture().await;
+    let admit =
+        |context| scheduler.admit_and_prepare(model, Some(context), CancellationToken::new());
+    let lease = admit(256).await.unwrap();
+    assert_eq!(provider.last_load_context.load(Ordering::SeqCst), 256);
+    assert!(matches!(
+        admit(512).await,
+        Err(SchedulerError::ContextInUse {
+            loaded: 256,
+            requested: 512,
+            ..
+        })
+    ));
+    assert_eq!(provider.unloads.load(Ordering::SeqCst), 0);
+    lease.release();
+    let replacement = admit(512).await.unwrap();
+    assert!(replacement.loaded_on_demand);
+    assert_eq!(provider.unloads.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.loads.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.last_load_context.load(Ordering::SeqCst), 512);
+    replacement.release();
+
+    provider.unload_mode.store(2, Ordering::SeqCst);
+    assert!(matches!(
+        admit(256).await,
+        Err(SchedulerError::UnacknowledgedLifecycle { .. })
+    ));
+    assert_eq!(provider.loads.load(Ordering::SeqCst), 2);
+    let usage = scheduler.usage_snapshot().await;
+    assert_eq!(usage.active_inferences, 0);
+    assert_eq!(usage.ram_bytes, 100);
+    assert_eq!(
+        scheduler.resident_models().await[0].residency,
+        ResidencyState::Unknown
+    );
 }
 
 #[tokio::test]

@@ -106,6 +106,15 @@ The deterministic fake provider covers admission, reuse, acknowledged pressure
 eviction, unsupported/failed/unacknowledged unload, coordinated loading, failed
 load, and task abort during load or unload. It does not prove live model fit.
 
-Scheduler-driven native Ollama preload now carries the admitted context, matching native inference. A live 512-token run reported a 512-token allocation; see [evidence](../artifacts/live-ollama-context-2026-11-06.json). This is provider-specific and does not add allocation control to compatible APIs or reconcile reused/external allocations.
+Scheduler-driven native Ollama preload carries the admitted context, matching
+native inference. A live 512-token run reported a 512-token allocation. See
+[the captured evidence](../artifacts/live-ollama-context-2026-11-06.json).
+
+An explicitly loaded reservation can be reused at the same requested context.
+A different context requires an idle reservation and an acknowledged unload
+before preload. A context change during an active local lease returns a typed
+error. Failed unloads retain the reservation. Provider-managed reservations
+continue to have unverified allocation. Supply model estimates that include
+the maximum permitted context and provider concurrency overhead.
 
 The request-aware admission API accepts a validated bounded request, checks its native model name against current inventory, and admits exactly its context. A mismatch or context/budget rejection occurs before model load. Managed agents use this path after preflight; manual admission does not itself validate a future inference payload.
