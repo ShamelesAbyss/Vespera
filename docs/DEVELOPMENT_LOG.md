@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable scheduler residency intent
+
+Verified implementation checkpoint `5ca35981273f683d73450acf2ac129925c457403` was pushed to `main`. The admission residency checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42426565208).
+
+`--residency-journal` commits lifecycle intent before activation and retires it after acknowledged unload. A CLI fixture killed a process with a load request in flight. It verified exclusive access while that process lived, a durable fence after restart, continued memory pressure when the old model was absent, and no automatic unload of a reported resident. An acknowledgement cleared only an observed-absent record, and a subsequent acknowledged unload retired the new intent. The fixture also verified rejection of an unrelated file without modifying it or contacting the provider.
+
+With Ollama 0.40.13 and `hermes3:8b`, a separate invocation left a model resident. Reopen refused to take ownership, including with recovery acknowledgement while the model was still present. Operator unload left the durable fence intact until acknowledgement. The recovery invocation and an ordinary reopen then completed, with final residency empty. Windows formatting, strict workspace Clippy and offline workspace tests passed. Journals coordinate only their own invocations, and operator acknowledgement is required for unresolved intent. The next scheduler work is exposing configurable model priorities and lifecycle policies.
+
 ## 2026-11-07 — External residency checks before admission
 
 Verified implementation checkpoint `7f75c0b14b56701aa608bedf800cd3e7ec957634` was pushed to `main`. The per-inference allowance checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42426014923).
