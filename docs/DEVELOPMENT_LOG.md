@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Live resident reasoning evidence
 
+Verified implementation checkpoint `15c9f8366e0e21ffa30c115150d12682d151d245` was pushed to `main`.
+
 The cadence checkpoint `ccdb4c4328354732fb8b8e0afe7e3c7506dfe6d0` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42348974830). Scheduled runs publish a short-lived heartbeat in the world database. The marker describes preparation or a sampled admitted local inference lease. It leaves the tick and revision unchanged. World Mode reads it alongside simulation state and distinguishes it from a committed model choice.
 
 Windows validation passed 223 offline workspace tests, the SDK doctest, strict workspace and graphics Clippy, graphics tests and the graphics build. The CLI fixture observed both phases for the same task, verified heartbeat expiry and matched the final task to the persisted choice. A controlled provider fixture showed the amber preparation marker at revision 1, the cyan lease marker during the held response and the committed choice at revision 2. The tick stayed at 1 during all three observations.
