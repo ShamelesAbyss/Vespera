@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Configurable scheduler policy
+
+Verified implementation checkpoint `742fc1137320c026eaa15d5f3f757f4c36130bad` was pushed to `main`. The durable residency journal passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42427116568).
+
+The optional TOML scheduling table configures queue capacity, priority bypasses, per-model priority, native keep-alive and pressure eviction. Runtime fixtures exercised configured queue rejection, priority overtaking, lower-priority eviction, and budget rejection with pressure eviction disabled. The CLI fixture verified that scoped configuration drops unrelated priorities and that native preload and inference both carry the configured retention.
+
+On Windows, Ollama 0.40.13 and `hermes3:8b` completed a request with a 12-second retention hint. The first residency sample reported 11.94 seconds remaining, and the model expired without an unload request. Formatting, strict workspace Clippy and the offline workspace suite passed. The configured policy still depends on declared budgets and estimates. Hardware and latency evidence are the next scheduler gates.
+
 ## 2026-11-07 — Durable scheduler residency intent
 
 Verified implementation checkpoint `5ca35981273f683d73450acf2ac129925c457403` was pushed to `main`. The admission residency checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42426565208).
