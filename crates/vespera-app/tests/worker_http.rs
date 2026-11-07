@@ -110,9 +110,13 @@ fn launch(first: AgentId, second: AgentId) -> (Process, String) {
 }
 
 fn server_command(policy: &Path, database: Option<&Path>) -> Command {
+    server_command_at(policy, database, "127.0.0.1:0")
+}
+
+fn server_command_at(policy: &Path, database: Option<&Path>, listen: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vespera"));
     command
-        .args(["serve", "--listen", "127.0.0.1:0", "--access-file"])
+        .args(["serve", "--listen", listen, "--access-file"])
         .arg(policy)
         .env("TEST_OPERATOR_TOKEN", OPERATOR)
         .env("TEST_FIRST_TOKEN", FIRST)
@@ -128,6 +132,14 @@ fn launch_with_database(
     second: AgentId,
     database: Option<&Path>,
 ) -> (Process, String) {
+    let policy = create_policy(first, second);
+    let command = server_command(&policy, database);
+    let (process, base) = launch_command(command, policy);
+    assert!(base.starts_with("http://127.0.0.1:"));
+    (process, base)
+}
+
+fn create_policy(first: AgentId, second: AgentId) -> PathBuf {
     let policy = std::env::temp_dir().join(format!("vespera-worker-{}.json", Uuid::new_v4()));
     std::fs::write(
         &policy,
@@ -139,10 +151,11 @@ fn launch_with_database(
             ]
         })).unwrap(),
     ).unwrap();
-    let child = server_command(&policy, database)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    policy
+}
+
+fn launch_command(mut command: Command, policy: PathBuf) -> (Process, String) {
+    let child = command.stdout(Stdio::piped()).spawn().unwrap();
     let mut process = Process { child, policy };
     let stdout = process.child.stdout.take().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
@@ -154,8 +167,157 @@ fn launch_with_database(
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(base.starts_with("http://127.0.0.1:"));
     (process, base)
+}
+
+struct TlsFixture {
+    certificate: PathBuf,
+    private_key: PathBuf,
+    roots: String,
+}
+
+impl TlsFixture {
+    fn new(name: &str) -> Self {
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec![name.into()]).unwrap();
+        let id = Uuid::new_v4();
+        let fixture = Self {
+            certificate: std::env::temp_dir().join(format!("vespera-{id}-cert.pem")),
+            private_key: std::env::temp_dir().join(format!("vespera-{id}-key.pem")),
+            roots: cert.pem(),
+        };
+        std::fs::write(&fixture.certificate, &fixture.roots).unwrap();
+        std::fs::write(&fixture.private_key, signing_key.serialize_pem()).unwrap();
+        fixture
+    }
+
+    fn configure(&self, command: &mut Command) {
+        command
+            .arg("--tls-cert")
+            .arg(&self.certificate)
+            .arg("--tls-key")
+            .arg(&self.private_key);
+    }
+}
+
+impl Drop for TlsFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.certificate);
+        let _ = std::fs::remove_file(&self.private_key);
+    }
+}
+
+fn fresh_token() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+#[tokio::test]
+async fn tls_broker_requires_opt_in_and_verifies_trust_for_http_and_websocket() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let identity = TlsFixture::new("127.0.0.1");
+    let wrong_name = TlsFixture::new("localhost");
+    let policy = create_policy(first, second);
+    let mut refused = server_command_at(&policy, None, "0.0.0.0:0");
+    identity.configure(&mut refused);
+    let rejected = refused.output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("explicit TLS remote access"));
+
+    let operator_key = fresh_token();
+    let worker_key = fresh_token();
+    let mut command = server_command_at(&policy, None, "0.0.0.0:0");
+    identity.configure(&mut command);
+    command
+        .arg("--allow-remote")
+        .env("TEST_OPERATOR_TOKEN", &operator_key)
+        .env("TEST_FIRST_TOKEN", &worker_key)
+        .env("TEST_SECOND_TOKEN", fresh_token());
+    let (_process, base) = launch_command(command, policy);
+    let port = base
+        .strip_prefix("https://0.0.0.0:")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let endpoint = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let operator = OperatorClient::new_tls(
+        endpoint,
+        SigningKey::from_hex(&operator_key).unwrap(),
+        identity.roots.as_bytes(),
+    )
+    .unwrap();
+    let worker = WorkerClient::new_tls(
+        endpoint,
+        first,
+        SigningKey::from_hex(&worker_key).unwrap(),
+        identity.roots.as_bytes(),
+    )
+    .unwrap();
+    let untrusted = WorkerClient::new_tls(
+        endpoint,
+        first,
+        SigningKey::from_hex(&worker_key).unwrap(),
+        wrong_name.roots.as_bytes(),
+    )
+    .unwrap();
+    let plaintext =
+        WorkerClient::new(endpoint, first, SigningKey::from_hex(&worker_key).unwrap()).unwrap();
+    assert!(matches!(
+        untrusted.claim().await,
+        Err(ClientError::Transport)
+    ));
+    assert!(matches!(
+        plaintext.claim().await,
+        Err(ClientError::Transport)
+    ));
+    assert!(matches!(
+        WorkerClient::new(
+            "192.0.2.1:8765".parse().unwrap(),
+            first,
+            SigningKey::from_hex(&worker_key).unwrap()
+        ),
+        Err(ClientError::InvalidEndpoint)
+    ));
+    let mut socket = worker.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut socket).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    let task = TaskId::new();
+    operator
+        .submit(&Submission {
+            task_id: task,
+            prompt: "TLS fixture".into(),
+            required_capabilities: ["text-generation".parse().unwrap()].into(),
+            eligible_workers: [first].into(),
+            lifetime_seconds: 60,
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    assert_eq!(worker.claim().await.unwrap().unwrap().task.id, task);
+    assert!(
+        matches!(live_frame(&mut socket).await, BrokerStreamFrame::Event { entry }
+        if entry.event.correlation_task_id == Some(task))
+    );
+
+    let wrong_policy = create_policy(first, second);
+    let mut wrong_command = server_command(&wrong_policy, None);
+    wrong_name.configure(&mut wrong_command);
+    let (_wrong_process, base) = launch_command(wrong_command, wrong_policy);
+    let wrong_endpoint = base.strip_prefix("https://").unwrap().parse().unwrap();
+    let mismatched = WorkerClient::new_tls(
+        wrong_endpoint,
+        first,
+        SigningKey::from_hex(FIRST).unwrap(),
+        wrong_name.roots.as_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        mismatched.claim().await,
+        Err(ClientError::Transport)
+    ));
 }
 
 struct DatabaseFixture(PathBuf);

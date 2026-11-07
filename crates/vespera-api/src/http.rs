@@ -1,7 +1,8 @@
-//! Bounded HTTP/1 service for an explicitly approved set of local workers.
+//! Bounded HTTP/1 service for approved workers, with opt-in TLS.
 
 mod auth;
 mod subscription;
+mod tls;
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -22,9 +23,11 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, Semaphore, mpsc};
 use tokio::task::JoinSet;
+use tokio_rustls::TlsAcceptor;
 use vespera_core::{AgentId, BrokerEventCursor, Capability, Task, TaskId, TaskState};
 
 use crate::storage::Store;
@@ -39,8 +42,14 @@ type Reply = Response<Full<Bytes>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
-    #[error("worker HTTP service requires a numeric loopback address")]
+    #[error(
+        "worker HTTP service requires a numeric loopback address or explicit TLS remote access"
+    )]
     NonLoopback,
+    #[error("could not read bounded TLS identity files")]
+    TlsIo(#[source] io::Error),
+    #[error("invalid TLS certificate chain or private key")]
+    TlsIdentity,
     #[error("cannot read worker access file: {0}")]
     AccessIo(io::Error),
     #[error("worker access file is invalid or exceeds 128 KiB")]
@@ -143,11 +152,19 @@ impl Service {
     }
 }
 
-/// A bound loopback listener with an optional durable lease broker.
+/// Explicit TLS identity and remote binding policy.
+pub struct TlsOptions<'a> {
+    pub certificate: &'a Path,
+    pub private_key: &'a Path,
+    pub allow_remote: bool,
+}
+
+/// A bound worker listener with an optional durable lease broker.
 pub struct Server {
     listener: TcpListener,
     address: SocketAddr,
     service: Arc<Mutex<Service>>,
+    tls: Option<TlsAcceptor>,
 }
 
 impl Server {
@@ -164,9 +181,23 @@ impl Server {
         access_file: impl AsRef<Path>,
         database: Option<&Path>,
     ) -> Result<Self, ServerError> {
-        if !address.ip().is_loopback() {
+        Self::bind_with_transport(address, access_file, database, None).await
+    }
+
+    /// Bind with TLS when configured. A non-loopback bind also requires opt-in.
+    pub async fn bind_with_transport(
+        address: SocketAddr,
+        access_file: impl AsRef<Path>,
+        database: Option<&Path>,
+        tls: Option<TlsOptions<'_>>,
+    ) -> Result<Self, ServerError> {
+        if !address.ip().is_loopback() && !tls.as_ref().is_some_and(|options| options.allow_remote)
+        {
             return Err(ServerError::NonLoopback);
         }
+        let tls = tls
+            .map(|options| tls::acceptor(options.certificate, options.private_key))
+            .transpose()?;
         let mut service = Service::load(access_file.as_ref())?;
         let listener = TcpListener::bind(address).await?;
         if let Some(path) = database {
@@ -181,11 +212,16 @@ impl Server {
             listener,
             address,
             service: Arc::new(Mutex::new(service)),
+            tls,
         })
     }
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    pub fn scheme(&self) -> &'static str {
+        if self.tls.is_some() { "https" } else { "http" }
     }
 
     /// Serve until the listener fails or the caller drops this future.
@@ -201,25 +237,46 @@ impl Server {
                     let state = Arc::clone(&self.service);
                     let slots = Arc::clone(&live_slots);
                     let changed = Arc::clone(&changed);
+                    let tls = self.tls.clone();
                     connections.spawn(async move {
-                        let (upgrade_tx, mut upgrade_rx) = mpsc::channel(1);
-                        let mut builder = http1::Builder::new();
-                        builder
-                            .timer(TokioTimer::new())
-                            .header_read_timeout(Duration::from_secs(5))
-                            .max_buf_size(16 * 1024);
-                        let connection = builder.serve_connection(TokioIo::new(stream), service_fn(
-                            |request| dispatch(&state, request, &slots, &changed, &upgrade_tx),
-                        )).with_upgrades();
-                        if matches!(tokio::time::timeout(Duration::from_secs(15), connection).await, Ok(Ok(())))
-                            && let Ok(subscription) = upgrade_rx.try_recv()
-                        {
-                            subscription.run(&state, &changed).await;
+                        if let Some(acceptor) = tls {
+                            if let Ok(Ok(stream)) = tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await {
+                                serve_peer(stream, &state, &slots, &changed).await;
+                            }
+                        } else {
+                            serve_peer(stream, &state, &slots, &changed).await;
                         }
                     });
                 }
             }
         }
+    }
+}
+
+async fn serve_peer(
+    stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    state: &Mutex<Service>,
+    slots: &Arc<Semaphore>,
+    changed: &Notify,
+) {
+    let (upgrade_tx, mut upgrade_rx) = mpsc::channel(1);
+    let mut builder = http1::Builder::new();
+    builder
+        .timer(TokioTimer::new())
+        .header_read_timeout(Duration::from_secs(5))
+        .max_buf_size(16 * 1024);
+    let connection = builder
+        .serve_connection(
+            TokioIo::new(stream),
+            service_fn(|request| dispatch(state, request, slots, changed, &upgrade_tx)),
+        )
+        .with_upgrades();
+    if matches!(
+        tokio::time::timeout(Duration::from_secs(15), connection).await,
+        Ok(Ok(()))
+    ) && let Ok(subscription) = upgrade_rx.try_recv()
+    {
+        subscription.run(state, changed).await;
     }
 }
 

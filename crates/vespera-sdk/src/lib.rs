@@ -1,4 +1,4 @@
-//! Async client for the Vespera v2 loopback worker protocol.
+//! Async client for the Vespera v2 worker protocol over loopback or TLS.
 //!
 //! Use an operator key for task submission and a worker key for execution.
 //! Each action obtains the server's session and signs a fresh proof. Calls
@@ -62,8 +62,12 @@ impl SigningKey {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("endpoint must be a numeric loopback address with a nonzero port")]
+    #[error(
+        "endpoint must be a concrete numeric address with a nonzero port and TLS for remote access"
+    )]
     InvalidEndpoint,
+    #[error("TLS trust roots must contain one to sixteen valid PEM certificates")]
+    InvalidTrustRoots,
     #[error("signing key must contain 64 lowercase hexadecimal characters")]
     InvalidKey,
     #[error("worker identity is invalid")]
@@ -215,6 +219,14 @@ struct Renewal {
 pub struct OperatorClient(Transport);
 
 impl OperatorClient {
+    /// Connect over TLS using only the supplied PEM trust roots and the endpoint IP as identity.
+    pub fn new_tls(
+        address: SocketAddr,
+        key: SigningKey,
+        roots_pem: &[u8],
+    ) -> Result<Self, ClientError> {
+        Transport::new_tls(address, "/v2/operator", "operator".into(), key, roots_pem).map(Self)
+    }
     /// Subscribe to live broker events with the operator's cursor.
     pub async fn subscribe(
         &self,
@@ -277,6 +289,18 @@ impl OperatorClient {
 pub struct WorkerClient(Transport);
 
 impl WorkerClient {
+    /// Connect over TLS using only the supplied PEM trust roots and the endpoint IP as identity.
+    pub fn new_tls(
+        address: SocketAddr,
+        worker_id: AgentId,
+        key: SigningKey,
+        roots_pem: &[u8],
+    ) -> Result<Self, ClientError> {
+        worker_id
+            .validate()
+            .map_err(|_| ClientError::InvalidWorker)?;
+        Transport::new_tls(address, "/v2/worker", worker_id.to_string(), key, roots_pem).map(Self)
+    }
     /// Subscribe to live events for this worker's assigned attempts.
     pub async fn subscribe(
         &self,

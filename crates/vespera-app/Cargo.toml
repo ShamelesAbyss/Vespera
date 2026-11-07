@@ -31,6 +31,7 @@ thiserror.workspace = true
 [dev-dependencies]
 vespera-sdk = { path = "../vespera-sdk" }
 reqwest.workspace = true
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 ring = { version = "0.17", default-features = false }
 uuid.workspace = true
 

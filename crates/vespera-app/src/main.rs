@@ -60,7 +60,7 @@ enum Command {
     Memory(memory_commands::MemoryArgs),
     /// Initialize, replay or follow a local event journal.
     Events(event_commands::EventArgs),
-    /// Serve the external worker task broker over loopback HTTP.
+    /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {
         /// Strict JSON access policy with environment variable references.
         #[arg(long)]
@@ -68,7 +68,16 @@ enum Command {
         /// Optional SQLite broker database for task and revocation recovery.
         #[arg(long)]
         broker_db: Option<PathBuf>,
-        /// Numeric IPv4 or IPv6 loopback address and port.
+        /// PEM certificate chain, leaf first. Enables TLS with --tls-key.
+        #[arg(long, requires = "tls_key")]
+        tls_cert: Option<PathBuf>,
+        /// PEM private key for the TLS certificate.
+        #[arg(long, requires = "tls_cert")]
+        tls_key: Option<PathBuf>,
+        /// Permit a TLS listener on a non-loopback interface.
+        #[arg(long, requires_all = ["tls_cert", "tls_key"])]
+        allow_remote: bool,
+        /// Numeric IPv4 or IPv6 address and port.
         #[arg(long, default_value = "127.0.0.1:8765")]
         listen: SocketAddr,
     },
@@ -262,14 +271,27 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             access_file,
             listen,
             broker_db,
+            tls_cert,
+            tls_key,
+            allow_remote,
         } => {
-            let server = vespera_api::http::Server::bind_with_database(
+            let tls =
+                tls_cert
+                    .as_deref()
+                    .zip(tls_key.as_deref())
+                    .map(|(certificate, private_key)| vespera_api::http::TlsOptions {
+                        certificate,
+                        private_key,
+                        allow_remote,
+                    });
+            let server = vespera_api::http::Server::bind_with_transport(
                 listen,
                 access_file,
                 broker_db.as_deref(),
+                tls,
             )
             .await?;
-            println!("http://{}", server.address());
+            println!("{}://{}", server.scheme(), server.address());
             tokio::select! {
                 result = server.serve() => result?,
                 result = tokio::signal::ctrl_c() => result.map_err(AppError::ShutdownSignal)?,

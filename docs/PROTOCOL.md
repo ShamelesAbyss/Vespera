@@ -59,7 +59,13 @@ Application errors carry `{"error":"code"}`.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP and WebSockets, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Durable mode also records it in the database. In memory-only mode, remove a revoked worker from the access file before restarting. Protected remote transport remains open.
+Keep each signing key private. Default loopback HTTP and WebSockets are plaintext. Request proofs authenticate requests. Use TLS for confidentiality and server identity verification. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Durable mode also records it in the database. In memory-only mode, remove a revoked worker from the access file before restarting.
+
+### Protected transport
+
+The broker enables TLS 1.3 when both `--tls-cert` and `--tls-key` are supplied. The listener accepts HTTPS and secure WebSocket upgrades on the same port. Binding a non-loopback address requires `--allow-remote` and a TLS identity. Plaintext remote access is disabled. Signed proofs remain required for both HTTPS actions and WebSocket upgrades. The TLS handshake has a five-second timeout and shares the broker's connection quota.
+
+The certificate file accepts a PEM chain of up to sixteen certificates, leaf first. The key file supplies the matching PEM private key. The SDK's `new_tls` constructors take a concrete numeric `SocketAddr` and a PEM bundle of one to sixteen trust roots. The client verifies the server chain and requires an IP subject alternative name matching the address. HTTPS and secure WebSockets use the same explicit trust roots. The SDK leaves certificate provisioning and trust-root distribution to the operator. TLS authenticates the server and request proofs authenticate clients.
 
 ### Broker event replay
 
@@ -101,7 +107,7 @@ The CLI also supports a separate SQLite outcome journal with bounded replay and 
 
 ## Rust SDK
 
-Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`. Worker clients also take an approved `AgentId`.
+Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`, or use `OperatorClient::new_tls(address, key, roots_pem)` or `WorkerClient::new_tls(address, worker_id, key, roots_pem)` for TLS. Worker clients take an approved `AgentId`.
 
 | Client | Methods |
 | --- | --- |
@@ -118,7 +124,7 @@ Build the Rust API reference with `cargo doc -p vespera-sdk --no-deps --locked`.
 
 ## Future interoperability draft
 
-The draft sections below describe remaining Milestone 9 and 10 work. A broader resource-oriented HTTP API is planned. Remote deployments require protected transport and explicit opt-in.
+The draft sections below describe remaining Milestone 9 and 10 work, including broader resource-oriented controls and agent messaging.
 
 ## Authentication and registration — draft
 

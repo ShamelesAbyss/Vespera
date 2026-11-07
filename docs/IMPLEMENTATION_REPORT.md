@@ -10,7 +10,7 @@ inference. The application library composes these services. The CLI implements
 `run-workflow`, `memory`, `events` and `serve`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-212-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+213-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
 workspace build, and optimized worker HTTP subprocess tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
@@ -18,11 +18,13 @@ GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoi
 were independently checked and succeeded. Current-checkpoint remote CI is tracked
 in the development log after pushing; it is not inferred from local validation.
 
-The standalone Rust SDK executes the complete operator and worker lifecycle against the CLI service. Its transport tests cover rejected redirects and oversized chunked responses. The SDK requires a numeric loopback endpoint and keeps each request's proof and signing key out of errors.
+The standalone Rust SDK executes the complete operator and worker lifecycle against the CLI service. Its transport tests cover rejected redirects and oversized chunked responses. It uses numeric endpoints and keeps each request's proof and signing key out of errors.
 
 The worker API and SDK replay broker transitions from scoped feeds. Cursor validation, retention gaps, event schema v3, worker isolation, reconnect and revocation were tested. Durable mode preserves retained events and cursors across process restart and upgrades schema 1 broker databases in place. The SQLite CLI outcome journal is a separate event source.
 
 Signed WebSocket handshakes use the same principal and cursor rules as replay. Subprocess tests cover live delivery, reconnect, isolation, revocation, upgrade replay rejection and subscription quota behavior.
+
+The broker and SDK support TLS 1.3 for HTTPS and secure WebSockets. A loopback client exercised both against an explicitly enabled wildcard listener. The subprocess test also checked rejection without remote opt-in, plaintext on a TLS port, untrusted roots and an IP identity mismatch. Cross-host deployment remains untested.
 
 The optional exclusive broker database stores tasks, generations, results and revocations before HTTP responses. A forced subprocess restart verified recovery, same-result retries, fencing, queue order and revocation. A fault-injected transaction verified rollback and a simulated clock rollback verified conservative expiry.
 

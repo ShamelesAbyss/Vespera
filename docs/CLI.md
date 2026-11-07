@@ -13,7 +13,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `models` | List declared model metadata | None |
 | `agents` | List declared identities, status, policy and permissions | None |
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
-| `serve` | Host the external worker task broker | Explicit loopback HTTP listener |
+| `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
@@ -220,7 +220,7 @@ A retained response carries the accepted task ID and appears as `stored_memory_i
 
 ## External worker service
 
-`vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound HTTP URL to stdout. The default address is `127.0.0.1:8765`. A numeric loopback address is required. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
+`vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
 
 Save this strict JSON as `data/worker-access.json`. The policy references environment variables and grants one worker the `text-generation` capability.
 
@@ -295,6 +295,16 @@ Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 
 See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
+
+### TLS worker transport
+
+Use `--tls-cert <chain.pem> --tls-key <key.pem>` together to enable HTTPS and secure WebSockets. Use a PEM chain in leaf-first order and protect the corresponding private key file. A non-loopback address additionally requires `--allow-remote`. For example, with a certificate valid for the configured interface address, run the following command using that address and the paths to your PEM files.
+
+```powershell
+cargo run --locked -p vespera-app -- serve --access-file data/worker-access.json --listen "${interfaceIp}:8765" --tls-cert $certificatePath --tls-key $privateKeyPath --allow-remote
+```
+
+For loopback TLS, keep the default address and omit `--allow-remote`. Certificate verification and request authentication both apply. [Transport and SDK trust configuration](PROTOCOL.md#protected-transport)
 
 ### Durable broker mode
 

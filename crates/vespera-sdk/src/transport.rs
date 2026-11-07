@@ -1,9 +1,12 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use reqwest::{Client, Response, StatusCode};
 use ring::hmac;
+use rustls::pki_types::CertificateDer;
+use rustls::pki_types::pem::PemObject;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -17,6 +20,7 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) struct Transport {
     client: Client,
     pub(super) address: SocketAddr,
+    pub(super) tls: Option<Arc<rustls::ClientConfig>>,
     pub(super) path: &'static str,
     principal: String,
     key: hmac::Key,
@@ -38,17 +42,67 @@ impl Transport {
         if !address.ip().is_loopback() || address.port() == 0 {
             return Err(ClientError::InvalidEndpoint);
         }
-        let client = Client::builder()
+        Self::build(address, path, principal, key, None)
+    }
+
+    pub(super) fn new_tls(
+        address: SocketAddr,
+        path: &'static str,
+        principal: String,
+        key: SigningKey,
+        roots_pem: &[u8],
+    ) -> Result<Self, ClientError> {
+        if address.ip().is_unspecified() || address.ip().is_multicast() || address.port() == 0 {
+            return Err(ClientError::InvalidEndpoint);
+        }
+        if roots_pem.len() > 128 * 1024 {
+            return Err(ClientError::InvalidTrustRoots);
+        }
+        let mut roots = rustls::RootCertStore::empty();
+        for certificate in CertificateDer::pem_slice_iter(roots_pem).take(17) {
+            roots
+                .add(certificate.map_err(|_| ClientError::InvalidTrustRoots)?)
+                .map_err(|_| ClientError::InvalidTrustRoots)?;
+        }
+        if !(1..=16).contains(&roots.len()) {
+            return Err(ClientError::InvalidTrustRoots);
+        }
+        let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|_| ClientError::ClientInitialization)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Self::build(address, path, principal, key, Some(Arc::new(config)))
+    }
+
+    fn build(
+        address: SocketAddr,
+        path: &'static str,
+        principal: String,
+        key: SigningKey,
+        tls: Option<Arc<rustls::ClientConfig>>,
+    ) -> Result<Self, ClientError> {
+        let mut builder = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .http1_only()
-            .timeout(TIMEOUT)
+            .timeout(TIMEOUT);
+        if let Some(config) = &tls {
+            builder = builder
+                .use_preconfigured_tls(config.as_ref().clone())
+                .https_only(true);
+        }
+        let client = builder
             .build()
             .map_err(|_| ClientError::ClientInitialization)?;
         Ok(Self {
             client,
             address: SocketAddr::new(address.ip(), address.port()),
+            tls,
             path,
             principal,
             key: hmac::Key::new(hmac::HMAC_SHA256, &key.0),
@@ -62,7 +116,7 @@ impl Transport {
         }
         let authorization = self.proof(self.session().await?, "POST", self.path, &body)?;
         self.client
-            .post(format!("http://{}{}", self.address, self.path))
+            .post(self.http_url(self.path))
             .header(AUTHORIZATION, authorization)
             .header(CONTENT_TYPE, "application/json")
             .body(body)
@@ -75,7 +129,7 @@ impl Transport {
     pub(super) async fn session(&self) -> Result<Session, ClientError> {
         let response = self
             .client
-            .get(format!("http://{}/v2/session", self.address))
+            .get(self.http_url("/v2/session"))
             .send()
             .await
             .map_err(transport_error)?;
@@ -84,6 +138,11 @@ impl Transport {
             return Err(ClientError::UnexpectedResponse { status: 200 });
         }
         Ok(session)
+    }
+
+    fn http_url(&self, path: &str) -> String {
+        let scheme = if self.tls.is_some() { "https" } else { "http" };
+        format!("{scheme}://{}{path}", self.address)
     }
 
     pub(super) fn proof(

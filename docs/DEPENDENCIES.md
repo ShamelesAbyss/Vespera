@@ -30,6 +30,8 @@ The CLI enables Tokio `signal` to route Ctrl+C through owned cancellation rather
 
 The loopback worker service uses Hyper HTTP/1, Hyper-util's Tokio adapters and HTTP Body Util's streaming size limit. Authentication uses Ring HMAC-SHA256 and Subtle constant-time equality. The SDK uses Reqwest with default features disabled for HTTP. The broker and SDK both use Tokio Tungstenite 0.30 for WebSocket handshakes and framing. The lockfile adds its dependency subtree without changing existing package versions. SHA-1 is used for the WebSocket handshake accept value. Request authentication still uses HMAC-SHA256.
 
+Protected worker transport reuses the locked Rustls and Tokio Rustls packages with explicit TLS 1.3 settings. The CLI subprocess tests use the dev-only Rcgen package to generate disposable certificate identities during testing. Production builds require an operator-provided PEM identity.
+
 SQLite storage now uses exactly `rusqlite 0.41.1` with default features disabled and explicit `libsqlite3-sys`/`bundled` features. The native source bundle reports SQLite 3.54.1; FTS5 is exercised by actual retrieval tests. No separate database server, SQLCipher, loadable extensions, generated bindings or Wasm SQLite backend is enabled. The build requires a C compiler in addition to Rust. Optional vectors remain deferred until their provenance, rebuild/resource limits and retrieval quality can be verified.
 
 Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC remains deferred.

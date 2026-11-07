@@ -2,8 +2,10 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::header::AUTHORIZATION;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+use tokio_rustls::TlsConnector;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 use tokio_tungstenite::{WebSocketStream, client_async_with_config, tungstenite};
@@ -13,7 +15,10 @@ use crate::ClientError;
 use crate::transport::{Transport, error_code};
 
 /// A read-only WebSocket carrying ordered events for one broker principal.
-pub struct EventSubscription(WebSocketStream<TcpStream>);
+pub struct EventSubscription(WebSocketStream<Box<dyn SocketIo>>);
+
+trait SocketIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> SocketIo for T {}
 
 impl EventSubscription {
     pub(super) async fn connect(
@@ -28,7 +33,8 @@ impl EventSubscription {
             ),
             None => format!("{}/events", transport.path),
         };
-        let mut request = format!("ws://{}{}", transport.address, target)
+        let scheme = if transport.tls.is_some() { "wss" } else { "ws" };
+        let mut request = format!("{scheme}://{}{}", transport.address, target)
             .into_client_request()
             .map_err(|_| ClientError::Encoding)?;
         let authorization = transport.proof(session, "GET", &target, b"")?;
@@ -43,6 +49,17 @@ impl EventSubscription {
             let stream = TcpStream::connect(transport.address)
                 .await
                 .map_err(|_| ClientError::Transport)?;
+            let stream: Box<dyn SocketIo> = if let Some(tls) = &transport.tls {
+                let name = rustls::pki_types::ServerName::IpAddress(transport.address.ip().into());
+                Box::new(
+                    TlsConnector::from(tls.clone())
+                        .connect(name, stream)
+                        .await
+                        .map_err(|_| ClientError::Transport)?,
+                )
+            } else {
+                Box::new(stream)
+            };
             client_async_with_config(request, stream, Some(config))
                 .await
                 .map(|(socket, _)| Self(socket))

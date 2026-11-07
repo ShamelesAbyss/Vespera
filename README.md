@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded single-agent inference through Ollama and OpenAI-compatible HTTP adapters and serves an authenticated loopback task broker for approved external workers. The twelve-crate workspace has 212 passing offline tests plus the SDK doctest, and Windows release validation. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, remote interoperability, simulation, native 3D and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded single-agent inference through Ollama and OpenAI-compatible HTTP adapters and serves an authenticated task broker for approved external workers. The twelve-crate workspace has 213 passing offline tests plus the SDK doctest, and Windows release validation. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, external messaging, simulation, native 3D and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -12,7 +12,7 @@ A local-first AI orchestration and simulation platform written in Rust. Vespera 
 flowchart TD
     CLI[vespera-app: CLI and composition] --> Config[vespera-config: strict TOML]
     CLI --> Memory
-    CLI --> Broker[vespera-api: loopback lease broker]
+    CLI --> Broker[vespera-api: external worker lease broker]
     Worker[Approved external worker] --> SDK[vespera-sdk: typed Rust client]
     SDK --> Broker
     Broker --> Core
@@ -44,7 +44,7 @@ flowchart TD
 | `vespera-agents` | Independent identities, permissions, bounded in-process memory/messages/history and actual inference |
 | `vespera-orchestrator` | Bounded sequential workflows, provenance, retry/failure history and explicit output evaluation |
 | `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
-| `vespera-api` | Authenticated loopback task service and fenced lease broker for approved external workers |
+| `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
 | `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
 | `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
 | `vespera-app` | Runtime composition, diagnostics and ten top-level CLI commands |
@@ -131,7 +131,7 @@ The orchestrator executes bounded operator-authored workflows with capability ro
 
 ## External workers
 
-Run `vespera serve --access-file <path>` to start a loopback service with operator-approved worker IDs, capability grants and signing keys supplied through environment variables. The v2 API uses short-lived HMAC proofs and rejects duplicate nonces. Operators can submit, inspect and cancel tasks and revoke workers. Workers claim, renew and complete fenced attempts with their own keys. Operators and workers can replay broker events or subscribe over WebSocket using the same scoped cursors. Rust clients can use `vespera-sdk`, and other languages can use the documented wire contract. Tasks submitted here execute in the external worker and are separate from `run-agent` and `run-workflow`. Set `--broker-db <path>` to retain tasks, results, revocations and recent event feeds across restarts. Protected remote transport remains roadmap work. [Setup and PowerShell example](docs/CLI.md#external-worker-service) · [Rust SDK](docs/PROTOCOL.md#rust-sdk) · [API contract](docs/PROTOCOL.md#implemented-loopback-worker-api)
+Run `vespera serve --access-file <path>` to start the default loopback service with operator-approved worker IDs, capability grants and signing keys supplied through environment variables. The v2 API uses short-lived HMAC proofs and rejects duplicate nonces. Operators can submit, inspect and cancel tasks and revoke workers. Workers claim, renew and complete fenced attempts with their own keys. Operators and workers can replay broker events or subscribe over WebSocket using the same scoped cursors. Enable TLS 1.3 for HTTPS and secure WebSockets. A non-loopback bind requires a TLS identity and `--allow-remote`. Tasks execute in the external worker. Set `--broker-db <path>` to retain tasks, results, revocations and recent event feeds across restarts. [Setup and PowerShell example](docs/CLI.md#external-worker-service) · [Rust SDK](docs/PROTOCOL.md#rust-sdk) · [API contract](docs/PROTOCOL.md#implemented-loopback-worker-api)
 
 To manage durable memory, add `memory_read` and `memory_write` grants to the selected agent's private configuration and initialize its local database:
 
