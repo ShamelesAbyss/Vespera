@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Machine scheduler and provider evidence
 
+Verified implementation checkpoint `5a22eeaefd43f7e10e8d17bedde2d63ff873d070` was pushed to `main`.
+
 The host hardware checkpoint `14d0aba58fad681fe8be5163265ad600089e2239` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42345384973). Agent and workflow commands can publish bounded aggregate snapshots from the scheduler and registry they use. Machine reads those snapshots through an opt-in local directory. Its scheduler tile distinguishes granted admission permits, estimated memory reservations and cached health from host measurements. The producer leaves a final snapshot after the cleanup attempt and refuses to reuse an existing run directory.
 
 Windows validation passed 217 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. The CLI subprocess fixture observed a real lease and reservation during delayed inference, confirmed acknowledged unload and checked directory reuse rejection. The workflow fixture also verified final publication. A Windows desktop run showed the live permit meter, the final snapshot with zero reservations after unload, and expiry after interrupting a separate fixture publisher.
