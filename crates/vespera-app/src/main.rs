@@ -1,21 +1,23 @@
-//! VESPERA Milestone 1 native application entry point.
+//! Native VESPERA CLI: offline inspection and explicit provider/agent operations.
 
+mod commands;
 mod doctor;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use thiserror::Error;
+use vespera_app::runtime::RuntimeError;
 use vespera_config::{AppConfig, ConfigError};
-use vespera_core::ResourceBudget;
+use vespera_core::{AgentId, ResourceBudget};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "vespera",
     version,
-    about = "Local-first AI infrastructure: validated Rust foundation"
+    about = "Local-first AI orchestration: inspect configuration and execute bounded agent inference"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,6 +26,31 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// List declared model metadata offline; registration does not imply residency.
+    Models {
+        #[arg(long, default_value = "config/local.toml")]
+        config: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List configured agent identities and policies offline.
+    Agents {
+        #[arg(long, default_value = "config/local.toml")]
+        config: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check configured provider health through real HTTP requests without loading models.
+    ProviderHealth {
+        #[arg(long, default_value = "config/local.toml")]
+        config: PathBuf,
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        timeout_seconds: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute one bounded agent task using configured real provider adapters.
+    RunAgent(RunAgentArgs),
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
@@ -37,6 +64,34 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Args)]
+struct RunAgentArgs {
+    #[arg(long, default_value = "config/local.toml")]
+    config: PathBuf,
+    /// Configured agent UUID.
+    #[arg(long)]
+    agent: AgentId,
+    /// UTF-8 task text, bounded to 64 KiB; contents are not command-line arguments.
+    #[arg(long)]
+    prompt_file: PathBuf,
+    #[arg(long, default_value_t = 256, value_parser = clap::value_parser!(u32).range(1..=131072))]
+    max_output_tokens: u32,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(64..=1048576))]
+    context_tokens: Option<u32>,
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    timeout_seconds: u64,
+    #[arg(long)]
+    temperature: Option<f32>,
+    /// Activate a suspended/failed agent in this invocation without changing its configuration file.
+    #[arg(long)]
+    resume: bool,
+    /// Explicitly request unload after local work, including failure; providers may be shared.
+    #[arg(long)]
+    unload_after: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Serialize)]
@@ -54,13 +109,24 @@ struct ConfigReport {
 #[derive(Debug, Error)]
 enum AppError {
     #[error("{0}")]
+    Runtime(#[from] RuntimeError),
+    #[error("could not read UTF-8 prompt file: {0}")]
+    PromptIo(std::io::Error),
+    #[error("prompt must contain nonempty UTF-8 text and fit within 64 KiB")]
+    InvalidPrompt,
+    #[error("one or more configured providers are not freshly healthy")]
+    UnhealthyProviders,
+    #[error("inference completed but requested cleanup was not fully confirmed")]
+    CleanupFailed,
+    #[error("{0}")]
     Config(#[from] ConfigError),
     #[error("could not serialize diagnostic output: {0}")]
     Json(#[from] serde_json::Error),
 }
 
-fn main() -> ExitCode {
-    match run(Cli::parse()) {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
@@ -69,8 +135,47 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<(), AppError> {
+async fn run(cli: Cli) -> Result<(), AppError> {
     match cli.command {
+        Command::Models { config, json } => {
+            let config = AppConfig::load(config)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&config.models)?);
+            } else {
+                for model in config.models {
+                    println!(
+                        "{}: {} ({:?}; declared, residency unverified)",
+                        model.id, model.name, model.availability
+                    );
+                }
+            }
+        }
+        Command::Agents { config, json } => {
+            let config = AppConfig::load(config)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&config.agents)?);
+            } else {
+                for agent in config.agents {
+                    println!(
+                        "{}: {} ({:?})",
+                        agent.identity.id, agent.identity.name, agent.status
+                    );
+                }
+            }
+        }
+        Command::ProviderHealth {
+            config,
+            timeout_seconds,
+            json,
+        } => {
+            commands::provider_health(
+                AppConfig::load(config)?,
+                std::time::Duration::from_secs(timeout_seconds),
+                json,
+            )
+            .await?
+        }
+        Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::ValidateConfig { config, json } => {
             let config = AppConfig::load(config)?;
             let report = ConfigReport {

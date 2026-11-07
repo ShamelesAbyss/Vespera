@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-11-06 — Operational CLI composition and executable HTTP integration
+
+Previous verified checkpoint: `aee7e24a7caddbe0e38dc951f7493fa237e581da`, pushed to the recovery branch. Public GitHub Actions evidence independently confirms successful Ubuntu runs for `aee7e24` ([42321278020](https://github.com/ShamelesAbyss/Vespera/actions/runs/42321278020)), `566f6d7` ([42320678469](https://github.com/ShamelesAbyss/Vespera/actions/runs/42320678469)) and `0eb16a7` ([42319792636](https://github.com/ShamelesAbyss/Vespera/actions/runs/42319792636)).
+
+Added the application composition library and actual `models`, `agents`, `provider-health` and `run-agent` commands. Offline inventory/validation/diagnostics remain separate from credential resolution and provider I/O. Agent execution takes a bounded UTF-8 prompt file, explicit identity, token/context/time bounds, optional invocation-only resume, and optional unload. Fixed-agent startup scopes providers/models to the selected agent, so unrelated missing credentials or unsupported adapters do not prevent execution. Selected health polling leaves unrelated in-flight poll generations intact.
+
+The executable now drives the complete real HTTP adapter path. JSON reports include accepted result/provenance or sanitized failure, terminal task observation and cleanup evidence. Local permits drain after work; unload is explicit because providers can be shared. Unsupported/failed unload preserves reservations and returns a nonzero status rather than fabricating release. Command deadlines cover health and execution, with a separate bounded cleanup phase. Tokio OS-signal support routes Ctrl+C into cancellation; actual interactive console signal delivery is not yet manually verified. The CLI uses a current-thread runtime. The lockfile adds only the two transitive signal dependencies documented in `DEPENDENCIES.md`.
+
+Validation passed on Windows: formatting, all-target workspace check, all 137 offline tests (one live test ignored), strict Clippy, rustdoc, optimized workspace build and 21 optimized application/CLI tests. New executable fixtures cover both adapters, unknown estimates/suspension without load, preserved configuration, unrelated provider isolation, credentials supplied only to child processes, prompt limits and deadlines. Initial fixture failures exposed inherited nonblocking sockets on Windows; accepted fixture sockets now explicitly enter blocking mode before bounded request reads. No production diagnostic redaction was weakened to investigate it.
+
+Rewrote architecture and added the complete CLI reference, updated implementation/provider/agent/registry/dependency/roadmap records, and marked the old root README foundation material as historical pending the comprehensive onboarding pass. Local Ollama discovery found client/server version 0.40.13. Its inventory command automatically started the Windows app/server; the initial residency list was empty. No model was loaded by discovery. The release CLI `provider-health` and explicit ignored live Ollama health smoke test passed against that daemon. Separate live execution evidence will be recorded only after an actual bounded task succeeds.
+
+Remaining priorities: request preflight before provider load, richer capability/context/resource-aware selection, per-inference overhead and external/startup allocation reconciliation; bounded multi-step orchestration; durable isolated memory/events; authenticated interoperability; independent simulation; native 3D; experiments; comprehensive final documentation and release validation. No full-platform completion claim is made.
+
 ## 2026-11-06 — Bounded retained runtime data and source ownership
 
 Previous verified checkpoint: `566f6d715e0dfb23e9204e4d72acc7b63910f2bb`, pushed to the recovery branch.

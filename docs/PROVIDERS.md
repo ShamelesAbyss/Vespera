@@ -1,9 +1,10 @@
 # Provider adapters
 
 Vespera includes an object-safe asynchronous Rust `InferenceProvider` contract and
-Ollama/OpenAI-compatible HTTP adapters. These are library implementations. The
-current CLI still exposes only configuration validation and host diagnostics;
-CLI agent inference and automatic provider polling are not wired yet.
+Ollama/OpenAI-compatible HTTP adapters, composed through the Rust application
+library and explicit `provider-health`/`run-agent` CLI operations. Offline
+configuration/model/agent inspection remains separate. Health is refreshed during
+an invocation; no persistent background polling service is claimed.
 
 ## Implemented protocol subset
 
@@ -110,7 +111,7 @@ cargo test -p vespera-providers --test ollama --locked -- --ignored
 
 Ordinary tests use ephemeral loopback fixture servers and require no model
 weights, GPU or external service. The live smoke test is ignored by default and
-has not been run in this recovery session. It checks health only, not inference,
+was explicitly run successfully against local Ollama 0.40.13 after discovery. It checks health only, not inference,
 residency correctness or end-to-end agent execution.
 
 Fixture coverage includes enumeration/lifecycle, advertised metadata, telemetry

@@ -120,5 +120,6 @@ Deterministic fake providers verify actual invocation, transmitted bounds,
 provenance, invalid/failing responses, task ownership, model-policy independence,
 permission checks, duplicate delegation, concurrent preparation, managed/manual
 completion fencing, queue/load/inference cancellation, absolute deadlines and
-future abort. This is not live inference evidence for a particular installed
-model/server. The CLI is not yet wired to this runtime.
+future abort. CLI integration additionally verifies the executable-to-HTTP path
+against both adapter fixtures. This is not live inference evidence for a
+particular installed model/server. See [CLI.md](CLI.md) for actual operation.

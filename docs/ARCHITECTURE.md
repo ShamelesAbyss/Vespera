@@ -1,113 +1,136 @@
 # Architecture
 
-## Scope and status
+Vespera is a local-first Rust orchestration and simulation platform under active
+implementation. The current seven-crate workspace connects configuration,
+provider HTTP adapters, a model registry, resource scheduling and independent
+agent execution through a native CLI. It is not yet the complete multi-step
+orchestrator, durable memory/event system, external-agent API, simulation engine,
+3D command center or experimentation platform. Those remain required milestones.
 
-VESPERA is a local-first Rust environment for interchangeable intelligence providers, independently identified agents, and eventually simulation. This build is limited to **Milestones 0 and 1**. The foundation consists of `vespera-core`, `vespera-config`, and `vespera-app`; later components below are design proposals, not installed services. Completion evidence and exact test results belong in the parent project's implementation report, not this architecture document.
+## Current workspace
 
-The current foundation includes typed domain contracts, strict configuration validation, and the `validate-config` and `doctor` CLI commands. It does **not** connect to providers, resolve credentials for inference, load models, execute agents or tools, persist memory, schedule work, publish events, start an API server, or render a world. Event envelopes are data types, not an event bus; resource calculations are pure checked arithmetic, not a scheduler; memory namespaces are addressing types, not a database.
-
-## Current dependency graph
-
-An arrow means “depends on.” Only these three crates belong to the current workspace architecture.
+Arrows mean compile-time dependencies; the graph is acyclic.
 
 ```mermaid
 flowchart TD
-    App[vespera-app] --> Config[vespera-config]
+    App[vespera-app: CLI and composition] --> Config[vespera-config]
+    App --> Agents[vespera-agents]
+    App --> Scheduler[vespera-scheduler]
+    App --> Registry[vespera-model-registry]
+    App --> Providers[vespera-providers]
     App --> Core[vespera-core]
     Config --> Core
-```
-
-`vespera-core` owns typed UUID identities, extensible validated capability strings, model metadata, independent agent definitions, replaceable fixed-model or capability-based selection policies, default-deny permission declarations, agent-owned memory addressing, legal task transitions, checked budget calculations, and versioned event envelopes. It contains no provider I/O, database, asynchronous executor, or resource-admission loop.
-
-`vespera-config` parses strict TOML, rejects unknown fields and invalid values, detects duplicate identities, and resolves provider/model/agent references. Provider endpoint policy defaults to loopback; remote access requires explicit opt-in. Credentials may be referenced by environment-variable name, never embedded as plaintext or URL credentials. Parsing does not contact endpoints or verify secret values.
-
-`vespera-app` composes configuration and domain types. `validate-config` checks the supplied file and reports a truthful summary; it does not test connectivity. `doctor` reports read-only observations of the current host without provider or network calls. A configured endpoint is not a connected provider, and a valid model entry is not a runnable model.
-
-## Future dependency graph — draft
-
-These are responsibility boundaries, not instructions to create empty crates. Names and port placement may be refined when a milestone supplies working behavior. Arrows remain compile-time dependencies; runtime messages can travel in either direction through defined ports without introducing a dependency cycle.
-
-```mermaid
-flowchart TD
-    App[app composition root] --> Config[config]
-    App --> API[REST and WebSocket API]
-    App --> Orchestrator[orchestrator]
-    App --> Simulation[simulation]
-    App --> Observability[observability]
-    App -. optional .-> Client[native client]
-    Config --> Core[core]
-    API --> Orchestrator
-    API --> Simulation
-    API --> Security[security]
-    API --> Events[events]
-    Orchestrator --> Agents[agents]
-    Orchestrator --> Scheduler[scheduler]
-    Orchestrator --> Security
-    Orchestrator --> Events
-    Agents --> Memory[memory]
-    Agents --> Events
+    Agents --> Scheduler
+    Agents --> Registry
+    Agents --> Providers
     Agents --> Core
-    Scheduler --> Registry[model registry]
-    Scheduler --> Providers[provider ports and adapters]
-    Scheduler --> Security
+    Scheduler --> Registry
+    Scheduler --> Providers
     Scheduler --> Core
     Registry --> Providers
     Registry --> Core
     Providers --> Core
-    Memory --> Core
-    Simulation --> World[world]
-    Simulation --> Events
-    Simulation --> Core
-    World --> Core
-    Security --> Core
-    Events --> Core
-    Observability --> Events
-    Observability --> Core
-    Client --> Core
-    Client --> Events
 ```
 
-Provider adapters must not depend on the orchestrator. Storage must not import the agent execution loop. Simulation emits intents and consumes authorized results; it must not require synchronous inference to advance. The optional client consumes observations and submits authorized commands through the future API rather than owning orchestration. App wiring selects implementations and passes ports. A future Rust SDK shares wire contracts, not application internals.
+| Crate | Implemented responsibility |
+| --- | --- |
+| `vespera-core` | Typed IDs/capabilities, independent agent/model contracts, task transitions, checked resource arithmetic, memory addressing, versioned event envelopes |
+| `vespera-config` | Size-bounded strict TOML, domain/reference/duplicate validation, local-first declarations |
+| `vespera-providers` | Object-safe async contract; Ollama and OpenAI-compatible adapters; explicit unsupported capabilities; bounded direct HTTP/streaming |
+| `vespera-model-registry` | Atomic registration/update/removal, immutable bindings, effective expiring health, selected polling, stale-result fencing |
+| `vespera-scheduler` | Conservative reservation admission, per-model lifecycle gates, owned leases, acknowledged unload, bounded priority/fairness queue and shutdown drain |
+| `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
+| `vespera-app` | Library composition plus offline inspection, explicit health checks and one-task agent CLI operations |
 
-Tokio is the future asynchronous execution candidate; Axum REST and WebSockets are the selected future API direction. No gRPC implementation is planned now. SQLite is the first structured memory target. Bevy/wgpu are optional future native Rust presentation choices. VESPERA requires no JavaScript or Python runtime; independently developed external agents may use other languages without becoming backend dependencies.
+`vespera-app::runtime` owns composition. CLI handlers perform bounded input/output
+and call application services; provider/scheduler/agent logic remains outside
+argument handlers. `from_config` composes the complete declared runtime;
+`from_config_for_agent` composes only one agent and its candidate inventory after
+validating the complete source configuration. Neither sends provider requests
+or activates models during construction, though constructors resolve referenced
+credentials. Offline CLI commands bypass adapter construction entirely.
 
-## Identity, registry, and residency
+## Execution and concurrency invariants
 
-Provider, model, agent, task, and event IDs identify different entities. Agent IDs and memory namespaces are never derived from a model name or provider. The user/control plane owns agent identity and permissions; changing the model policy does not create a new agent or erase its history. Configured capabilities describe intended eligibility, not proof of competence or access rights.
+The operator owns agent identity, permissions and model policy. A model replacement
+retains the agent UUID and memory owner. Generated text never becomes authority.
+The current library assumes a trusted caller supplies actor IDs; a future API must
+derive them from authentication rather than accepting UUIDs as credentials.
 
-A registry is metadata, not a residency reservation. There is no hardcoded model-count limit, and registering many models must not load them. Discovery, endpoint health, model availability, load state, active inference, and telemetry are separate observations. Future adapters must explicitly distinguish supported, unsupported, and unknown lifecycle controls. A timeout or lost connection cannot prove that remote computation stopped.
+Accepted agent/task reservation is atomic before asynchronous preparation. Only
+one task prepares/runs per agent. Task IDs cannot overwrite or revive prior
+history. A delegated task must start unchanged for its recorded recipient.
+Managed execution captures the admitted provider/model binding, sends a validated
+request, validates result provenance/bounds, records a legal terminal state and
+releases only its unique lease. Manual completion cannot release a managed task
+while provider work is active.
 
-## Resource limits and clocks
+Registry locks never span network I/O. Scheduler accounting uses a short
+synchronous mutex and separate per-model asynchronous gates; no global accounting
+lock spans provider load/unload. Concurrent same-model loads coordinate. An
+interrupted transition keeps uncertain provider memory charged, and only a
+matching acknowledgement frees an unload reservation. Owned queue/lease guards
+handle dropped futures synchronously, without detached cleanup workers.
 
-The initial sandbox assessment recorded approximately 7.8 GiB RAM, six logical CPU threads, no exposed NVIDIA/DRM GPU device, and stable Rust 1.99.1. These are observations of this sandbox, not specifications of the user's computer. No exposed GPU is not a measured zero-VRAM capacity. RAM and VRAM estimates can remain unknown. `doctor` must preserve this uncertainty rather than invent model-fit claims.
+## Resources and lifecycle knowledge
 
-The foundation checks arithmetic overflow and budget boundaries. Future admission must separately account for model weights and quantization, context length, KV cache growth, batching/concurrency, runtime scratch space, provider-global allocations, operating-system needs, and configurable headroom. RAM and each device's VRAM are different budgets; neither is interchangeable with the other. Unknown estimates require an explicit conservative policy or measurement, not substitution with zero. Defaulting to one active inference is a conservative configuration limit, not a throughput guarantee.
+Inventory presence, operator enablement, provider health, model readiness,
+reservation, acknowledged load and measured residency are distinct. Provider
+health is not model-specific readiness. Estimates remain unknown until supplied;
+unknown RAM or VRAM costs reject admission. Explicit zero VRAM is CPU-only policy,
+not proof that a daemon is actually configured for CPU execution.
 
-Keep three clock domains separate: wall time for human-facing audit timestamps; monotonic elapsed time for timeouts, health age, leases, and latency; and logical simulation ticks for world evolution. Wall clocks may jump, and monotonic values do not survive restarts or compare across hosts. Future leases therefore need server-authoritative expiry with restart/fencing rules. Simulation pauses or advances independently of inference; late model results are validated against their originating world version rather than silently rewriting the present.
+Reservations are estimates supplied by the operator, not measured free hardware.
+The scheduler bounds concurrency, queue capacity, context and aggregate reserved
+RAM/VRAM. Per-request KV-cache costing, external allocation reconciliation,
+headroom discovery and restart recovery remain incomplete. Ollama telemetry is
+available through the adapter but is not automatically reconciled into admission.
+A fresh process cannot claim an empty provider simply because its own ledger is
+empty. CLI cleanup reports this limitation and never fabricates unload success.
 
-## Trust boundaries and observability
+Runtime record limits bound logical retained text/counts independently of model
+budgets. They exclude allocation overhead and caller-held snapshot clones. Full
+stores reject writes rather than silently erase provenance. Memory/source links
+check ownership; they do not certify generated claims.
 
-Configuration is a user-controlled trust boundary, not model output. Default-deny declarations in core are not yet runtime enforcement. Future enforcement must recheck principal, namespace, tool, network, delegation, and resource permissions at each side-effect boundary. Providers, retrieved memory, tool results, and external agents are untrusted inputs. None can grant permissions or replace system-owned identity. Loopback is a network restriction, not authentication; local processes are not inherently trusted.
+## Trust and transport boundaries
 
-Credential values must never enter events, logs, error URLs, memory, or experiment exports. Remote connections require opt-in and future transport/authentication safeguards; redirects and DNS rebinding need checks at connection time, beyond offline URL validation. Future API/storage/client views require authorization and redaction, even on a local host.
+Configuration parsing does no network I/O or secret lookup. Adapter construction
+revalidates endpoints, resolves configured credential references and redacts
+credential formatting. Direct clients prohibit redirects/proxy inheritance and
+pin `localhost` to literal loopback. Remote DNS requires operator opt-in; remote
+plaintext HTTP requires a second opt-in. Arbitrary upstream diagnostics are
+suppressed rather than heuristically stripped of recognizable tokens.
 
-Observable reasoning workflows mean task routing, tool decisions, explicit summaries, inputs/outputs permitted by policy, and measurable execution events. They do **not** mean exposing a model's private hidden chain-of-thought. Agent statements are generated claims, not verified telemetry. Event retention, replay, backpressure, schema evolution, and persistence failures are future responsibilities detailed in [PROTOCOL.md](PROTOCOL.md).
+Requests have validated message/token/context/byte limits. JSON responses have
+aggregate byte and whole-request deadlines; streaming has line/event, aggregate
+wire-body, idle and total-lifetime bounds. Extra server response fields are not
+retained as private reasoning or privileged actions. Local cancellation cannot
+prove remote compute stopped, so uncertain residency and remaining reservations
+remain explicit. No arbitrary tool process, OS sandbox or external-agent server
+is present yet.
 
-## Basis
+## State, clocks and remaining architecture
 
-This document specializes [INITIAL_PLAN.md](INITIAL_PLAN.md) and the supplied [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt). The plan's Cargo workspace, TOML, and official Rust installation references remain the baseline references; no provider API compatibility is asserted from those sources. See [PROVIDERS.md](PROVIDERS.md), [AGENTS.md](AGENTS.md), [MEMORY.md](MEMORY.md), and [ROADMAP.md](ROADMAP.md) for focused contracts and acceptance gates.
+Current registry, runtime histories and memory are in-process. `MemoryNamespace`
+is a logical address, not a database. Event envelopes are schema contracts, not
+an event bus. The next foundations are bounded multi-step orchestration, SQLite
+memory/retrieval with migrations/provenance, durable event delivery and replay,
+authenticated interoperability, and independent deterministic world state.
 
-## Implemented foundation details
+Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
+simulation ticks separate. In-process monotonic instants do not survive restart.
+Future leases and replay need explicit restart/fencing rules.
 
-Configuration schema version 1 defaults to a user-declared 4 GiB RAM budget, zero VRAM budget, one concurrent inference, and a 4,096-token per-request context limit. A zero **configured VRAM budget** is intentional CPU-only policy, distinct from unknown observed VRAM or an omitted model estimate. `ResourceEstimate` uses optional RAM/VRAM values. `ResourceBudget::admit` computes checked prospective RAM/VRAM usage, adds one inference, and checks per-request context; it neither mutates usage nor reserves anything. Callers must supply complete known costs, including headroom/overhead. There is no scheduler or resource-release operation yet.
+Simulation time must remain independent of inference availability. Rendering
+must consume authoritative observations and authorized controls, not drive the
+backend or imply fabricated activity. Native 3D orchestration and world views
+remain a required product destination, with headless operation supported by
+separating the rendering process. Experiments must preserve configuration/seeds
+and measured outcomes independently of generated interpretations.
 
-`doctor` reports OS/architecture, process-available CPU threads, Linux host RAM evidence, root cgroup-v2 limit evidence, and exposed GPU device paths. VRAM stays unknown and GPU telemetry is explicitly unimplemented. Host RAM may differ from container capacity, and root cgroup files may not represent a nested process cgroup; these observations cannot establish effective model capacity.
-
-From the workspace root, the current command forms are:
-
-```sh
-cargo run -p vespera-app -- validate-config --config config/local.toml --json
-cargo run -p vespera-app -- doctor --json
-```
-
-The application itself performs only configuration reads or host observations; Cargo may compile the workspace before running it. Detailed loopback, remote-HTTP opt-in, URL, and credential-reference rules are in [PROVIDERS.md](PROVIDERS.md).
+See [CLI.md](CLI.md), [PROVIDERS.md](PROVIDERS.md), [REGISTRY.md](REGISTRY.md),
+[SCHEDULER.md](SCHEDULER.md), [AGENTS.md](AGENTS.md), [MEMORY.md](MEMORY.md),
+[PROTOCOL.md](PROTOCOL.md) and [ROADMAP.md](ROADMAP.md). The original
+[INITIAL_PLAN.md](INITIAL_PLAN.md) and [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt)
+remain historical scope/basis documents, not assertions that later services exist.

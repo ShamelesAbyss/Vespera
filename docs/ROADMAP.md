@@ -7,10 +7,10 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
 | 2: provider contract and Ollama | Adapter and offline protocol/transport fixtures pass; framing, completion, metadata, residency arithmetic, aggregate bounds, whole deadlines and direct loopback transport implemented. Live-version interoperability remains unverified. |
 | 3: additional providers | OpenAI-compatible SSE/payload/prefix/auth/error fixtures pass. Live engine compatibility remains unverified. Bionic blocked on exact product/version and authoritative protocol. |
-| 4: registry | In-process identity/update/removal and effective-health behavior implemented with deterministic expiry, recovery, timeout, cancellation and stale-result fencing tests. Live provider interoperability and continuous application polling remain unverified/unwired. See [REGISTRY.md](REGISTRY.md). |
+| 4: registry | In-process identity/update/removal, selected polling and effective-health behavior tested; CLI explicitly refreshes relevant health. No persistent background monitor or restart state yet. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |
 | 6: master orchestration | Pending; no bounded multi-step orchestrator yet. |
-| 7: agents | Partial: identities, bounded permission-gated records/messages/history, source ownership, delegation, owned actual inference, response validation and queue/load/inference cancellation/abort tested. Application wiring, retention and persistence remain. See [AGENTS.md](AGENTS.md). |
+| 7: agents | Partial: bounded records/history, permissions/provenance, delegation, owned actual inference and cancellation/abort tested; CLI composition and HTTP end-to-end fixtures implemented. Durable retention and autonomous multi-step integration remain. See [AGENTS.md](AGENTS.md). |
 | 8–10: memory/events/interoperability | Domain contracts and draft documents only; durable services/server/SDK pending. |
 | 11: simulation | Pending; independent deterministic world engine required. |
 | 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |

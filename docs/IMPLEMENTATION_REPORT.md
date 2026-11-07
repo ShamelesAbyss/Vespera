@@ -1,5 +1,35 @@
 # VESPERA implementation report
 
+## Current recovery implementation — 2026-11-06
+
+The seven-crate workspace now integrates real provider adapters, effective-health
+registry operations, conservative model reservations/lifecycle, bounded priority
+admission, owned inference leases, bounded independent agents and actual task
+inference. The application library composes these services. The CLI implements
+`validate-config`, `doctor`, `models`, `agents`, `provider-health` and `run-agent`;
+the complete command contract is in [CLI.md](CLI.md).
+
+Current Windows validation passes formatting, all-target compilation, the full
+137-test offline suite (one live test ignored), strict Clippy, rustdoc, optimized
+workspace build, and all 21 optimized application/CLI tests. HTTP end-to-end
+fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
+unknown-resource rejection, credential isolation and supported command behavior.
+GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoints
+were independently checked and succeeded. Current-checkpoint remote CI is tracked
+in the development log after pushing; it is not inferred from local validation.
+
+This remains an incomplete platform: no multi-step master orchestrator, durable
+memory/event bus, authenticated external-agent server, simulation engine, 3D
+client, experiment engine or release package is claimed. Provider allocation
+reconciliation and per-request overhead accounting also remain. See the current
+[architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md) and
+[checkpoint log](DEVELOPMENT_LOG.md) for exact scope and live-validation evidence.
+
+## Archived initial foundation report — 2026-11-04
+
+The remainder describes the original foundation delivery and its historical
+environment. It is preserved as provenance, not a statement of current scope.
+
 **Milestones 0 and 1 are complete within the supplied initial execution scope.** A new, entirely Rust workspace compiles and passes its recorded checks. This is the tested foundation for VESPERA, not a completed orchestration platform or a production release.
 
 Implementation date: 2026-11-04. Workspace: `/home/ubuntu/vespera`. Tested platform: Linux x86-64. Toolchain: stable Rust 1.99.1, Cargo 1.99.1. No Python runtime or Python-based implementation was introduced.

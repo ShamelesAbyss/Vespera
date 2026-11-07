@@ -34,8 +34,10 @@ only operator-enabled entries; it never re-enables an operator-disabled model.
 
 Defaults are 30 seconds of health freshness and a five-second per-provider poll
 deadline. `with_health_policy` accepts positive custom durations.
-`health_check_all` explicitly polls a snapshot sequentially; it is not a
-background monitor. Its caller must schedule refreshes. Each poll is cancellable
+`health_check_all` explicitly polls a snapshot sequentially;
+`health_check_providers` restricts polling to specified provider IDs without
+fencing unrelated in-flight polls. Neither is a background monitor. Application
+commands explicitly schedule refreshes. Each poll is cancellable
 and bounded. Cancellation preserves previous evidence until it expires; a
 failed/timed-out poll or mismatched response identity records unreachable.
 

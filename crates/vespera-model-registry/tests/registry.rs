@@ -509,3 +509,36 @@ async fn invalid_registration_does_not_mutate_inventory_or_expose_payload() {
     assert!(registry.register_model(registration).await.is_err());
     assert!(registry.list_models().await.is_empty());
 }
+
+#[tokio::test(start_paused = true)]
+async fn selected_health_poll_does_not_touch_or_fence_unrelated_provider_work() {
+    use vespera_model_registry::ProviderHealthState;
+    let registry = Arc::new(ModelRegistry::new());
+    let a = Arc::new(MockProvider::new(ProviderId::new()));
+    let b = Arc::new(MockProvider::new(ProviderId::new()));
+    registry.register_provider(a.clone()).await.unwrap();
+    registry.register_provider(b.clone()).await.unwrap();
+    let registration = model(a.id, ModelId::new());
+    registry.register_model(registration.clone()).await.unwrap();
+    assert!(registry.list_registrations().await[0].available);
+    assert!(!registry.list_models().await[0].available);
+    b.mode.store(3, Ordering::SeqCst);
+    let r = registry.clone();
+    let bid = b.id;
+    let pending = tokio::spawn(async move {
+        r.health_check_providers(&BTreeSet::from([bid]), CancellationToken::new())
+            .await
+    });
+    b.entered.notified().await;
+    let report = registry
+        .health_check_providers(&BTreeSet::from([a.id]), CancellationToken::new())
+        .await;
+    assert_eq!(report.len(), 1);
+    assert_eq!(report[&a.id], ProviderHealthStatus::Healthy);
+    assert_eq!(
+        registry.provider_health(b.id).await.unwrap().state,
+        ProviderHealthState::Unknown
+    );
+    b.proceed.notify_one();
+    assert_eq!(pending.await.unwrap()[&b.id], ProviderHealthStatus::Healthy);
+}

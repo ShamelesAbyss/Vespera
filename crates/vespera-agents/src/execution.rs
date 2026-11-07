@@ -37,7 +37,8 @@ impl Default for ExecutionOptions {
     }
 }
 impl ExecutionOptions {
-    fn validate(&self) -> Result<(), ExecutionError> {
+    /// Check execution bounds without changing runtime state or contacting providers.
+    pub fn validate(&self) -> Result<(), ExecutionError> {
         let field = if self.max_output_tokens == 0 || self.max_output_tokens > 131_072 {
             Some("max_output_tokens")
         } else if self

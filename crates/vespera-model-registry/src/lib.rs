@@ -84,7 +84,8 @@ impl ModelRegistration {
 }
 
 /// Health observations expire rather than remaining healthy indefinitely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProviderHealthState {
     /// No completed poll for this provider instance.
     Unknown,
@@ -347,6 +348,10 @@ impl ModelRegistry {
             .map(|model| self.effective(&state, model))
             .collect()
     }
+    /// Original operator metadata for pre-poll candidate discovery and controlled updates.
+    pub async fn list_registrations(&self) -> Vec<ModelRegistration> {
+        self.state.read().await.models.values().cloned().collect()
+    }
     /// Match declared capabilities only among currently routable models.
     pub async fn find_by_capability(
         &self,
@@ -368,6 +373,21 @@ impl ModelRegistry {
         &self,
         cancel: CancellationToken,
     ) -> BTreeMap<ProviderId, ProviderHealthStatus> {
+        self.health_check_selected(None, cancel).await
+    }
+    /// Poll only specified registered providers without disturbing other poll generations.
+    pub async fn health_check_providers(
+        &self,
+        providers: &BTreeSet<ProviderId>,
+        cancel: CancellationToken,
+    ) -> BTreeMap<ProviderId, ProviderHealthStatus> {
+        self.health_check_selected(Some(providers), cancel).await
+    }
+    async fn health_check_selected(
+        &self,
+        providers: Option<&BTreeSet<ProviderId>>,
+        cancel: CancellationToken,
+    ) -> BTreeMap<ProviderId, ProviderHealthStatus> {
         let snapshot = {
             let mut state = self.state.write().await;
             let Some(revision) = state.poll_revision.checked_add(1) else {
@@ -377,6 +397,7 @@ impl ModelRegistry {
             state
                 .providers
                 .iter_mut()
+                .filter(|(id, _)| providers.is_none_or(|providers| providers.contains(id)))
                 .map(|(id, entry)| {
                     entry.poll_revision = revision;
                     (*id, entry.provider.clone(), revision)

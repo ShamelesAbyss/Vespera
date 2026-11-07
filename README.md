@@ -1,6 +1,10 @@
 # VESPERA
 
-A local-first, hardware-aware AI orchestration and simulation environment, built entirely in Rust. This repository implements **Milestone 0 and Milestone 1: architecture and a compiling, tested foundation**. It is not yet an inference engine, orchestration service, persistent-memory store, simulation, or 3D command center.
+A local-first, hardware-aware AI orchestration and simulation environment, built entirely in Rust.
+
+**Current implementation:** the seven-crate workspace now provides Ollama/OpenAI-compatible adapters, a health-aware registry, conservative scheduling with owned leases and bounded admission, independent bounded agent execution, and explicit CLI operations. See the current [CLI reference](docs/CLI.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md) and [verified checkpoint log](docs/DEVELOPMENT_LOG.md). Durable memory/events, multi-step orchestration, interoperability, simulation, native 3D and experiments remain required roadmap work.
+
+The foundation sections below are historical onboarding material and are being replaced during the comprehensive documentation pass; use the linked current references for runtime commands and validation scope.
 
 ## What works now
 

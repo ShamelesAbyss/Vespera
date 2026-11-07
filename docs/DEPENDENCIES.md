@@ -22,7 +22,9 @@ These libraries were selected for narrow responsibilities, documentation, portab
 
 ## Runtime dependencies and test features
 
-Tokio supplies asynchronous provider I/O, coordination, timeouts and bounded admission. Reqwest supplies HTTP with Rustls TLS and redirect prohibition. Futures core/util and Bytes support provider streaming. These are implemented dependencies in the workspace manifest and lockfile; their presence does not establish complete protocol or transport-policy verification. The registry's dev dependency enables Tokio `test-util` solely for deterministic virtual-clock health expiry/timeout regressions. No new runtime library was added for registry hardening.
+Tokio supplies asynchronous provider I/O, coordination, timeouts and bounded admission. Reqwest supplies HTTP with Rustls TLS and redirect prohibition. Futures core/util and Bytes support provider streaming. These are implemented dependencies in the workspace manifest and lockfile; their presence does not establish complete protocol or transport-policy verification. Registry/agent dev dependencies enable Tokio `test-util` for deterministic virtual-clock expiry/deadline tests.
+
+The CLI enables Tokio `signal` to route Ctrl+C through owned cancellation rather than abruptly abandoning local execution state. This adds the locked transitive entries `signal-hook-registry 1.4.8` and `errno 0.3.14`; no unrelated package versions were upgraded. Interactive signal delivery still needs manual cross-OS verification. The CLI uses a current-thread Tokio runtime; network concurrency does not require one worker thread per host CPU. Existing provider/registry/scheduler/agent workspace crates are now composed by the application library and executable.
 
 ## Deferred dependencies
 
@@ -32,7 +34,7 @@ SQLite, through a chosen Rust database layer, is deferred until memory transacti
 
 Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC is deferred: REST plus WebSockets is the initial draft interoperability direction, not a deployed server.
 
-No Python runtime, Python orchestration backend, JS frontend, local model weights, vendor SDK, or GPU runtime is required by the current first-party application. Node.js was used only as an initial development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements. Provider calls are available through the Rust library adapters, not yet wired into CLI task execution.
+No Python runtime, Python orchestration backend, JS frontend, bundled model weights, vendor SDK, or GPU runtime is required by the current first-party application. Node.js was used only as an initial development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements. Explicit CLI operations now call real provider adapters; a compatible daemon/model must be independently installed/configured for live inference.
 
 ## Toolchain and reproducibility
 
