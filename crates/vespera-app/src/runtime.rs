@@ -360,6 +360,16 @@ impl VesperaRuntime {
         workflow: Workflow,
         cancel: CancellationToken,
     ) -> Result<WorkflowReport, RuntimeError> {
+        self.run_workflow_observed(workflow, cancel, None).await
+    }
+
+    /// Run with a bounded stream of payload-free workflow attempt observations.
+    pub async fn run_workflow_observed(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&tokio::sync::mpsc::UnboundedSender<vespera_core::EventKind>>,
+    ) -> Result<WorkflowReport, RuntimeError> {
         workflow.validate().map_err(OrchestratorError::from)?;
         let coordinator = self.agents.get_agent(workflow.coordinator).await?;
         if coordinator.status != AgentStatus::Idle
@@ -370,7 +380,10 @@ impl VesperaRuntime {
         if cancel.is_cancelled() {
             return Err(RuntimeError::Cancelled);
         }
-        Ok(self.orchestrator.execute(workflow, cancel).await?)
+        Ok(self
+            .orchestrator
+            .execute_observed(workflow, cancel, observer)
+            .await?)
     }
     /// Access the registry; lookups alone do not establish provider health.
     pub fn registry(&self) -> &Arc<ModelRegistry> {

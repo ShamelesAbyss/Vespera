@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — In-flight workflow evidence in Swarm
+
+The signed mailbox checkpoint `2060d53ecf0284f7a58b9f9d7cce497dca19e6ec` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42347328245). Opt-in workflow observation writes acceptance and known terminal task states to the local journal as execution progresses. An acceptance includes the actual predecessor attempt and agent IDs used to assemble its prompt. Swarm shows green dependency links and inspects attempt and root outcomes independently. The post-run delegation batch remains available.
+
+Windows validation passed 219 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. CLI subprocess coverage verified acceptance before completion, predecessor identity, payload exclusion and cancellation without a second attempt. A desktop workflow with a held fixture response showed accepted work before completion. Releasing the response produced the green dependency link, both attempt IDs and the final completed states in the same window.
+
+Live evidence is local task state and prompt provenance. It does not certify remote computation or prove a result correct. Interrupted publication can leave gaps, and old readers cannot decode the opt-in version 4 records. Swarm still lacks combined sources and contention evidence. The next Atlas milestone extends Living World decisions through the existing scheduler with world revision fencing.
+
 ## 2026-11-06 — Live signed mailbox evidence in Swarm
 
 Verified implementation checkpoint `2060d53ecf0284f7a58b9f9d7cce497dca19e6ec` was pushed to `main`.

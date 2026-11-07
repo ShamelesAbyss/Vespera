@@ -702,6 +702,121 @@ fn workflow_publishes_only_observed_delegations_with_root_correlation() {
 }
 
 #[test]
+fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs() {
+    use std::time::{Duration, Instant};
+    use vespera_core::{EventKind, TaskState, WorkflowDependency};
+    use vespera_events::Journal;
+
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(1100, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let workflow = workflow_value().to_string();
+    let path = directory.0.join("live.sqlite3");
+    Journal::initialize(&path, 16).unwrap();
+    let output = std::thread::scope(|scope| {
+        let run = scope.spawn(|| {
+            run_fixture_workflow(
+                &directory,
+                &config,
+                &workflow,
+                &[
+                    "--resume",
+                    "--event-journal",
+                    path.to_str().unwrap(),
+                    "--observe-workflow",
+                ],
+            )
+        });
+        let mut reader = Journal::open_reader(&path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let live = loop {
+            let page = reader.replay(None, 16).unwrap();
+            if !page.entries.is_empty() {
+                break page.entries.len() == 1
+                    && matches!(
+                        page.entries[0].event.kind,
+                        EventKind::WorkflowAttemptAccepted { .. }
+                    )
+                    && !run.is_finished();
+            }
+            if run.is_finished() || Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        assert!(
+            live,
+            "expected accepted attempt while inference was in progress"
+        );
+        run.join().unwrap()
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let entries = Journal::open_reader(&path)
+        .unwrap()
+        .replay(None, 16)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 5);
+    let EventKind::WorkflowAttemptAccepted {
+        task_id: upstream,
+        to_agent_id,
+        dependencies,
+        ..
+    } = &entries[0].event.kind
+    else {
+        panic!("expected first acceptance")
+    };
+    assert!(dependencies.is_empty());
+    assert_eq!(
+        entries[1].event.kind,
+        EventKind::WorkflowAttemptFinished {
+            task_id: *upstream,
+            state: TaskState::Completed
+        }
+    );
+    let EventKind::WorkflowAttemptAccepted {
+        task_id: downstream,
+        dependencies,
+        ..
+    } = &entries[2].event.kind
+    else {
+        panic!("expected downstream acceptance")
+    };
+    assert_eq!(
+        dependencies,
+        &[WorkflowDependency {
+            task_id: *upstream,
+            agent_id: *to_agent_id
+        }]
+    );
+    assert_eq!(
+        entries[3].event.kind,
+        EventKind::WorkflowAttemptFinished {
+            task_id: *downstream,
+            state: TaskState::Completed
+        }
+    );
+    assert!(matches!(
+        entries[4].event.kind,
+        EventKind::TaskCompleted { .. }
+    ));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.event.correlation_task_id == entries[4].event.correlation_task_id)
+    );
+    let serialized = serde_json::to_string(&entries).unwrap();
+    assert!(!serialized.contains("fixture integrated answer"));
+    assert!(!serialized.contains("Produce one short contribution"));
+}
+
+#[test]
 fn completion_events_replay_across_cli_processes_without_payload_text() {
     let fixture = HttpFixture::new(false);
     let directory = ScratchDirectory::new();
@@ -1105,7 +1220,7 @@ fn workflow_command_deadline_preserves_cancelled_history_and_prevents_next_step(
     let config = runtime_config(&fixture, false, true)
         .replace("permissions = []", "permissions = [\"delegate\"]");
     let journal = directory.0.join("events.sqlite3");
-    vespera_events::Journal::initialize(&journal, 2).unwrap();
+    vespera_events::Journal::initialize(&journal, 8).unwrap();
     let output = run_fixture_workflow(
         &directory,
         &config,
@@ -1116,12 +1231,39 @@ fn workflow_command_deadline_preserves_cancelled_history_and_prevents_next_step(
             "1",
             "--event-journal",
             journal.to_str().unwrap(),
+            "--observe-workflow",
         ],
     );
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["workflow"]["task"]["state"], "cancelled");
-    assert_terminal_event(&journal, &report, "task_cancelled");
+    let entries = vespera_events::Journal::open_reader(&journal)
+        .unwrap()
+        .replay(None, 8)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 3);
+    let attempt = report["workflow"]["attempts"][0]["task_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        matches!(entries[0].event.kind, vespera_core::EventKind::WorkflowAttemptAccepted { task_id, .. } if task_id == attempt)
+    );
+    assert_eq!(
+        entries[1].event.kind,
+        vespera_core::EventKind::WorkflowAttemptFinished {
+            task_id: attempt,
+            state: vespera_core::TaskState::Cancelled
+        }
+    );
+    let root = report["task_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        entries[2].event.kind,
+        vespera_core::EventKind::TaskCancelled { task_id: root }
+    );
+    assert_eq!(report["event_publication"]["cursor"]["sequence"], 3);
     assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 1);
     assert_eq!(report["workflow"]["attempts"][0]["task_state"], "cancelled");
     assert_eq!(report["cleanup"]["drained"], true);

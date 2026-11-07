@@ -4,9 +4,13 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use vespera_agents::{AgentRuntime, ExecutionError, TaskExecutionResult};
-use vespera_core::{AgentId, AgentStatus, ModelId, Permission, Task, TaskId, TaskState};
+use vespera_core::{
+    AgentId, AgentStatus, EventKind, ModelId, Permission, Task, TaskId, TaskState,
+    WorkflowDependency,
+};
 use vespera_providers::{CancellationToken, ProviderError};
 
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -130,15 +134,16 @@ impl Drop for RunGuard {
         }
     }
 }
-struct AttemptGuard {
+struct AttemptGuard<'a> {
     agents: AgentRuntime,
     report: Arc<Mutex<WorkflowReport>>,
     index: usize,
     agent_id: AgentId,
     task_id: TaskId,
     armed: bool,
+    observer: Option<&'a UnboundedSender<EventKind>>,
 }
-impl Drop for AttemptGuard {
+impl Drop for AttemptGuard<'_> {
     fn drop(&mut self) {
         // Covers cancellation between acceptance and the first execution poll.
         let _ = self.agents.cancel_queued_task(self.agent_id, self.task_id);
@@ -146,10 +151,30 @@ impl Drop for AttemptGuard {
             let mut report = lock(&self.report);
             let attempt = &mut report.attempts[self.index];
             if attempt.delegated {
-                attempt.task_state = Some(TaskState::Cancelled);
+                attempt.task_state = self.agents.task_state(self.task_id);
+                emit_finish(self.observer, self.task_id, attempt.task_state);
             }
             attempt.failure = Some(Failure::Cancelled);
         }
+    }
+}
+
+fn emit(observer: Option<&UnboundedSender<EventKind>>, event: EventKind) {
+    if let Some(observer) = observer {
+        let _ = observer.send(event);
+    }
+}
+
+fn emit_finish(
+    observer: Option<&UnboundedSender<EventKind>>,
+    task_id: TaskId,
+    state: Option<TaskState>,
+) {
+    if let Some(state @ (TaskState::Completed | TaskState::Cancelled | TaskState::Failed)) = state {
+        emit(
+            observer,
+            EventKind::WorkflowAttemptFinished { task_id, state },
+        );
     }
 }
 
@@ -178,6 +203,17 @@ impl Orchestrator {
         &self,
         workflow: Workflow,
         cancel: CancellationToken,
+    ) -> Result<WorkflowReport, OrchestratorError> {
+        self.execute_observed(workflow, cancel, None).await
+    }
+
+    /// Observe at most two payload-free events per admitted attempt, including cancellation.
+    /// A disconnected receiver never changes workflow execution.
+    pub async fn execute_observed(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
     ) -> Result<WorkflowReport, OrchestratorError> {
         workflow.validate()?;
         let coordinator = self
@@ -223,7 +259,7 @@ impl Orchestrator {
             started: Instant::now(),
         };
         let failure = {
-            let work = self.run_steps(&workflow, &report, &owned_cancel);
+            let work = self.run_steps(&workflow, &report, &owned_cancel, observer);
             tokio::pin!(work);
             tokio::select! {
                 biased;
@@ -240,6 +276,7 @@ impl Orchestrator {
         workflow: &Workflow,
         report: &Arc<Mutex<WorkflowReport>>,
         cancel: &CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
     ) -> Result<(), Failure> {
         let mut completed: BTreeMap<String, usize> = BTreeMap::new();
         for step in &workflow.steps {
@@ -334,6 +371,7 @@ impl Orchestrator {
                     agent_id,
                     task_id: task.id,
                     armed: true,
+                    observer,
                 };
                 if self
                     .agents
@@ -345,7 +383,35 @@ impl Orchestrator {
                     guard.armed = false;
                     return Err(Failure::DelegationDenied);
                 }
-                lock(report).attempts[index].delegated = true;
+                {
+                    let mut record = lock(report);
+                    record.attempts[index].delegated = true;
+                    if let Some(observer) = observer {
+                        let dependencies = step
+                            .dependencies
+                            .iter()
+                            .map(|name| {
+                                let result = record.attempts[completed[name]]
+                                    .result
+                                    .as_ref()
+                                    .expect("completed dependency");
+                                WorkflowDependency {
+                                    task_id: result.task.id,
+                                    agent_id: result.agent_id,
+                                }
+                            })
+                            .collect();
+                        emit(
+                            Some(observer),
+                            EventKind::WorkflowAttemptAccepted {
+                                task_id: task.id,
+                                from_agent_id: workflow.coordinator,
+                                to_agent_id: agent_id,
+                                dependencies,
+                            },
+                        );
+                    }
+                }
                 let mut options = step.options();
                 options.max_response_bytes = 1024 * 1024 - output_bytes;
                 let result = self
@@ -353,13 +419,9 @@ impl Orchestrator {
                     .execute_task(agent_id, task, options, cancel.clone())
                     .await;
                 let _ = self.agents.cancel_queued_task(agent_id, guard.task_id);
-                let state = self
-                    .agents
-                    .get_task(guard.task_id)
-                    .await
-                    .ok()
-                    .map(|t| t.state);
+                let state = self.agents.task_state(guard.task_id);
                 guard.armed = false;
+                emit_finish(observer, guard.task_id, state);
                 match result {
                     Ok(result) => {
                         let rejected = result.response.content.trim().is_empty();

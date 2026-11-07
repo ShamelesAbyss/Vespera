@@ -360,6 +360,14 @@ impl AgentRuntime {
             .ok_or(AgentRuntimeError::TaskNotFound { task_id })
     }
 
+    /// Read task state without cloning its prompt or awaiting a runtime.
+    pub fn task_state(&self, task_id: TaskId) -> Option<TaskState> {
+        lock_state(&self.state)
+            .tasks
+            .get(&task_id)
+            .map(|task| task.state)
+    }
+
     /// Cancel accepted queued work for its recorded owner. Running work must use
     /// managed cancellation instead. Synchronous so ownership guards can clean up on drop.
     pub fn cancel_queued_task(

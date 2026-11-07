@@ -19,6 +19,12 @@ enum Relation {
     Delegation {
         task: TaskId,
         workflow: Option<TaskId>,
+        observed_live: bool,
+    },
+    Dependency {
+        upstream: TaskId,
+        downstream: TaskId,
+        workflow: Option<TaskId>,
     },
     Message,
 }
@@ -74,8 +80,42 @@ impl Evidence {
                     relation: Relation::Delegation {
                         task: task_id,
                         workflow: event.correlation_task_id,
+                        observed_live: false,
                     },
                 });
+            }
+            EventKind::WorkflowAttemptAccepted {
+                task_id,
+                from_agent_id,
+                to_agent_id,
+                dependencies,
+            } => {
+                self.edges
+                    .extend(dependencies.into_iter().map(|dependency| Edge {
+                        sequence,
+                        from: dependency.agent_id,
+                        to: to_agent_id,
+                        relation: Relation::Dependency {
+                            upstream: dependency.task_id,
+                            downstream: task_id,
+                            workflow: event.correlation_task_id,
+                        },
+                    }));
+                self.edges.push_back(Edge {
+                    sequence,
+                    from: from_agent_id,
+                    to: to_agent_id,
+                    relation: Relation::Delegation {
+                        task: task_id,
+                        workflow: event.correlation_task_id,
+                        observed_live: true,
+                    },
+                });
+            }
+            EventKind::WorkflowAttemptFinished { task_id, state }
+                if event.source == "run-workflow" =>
+            {
+                self.outcomes.push_back((sequence, task_id, state));
             }
             EventKind::AgentMessageSent {
                 from_agent_id,
@@ -102,14 +142,28 @@ impl Evidence {
             }
             _ => {}
         }
-        if self.edges.len() > MAX_OBSERVATIONS {
-            self.edges.pop_front();
+        if let Some(excess) = self
+            .edges
+            .len()
+            .checked_sub(MAX_OBSERVATIONS)
+            .filter(|count| *count > 0)
+        {
+            self.edges.drain(..excess);
             self.clipped = true;
         }
         if self.outcomes.len() > MAX_OBSERVATIONS {
             self.outcomes.pop_front();
             self.clipped = true;
         }
+    }
+
+    fn outcome(&self, task: TaskId, accepted_at: u64) -> Option<TaskState> {
+        self.outcomes
+            .iter()
+            .rev()
+            .find_map(|(sequence, id, state)| {
+                (*id == task && *sequence > accepted_at).then_some(*state)
+            })
     }
 }
 
@@ -131,6 +185,7 @@ enum Filter {
     #[default]
     All,
     Delegation,
+    Dependencies,
     Messages,
 }
 
@@ -139,6 +194,7 @@ impl Filter {
         match self {
             Self::All => true,
             Self::Delegation => matches!(edge.relation, Relation::Delegation { .. }),
+            Self::Dependencies => matches!(edge.relation, Relation::Dependency { .. }),
             Self::Messages => matches!(edge.relation, Relation::Message),
         }
     }
@@ -147,6 +203,7 @@ impl Filter {
         match self {
             Self::All => "All observed relations",
             Self::Delegation => "Delegation",
+            Self::Dependencies => "Dependencies",
             Self::Messages => "Messages",
         }
     }
@@ -369,7 +426,8 @@ fn navigate(
     if keys.just_pressed(KeyCode::Tab) {
         layout.filter = match layout.filter {
             Filter::All => Filter::Delegation,
-            Filter::Delegation => Filter::Messages,
+            Filter::Delegation => Filter::Dependencies,
+            Filter::Dependencies => Filter::Messages,
             Filter::Messages => Filter::All,
         };
     }
@@ -402,6 +460,7 @@ fn draw(feed: Res<Feed>, layout: Res<Layout>, mut gizmos: Gizmos) {
         };
         let (color, height) = match edge.relation {
             Relation::Delegation { .. } => (Color::srgb(0.3, 0.85, 1.0), 0.15),
+            Relation::Dependency { .. } => (Color::srgb(0.43, 0.96, 0.51), 0.34),
             Relation::Message => (Color::srgb(1.0, 0.62, 0.23), -0.12),
         };
         let offset = Vec3::Y * height;
@@ -453,19 +512,36 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
                 "Received from"
             };
             let observation = match edge.relation {
-                Relation::Delegation { task, workflow } => {
+                Relation::Delegation {
+                    task,
+                    workflow,
+                    observed_live,
+                } => {
                     let outcome = workflow
-                        .and_then(|root| {
-                            evidence
-                                .outcomes
-                                .iter()
-                                .rev()
-                                .find(|(_, id, _)| *id == root)
-                                .map(|(_, _, state)| format!("{state:?}"))
-                        })
-                        .unwrap_or_else(|| "Outcome unavailable".into());
+                        .and_then(|root| evidence.outcome(root, edge.sequence))
+                        .map_or_else(|| "Unavailable".into(), |state| format!("{state:?}"));
                     let root = workflow.map_or_else(|| "Unlinked".into(), |root| root.to_string());
-                    format!("Delegation task\n{task}\nWorkflow\n{root}\nOutcome {outcome}")
+                    let status = if observed_live {
+                        evidence.outcome(task, edge.sequence).map_or_else(
+                            || "Accepted / no terminal evidence".into(),
+                            |state| format!("{state:?}"),
+                        )
+                    } else {
+                        "Accepted / historical record".into()
+                    };
+                    format!(
+                        "Delegation task\n{task}\nAttempt {status}\nWorkflow\n{root}\nOutcome {outcome}"
+                    )
+                }
+                Relation::Dependency {
+                    upstream,
+                    downstream,
+                    workflow,
+                } => {
+                    let root = workflow.map_or_else(|| "Unlinked".into(), |root| root.to_string());
+                    format!(
+                        "Predecessor supplied to attempt\n{upstream}\nDownstream attempt\n{downstream}\nWorkflow\n{root}"
+                    )
                 }
                 Relation::Message => "Message accepted".into(),
             };
@@ -481,7 +557,7 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
         "Window shows up to 24 agents".into()
     };
     readout.0 = format!(
-        "VESPERA / SWARM\n{}\n{history}\n{} visible agents / {} observations\n{}\n\n{detail}\n\nCyan delegation | Amber message\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{}\n{history}\n{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Amber message\nGreen dependency\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         evidence.status,
         layout.agents.len(),
         evidence.edges.len(),

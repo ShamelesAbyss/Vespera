@@ -38,4 +38,6 @@ pub enum DomainError {
     UnsupportedEventSchema { version: u32, supported: u32 },
     #[error("event schema version {version} is too old for this event kind; requires {minimum}")]
     EventSchemaTooOld { version: u32, minimum: u32 },
+    #[error("invalid workflow event field: {field}")]
+    InvalidWorkflowEvidence { field: &'static str },
 }

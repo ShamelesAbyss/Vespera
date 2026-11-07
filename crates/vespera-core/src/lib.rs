@@ -26,6 +26,7 @@ pub use error::DomainError;
 pub use event::{
     BrokerEventCursor, BrokerEventEntry, BrokerEventPage, BrokerStreamEnd, BrokerStreamFrame,
     EVENT_SCHEMA_VERSION, EventEnvelope, EventKind, ExternalAttempt, ExternalTaskChange,
+    WorkflowDependency,
 };
 pub use id::{AgentId, EventId, MemoryId, ModelId, ProviderId, TaskId};
 pub use memory::{MemoryLayer, MemoryNamespace, MemoryRecord};

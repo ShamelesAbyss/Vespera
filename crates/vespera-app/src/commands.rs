@@ -43,14 +43,21 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let workflow: Workflow = serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
     workflow.validate()?;
     let task_id = workflow.task.id;
-    let journal = event_commands::prepare(args.event_journal).await?;
+    let mut journal = event_commands::prepare(args.event_journal).await?;
     let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
+    let live = if args.observe_workflow {
+        journal
+            .take()
+            .map(|journal| event_commands::WorkflowJournal::start(journal, task_id))
+    } else {
+        None
+    };
     let cancel = CancellationToken::new();
     let outcome = cancellable(
         Duration::from_secs(args.timeout_seconds),
         cancel.clone(),
-        runtime.run_workflow(workflow, cancel),
+        runtime.run_workflow_observed(workflow, cancel, live.as_ref().map(|live| &live.sender)),
     )
     .await;
     let cleanup = runtime
@@ -65,7 +72,12 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let succeeded = workflow
         .as_ref()
         .is_some_and(|report| report.task.state == TaskState::Completed);
-    let event_publication = if let (Some(journal), Some(report)) = (journal, &workflow) {
+    let terminal = workflow
+        .as_ref()
+        .and_then(|report| event_commands::terminal_event(task_id, report.task.state));
+    let event_publication = if let Some(live) = live {
+        live.finish(terminal).await
+    } else if let (Some(journal), Some(report)) = (journal, &workflow) {
         let mut events = Vec::new();
         if args.record_delegations {
             events.extend(
@@ -80,7 +92,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                     }),
             );
         }
-        events.extend(event_commands::terminal_event(task_id, report.task.state));
+        events.extend(terminal);
         if events.is_empty() {
             None
         } else {

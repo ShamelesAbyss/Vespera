@@ -151,6 +151,13 @@ struct RunWorkflowArgs {
     /// Include accepted delegation records alongside the workflow outcome.
     #[arg(long, requires = "event_journal")]
     record_delegations: bool,
+    /// Publish accepted attempts, dependencies and attempt outcomes during execution.
+    #[arg(
+        long,
+        requires = "event_journal",
+        conflicts_with = "record_delegations"
+    )]
+    observe_workflow: bool,
     /// Publish sampled scheduler counts to a new private local directory.
     #[arg(long)]
     scheduler_telemetry: Option<PathBuf>,

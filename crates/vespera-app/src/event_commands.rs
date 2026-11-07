@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
+use tokio::sync::mpsc;
 use vespera_core::{EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError};
 
@@ -198,6 +199,57 @@ pub(crate) async fn record_batch(
             cursor: None,
             error: Some(error.to_string()),
         },
+    }
+}
+
+pub(crate) struct WorkflowJournal {
+    pub(crate) sender: mpsc::UnboundedSender<EventKind>,
+    writer: tokio::task::JoinHandle<Option<Publication>>,
+}
+
+impl WorkflowJournal {
+    pub(crate) fn start(mut journal: Journal, root: TaskId) -> Self {
+        // One validated workflow emits at most 96 attempt events and one root outcome.
+        let (sender, mut events) = mpsc::unbounded_channel();
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut cursor = None;
+            while let Some(kind) = events.blocking_recv() {
+                let result = (|| {
+                    let timestamp = crate::memory_commands::current_timestamp()?;
+                    let mut event = EventEnvelope::new("run-workflow", timestamp, kind)
+                        .map_err(|_| JournalError::Invalid("envelope"))?;
+                    event.correlation_task_id = Some(root);
+                    Ok::<_, AppError>(journal.append(&event)?)
+                })();
+                match result {
+                    Ok(committed) => cursor = Some(committed),
+                    Err(error) => {
+                        return Some(Publication {
+                            cursor,
+                            error: Some(error.to_string()),
+                        });
+                    }
+                }
+            }
+            cursor.map(|cursor| Publication {
+                cursor: Some(cursor),
+                error: None,
+            })
+        });
+        Self { sender, writer }
+    }
+
+    pub(crate) async fn finish(self, terminal: Option<EventKind>) -> Option<Publication> {
+        if let Some(event) = terminal {
+            let _ = self.sender.send(event);
+        }
+        drop(self.sender);
+        self.writer.await.unwrap_or_else(|_| {
+            Some(Publication {
+                cursor: None,
+                error: Some(JournalError::Database.to_string()),
+            })
+        })
     }
 }
 

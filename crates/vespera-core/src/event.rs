@@ -6,8 +6,8 @@ use crate::{
     TaskId, TaskState, validate_nonempty,
 };
 
-/// Latest supported event wire schema. Existing kinds still emit version 1.
-pub const EVENT_SCHEMA_VERSION: u32 = 3;
+/// Latest supported event wire schema. Each kind emits its earliest compatible version.
+pub const EVENT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -125,6 +125,17 @@ pub enum EventKind {
         from_agent_id: AgentId,
         to_agent_id: AgentId,
     },
+    /// Accepted workflow attempt with the actual predecessor results in its input.
+    WorkflowAttemptAccepted {
+        task_id: TaskId,
+        from_agent_id: AgentId,
+        to_agent_id: AgentId,
+        dependencies: Vec<WorkflowDependency>,
+    },
+    WorkflowAttemptFinished {
+        task_id: TaskId,
+        state: TaskState,
+    },
     TaskCompleted {
         task_id: TaskId,
     },
@@ -154,9 +165,18 @@ pub enum EventKind {
     },
 }
 
+/// Identity-only provenance for a completed dependency supplied to an attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowDependency {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+}
+
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::WorkflowAttemptAccepted { .. } | Self::WorkflowAttemptFinished { .. } => 4,
             Self::ExternalTaskChanged { .. } => 3,
             Self::TaskFailed { .. } | Self::TaskCancelled { .. } => 2,
             _ => 1,
@@ -164,6 +184,33 @@ impl EventKind {
     }
 
     pub fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::WorkflowAttemptAccepted {
+                task_id,
+                dependencies,
+                ..
+            } => {
+                if dependencies.len() > 15
+                    || dependencies.iter().enumerate().any(|(index, item)| {
+                        item.task_id == *task_id
+                            || dependencies[..index]
+                                .iter()
+                                .any(|previous| previous.task_id == item.task_id)
+                    })
+                {
+                    return Err(DomainError::InvalidWorkflowEvidence {
+                        field: "dependencies",
+                    });
+                }
+            }
+            Self::WorkflowAttemptFinished {
+                state: TaskState::Queued | TaskState::Running,
+                ..
+            } => {
+                return Err(DomainError::InvalidWorkflowEvidence { field: "state" });
+            }
+            _ => {}
+        }
         // All domain IDs are invariant-preserving newtypes. A simulation name
         // is the sole free-form identifier in these payloads.
         if let Self::SimulationAdvanced { simulation_id, .. } = self {

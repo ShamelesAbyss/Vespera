@@ -400,6 +400,8 @@ cargo run --locked -p vespera-view --features graphics -- --swarm data/events.sq
 
 The workflow publishes only delegations that the runtime accepted. Each record carries the attempt and agent IDs and the root workflow correlation. The delegation records and root terminal event commit in one batch after execution and cleanup. Choose retention large enough to retain the whole batch if you need all its records. The journal stores no workflow prompts or generated outputs in this batch.
 
+For live evidence, append `--observe-workflow --event-journal data/events.sqlite3` to the workflow command. Use one of `--observe-workflow` and `--record-delegations`. Live mode records acceptance and known terminal task state separately, then records the root outcome after cleanup. Accepted attempts carry the IDs of predecessor results included in their input. These records establish prompt assembly and delegation, while the attempt outcome describes local task execution. Select the Dependencies filter to isolate green arrows. Interrupted publication can leave an accepted attempt without terminal evidence. Use a unique root task ID for each run.
+
 Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
 
 To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
@@ -408,7 +410,7 @@ To observe live worker messages, use broker mode with the operator signing key i
 cargo run --locked -p vespera-view --features graphics -- --swarm-broker --broker 127.0.0.1:8765
 ```
 
-Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Both Swarm modes are read-only and show up to 24 agents from the latest 128 relationship observations loaded into the window. A retention gap is labeled. Journal and broker modes use separate sources. Live in-flight workflow progress, dependency edges and delivery acknowledgements in Swarm remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
+Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Both Swarm modes are read-only and show up to 24 agents from the latest 128 relationships loaded into the window. A retention gap is labeled. Journal and broker modes use separate sources. Delivery acknowledgements and contention evidence remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
 
 ### Follow committed events
 

@@ -116,7 +116,7 @@ Live deadlines use a monotonic clock. Recovery derives the remaining lifetime fr
 
 A database write failure returns `503 storage_unavailable` and disables further broker operations until restart. Any in-memory state after the failure is withheld from clients. Reopen the same database after fixing the storage problem and inspect the task to reconcile an uncertain result. SQLite writes run synchronously in the service. Slow storage can delay unrelated requests and their timeout handling.
 
-The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
+The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. Live workflow journals use event schema version 4 for `workflow_attempt_accepted` and `workflow_attempt_finished`. They carry task and agent IDs, root correlation and up to fifteen dependency references. The terminal attempt event carries a local terminal task state. Use a version 4 reader for journals containing these records. [Local journal CLI](CLI.md#local-task-outcome-journal)
 
 ## Rust SDK
 
