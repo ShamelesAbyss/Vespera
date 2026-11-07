@@ -71,7 +71,8 @@ pub enum ProviderKind {
     Ollama,
     /// OpenAI-compatible v1 API (LM Studio, llama.cpp server, vLLM, etc.).
     OpenAiCompatible,
-    /// Bionic provider family (pending authoritative protocol specification in Milestone 3).
+    /// Reserved for a dedicated Bionic protocol. LM Studio Bionic's verified
+    /// compatibility endpoint uses the OpenAiCompatible family.
     Bionic,
     /// Custom user-defined adapter.
     Custom,

@@ -119,22 +119,29 @@ cargo test -p vespera-providers --locked
 cargo test -p vespera-providers --test ollama --locked -- --ignored
 ```
 
-Ordinary tests use ephemeral loopback fixture servers and require no model
-weights, GPU or external service. The live smoke test is ignored by default and
-was explicitly run successfully against local Ollama 0.40.13 after discovery. It checks health only, not inference,
-residency correctness or end-to-end agent execution.
+Ordinary tests use ephemeral loopback fixture servers and require no model weights, GPU or external service.
 
 Fixture coverage includes enumeration/lifecycle, advertised metadata, telemetry
 arithmetic, bounded payload fields, endpoint prefixes, streaming framing and
 completion, malformed/oversized data, cancellation, idle timeout, redirects,
 auth errors, diagnostic suppression, request deserialization, aggregate bounds,
 whole deadlines and proxy isolation using subprocess-local environment fixtures.
-None of this establishes a live
-compatibility matrix for Ollama, LM Studio, llama.cpp, vLLM or hosted services.
+### LM Studio Bionic
 
-**Bionic remains blocked** on exact product, version, deployment and authoritative
-API documentation. It is not treated as an OpenAI-compatible alias. Additional
-provider-specific adapters and live-version records remain roadmap work.
+The installed daemon identified itself as **LM Studio Bionic v1.2.0+2**. Its loopback OpenAI compatibility server passed model discovery, bounded chat, streamed text with a terminal event, and typed client cancellation after visible text using a preloaded Gemma 4 12B Q4_K_S model. The bounded chat reported 56 completion tokens. The stream emitted two nonempty deltas and provided no terminal usage count. The health report's `openai-v1` string identifies the protocol path. The daemon supplied the product version separately. [LM Studio compatibility API](https://lmstudio.ai/docs/developer/openai-compat) · [LM Studio Bionic product documentation](https://lmstudio.ai/docs/bionic)
+
+Use `kind = "open_ai_compatible"` with the configured loopback endpoint and the exact ID returned by model discovery. Load the model in the Bionic daemon. Vespera's compatible adapter leaves load, unload, residency and model metadata unsupported. The live run used the loopback server without an auth requirement. Authentication and failure paths remain fixture evidence for this backend. [Loopback server CLI](https://lmstudio.ai/docs/cli/serve/server-start)
+
+A separate `run-agent` invocation kept the configured agent UUID and used the Bionic endpoint through the scheduler and agent runtime. The task completed with visible text and 62 reported completion tokens. The temporary model was unloaded using `lms unload` and the loopback server was stopped.
+
+```powershell
+$env:VESPERA_LIVE_OPENAI_ENDPOINT = 'http://127.0.0.1:1234/v1'
+$env:VESPERA_LIVE_OPENAI_MODEL = 'vespera-live-check' # Use the loaded model's actual ID
+cargo test --locked -p vespera-providers --test openai live_openai_compatible_smoke_test -- --exact --ignored --nocapture
+Remove-Item Env:VESPERA_LIVE_OPENAI_ENDPOINT, Env:VESPERA_LIVE_OPENAI_MODEL
+```
+
+BionicGPT is a separate product. Its deployment and API were outside this qualification. [BionicGPT model configuration](https://bionic-gpt.com/docs/guides/managing-models/)
 
 ## Protocol references
 

@@ -1,6 +1,16 @@
 # Development log
 
+## 2026-11-07 — LM Studio Bionic compatibility
+
+The native Ollama and milestone audit checkpoint `62974b0297eb04aac4811cd67422f83188cfc111` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42422837461). The installed LM Studio daemon identified itself as Bionic v1.2.0+2. Its documented loopback OpenAI API passed the opt-in Rust adapter check with a preloaded Gemma 4 12B Q4_K_S model. Health and model enumeration succeeded. Bounded chat reported 56 completion tokens, and streaming emitted two visible deltas before its terminal event. A separate stream returned typed local cancellation after a visible delta.
+
+The first 32-token run exhausted its budget before visible text. The final test used 128 tokens for completion and 256 for the cancellation probe. The streaming response carried no terminal token count. The run used an unauthenticated loopback server. Auth, unsupported operations and malformed transport remain covered by offline fixtures. LM Studio Bionic uses the existing compatible adapter. The record does not qualify BionicGPT or assert that cancelled server compute stopped.
+
+The same CLI agent then ran through Bionic with no code changes to routing or scheduling. It completed with visible text and 62 reported output tokens. The temporary load was released through the vendor CLI, and the loopback server was stopped. Offline workspace tests, strict Clippy and formatting passed.
+
 ## 2026-11-07 — Milestone audit and native Ollama streaming
+
+Verified checkpoint `62974b0297eb04aac4811cd67422f83188cfc111` was pushed to `main`.
 
 Audited Milestones 0–14 from the clean `7a7edba` baseline against the original gates. The [acceptance ledger](MILESTONE_LEDGER.md) records evidence, gaps and dependency-ordered actions. The Atlas benchmark was at inspection stage and was deferred without source changes.
 

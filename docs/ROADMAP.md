@@ -8,7 +8,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | --- | --- |
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
 | 2: provider contract and Ollama | Original gates verified on Ollama 0.40.13 / hermes3:8b. Live checks include nonstreaming inference, streamed completion, local cancellation, discovery, metadata and acknowledged unload. Offline fixtures cover transport policy and failure paths. |
-| 3: additional providers | OpenAI-compatible SSE/payload/prefix/auth/error fixtures pass. Compatible nonstreaming execution verified against that same Ollama version/model only; portable context allocation remains unsupported. Bionic blocked on exact product/version and authoritative protocol. |
+| 3: additional providers | Verified the shared OpenAI-compatible adapter against Ollama 0.40.13 and LM Studio Bionic v1.2.0+2. Bionic loopback evidence covers discovery, bounded chat, streaming and client cancellation. Portable lifecycle and residency remain unsupported. |
 | 4: registry | In-process identity/update/removal, selected polling and effective-health behavior tested; CLI explicitly refreshes relevant health. No persistent background monitor or restart state yet. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |
 | 6: master orchestration | Bounded library implemented/tested: capability routing, authorized delegation, dependent results, retries, cancellation, budgets and explicit conflict policies. Application submission and native live two-step execution verified; automatic decomposition and durable parent/child history remain. See [ORCHESTRATION.md](ORCHESTRATION.md). |
@@ -46,11 +46,11 @@ Build one working Rust adapter against identified official product/version docum
 
 ## Milestone 3 — Bionic and OpenAI-compatible adapters
 
-**Identify Bionic's exact product/version and obtain authoritative API docs before this milestone.** Never infer its endpoint or OpenAI compatibility. A separately tested OpenAI-compatible adapter cannot imply Bionic completion.
+The qualified Bionic target is the installed LM Studio Bionic v1.2.0+2 daemon and its documented compatibility API. The [provider guide](PROVIDERS.md#lm-studio-bionic) records the verified operations. Keep the acceptance gates below for future backends.
 
 - Record Bionic identification and operations; missing documentation remains an explicit blocker, not a completed adapter.
 - Test each implemented adapter's auth, framing, cancellation limits, missing capabilities, and errors against its documented API subset.
-- Demonstrate interchangeable provider ports without vendor branches in orchestration. llama.cpp, LM Studio, and custom servers remain additional targets, not assumed compatibility.
+- Demonstrate interchangeable provider ports without vendor branches in orchestration. Standalone llama.cpp, other LM Studio versions and custom servers remain separate qualification targets.
 
 ## Milestone 4 — Model registry and health monitoring
 

@@ -1,4 +1,4 @@
-//! Offline OpenAI-compatible protocol fixtures. No external model server is used.
+//! OpenAI-compatible protocol fixtures and opt-in local server validation.
 use futures_util::StreamExt;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -74,6 +74,118 @@ fn request() -> BoundedInferenceRequest {
 fn provider(url: &str) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(OpenAiConfig::loopback_default(ProviderId::new(), url).unwrap())
         .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires a running compatible loopback server and VESPERA_LIVE_OPENAI_ENDPOINT/MODEL"]
+async fn live_openai_compatible_smoke_test() {
+    let endpoint = std::env::var("VESPERA_LIVE_OPENAI_ENDPOINT").expect("select a loopback server");
+    let model = std::env::var("VESPERA_LIVE_OPENAI_MODEL").expect("select a loaded text model");
+    let adapter = provider(&endpoint);
+    let token = CancellationToken::new;
+    let health = adapter.health_check(token()).await.expect("live health");
+    assert_eq!(
+        health.status,
+        vespera_providers::ProviderHealthStatus::Healthy
+    );
+    let models = adapter
+        .enumerate_models(token())
+        .await
+        .expect("live enumeration");
+    assert!(
+        models
+            .iter()
+            .any(|entry| entry.provider_model_name == model)
+    );
+    assert!(matches!(
+        adapter.query_residency(token()).await,
+        Err(ProviderError::UnsupportedOperation { .. })
+    ));
+    let request = |prompt: &str, limit| {
+        BoundedInferenceRequest::new(
+            &model,
+            vec![ChatMessage {
+                role: ChatRole::User,
+                content: prompt.into(),
+            }],
+            limit,
+            512,
+            Some(0.0),
+            None,
+        )
+        .unwrap()
+    };
+    let reply = adapter
+        .infer(request("Reply with one short greeting.", 128), token())
+        .await
+        .expect("live chat");
+    assert!(!reply.content.trim().is_empty());
+    assert!(matches!(
+        reply.finish_reason,
+        InferenceFinishReason::Stop | InferenceFinishReason::Length
+    ));
+    assert!(
+        reply
+            .metrics
+            .completion_tokens
+            .is_none_or(|count| (1..=128).contains(&count))
+    );
+    let mut stream = adapter
+        .infer_stream(request("Reply with one short greeting.", 128), token())
+        .await
+        .expect("live streamed chat");
+    let mut text_chunks = 0_u32;
+    let mut terminal = None;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.expect("stream frame");
+        text_chunks += u32::from(!chunk.delta.is_empty());
+        if chunk.done {
+            terminal = Some(chunk);
+        }
+    }
+    assert!(text_chunks > 0);
+    let terminal = terminal.expect("explicit terminal stream event");
+    assert!(matches!(
+        terminal.finish_reason,
+        Some(InferenceFinishReason::Stop | InferenceFinishReason::Length)
+    ));
+    let cancel = token();
+    let mut stream = adapter
+        .infer_stream(
+            request("Write the numbers from one to one hundred in order.", 256),
+            cancel.clone(),
+        )
+        .await
+        .expect("live cancellable stream");
+    let mut cancelled = false;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.expect("cancellable stream frame");
+        if !chunk.done && !chunk.delta.is_empty() {
+            cancel.cancel();
+            cancelled = matches!(
+                stream.next().await,
+                Some(Err(ProviderError::Cancelled { .. }))
+            );
+            break;
+        }
+    }
+    assert!(
+        cancelled,
+        "local stream returned typed cancellation after a text delta"
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "model": model,
+            "health_reported_version": health.version,
+            "nonstream_completion_tokens": reply.metrics.completion_tokens,
+            "stream_completion_tokens": terminal.metrics.and_then(|metrics| metrics.completion_tokens),
+            "text_chunks": text_chunks,
+            "terminal": terminal.done,
+            "local_cancellation_after_delta": cancelled,
+            "residency_supported": false,
+        })
+    );
 }
 
 #[tokio::test]
