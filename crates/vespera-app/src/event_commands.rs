@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use vespera_core::{EventEnvelope, EventKind, TaskId};
+use vespera_core::{EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError};
 
 use crate::AppError;
@@ -151,6 +151,12 @@ impl Publication {
     pub(crate) fn failed(&self) -> bool {
         self.error.is_some()
     }
+
+    pub(crate) fn report_failure(&self) {
+        if let Some(error) = &self.error {
+            eprintln!("Event publication failed: {error}");
+        }
+    }
 }
 
 pub(crate) async fn record(
@@ -177,5 +183,14 @@ pub(crate) async fn record(
             cursor: None,
             error: Some(error.to_string()),
         },
+    }
+}
+
+pub(crate) fn terminal_event(task_id: TaskId, state: TaskState) -> Option<EventKind> {
+    match state {
+        TaskState::Completed => Some(EventKind::TaskCompleted { task_id }),
+        TaskState::Failed => Some(EventKind::TaskFailed { task_id }),
+        TaskState::Cancelled => Some(EventKind::TaskCancelled { task_id }),
+        TaskState::Queued | TaskState::Running => None,
     }
 }

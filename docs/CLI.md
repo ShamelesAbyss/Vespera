@@ -216,7 +216,7 @@ Retrieval examines the first eight matches in namespace order. Whole records tha
 
 A retained response carries the accepted task ID and appears as `stored_memory_id` in the JSON report. Storage failure returns nonzero with `memory_error` and preserves the completed execution evidence. File and database preparation and post-inference persistence run on blocking workers outside the inference deadline.
 
-## Local completion journal
+## Local task outcome journal
 
 ```powershell
 New-Item -ItemType Directory -Force data | Out-Null
@@ -226,7 +226,7 @@ New-Item -ItemType Directory -Force data | Out-Null
 
 `events` uses `data/events.sqlite3` by default and prints JSON. `init` requires an existing parent directory. Retention is fixed at initialization and accepts 1 to 100,000 events. The default is 10,000. `replay` opens the existing file read-only and returns 1 to 256 records per page. The default is 100. Pass `--after <journal-UUID:sequence>` using the fields of `next_cursor` to continue. Check `has_more` for another page and `discarded_through` for the retention boundary. An expired, foreign or future cursor returns nonzero.
 
-Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to append a successful completion to an initialized journal. Single-agent runs emit `inference_completed`. Workflows emit `task_completed` for the root. Reports include the committed cursor or an append error in `event_publication`. Append failure returns nonzero while preserving the execution report. Publication is a separate post-execution transaction, so a process exit between execution and publication can leave a gap.
+Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to record an observed terminal outcome in an initialized journal. Successful agent runs emit `inference_completed` and successful workflow roots emit `task_completed`. An observed failed or cancelled agent task or workflow root emits `task_failed` or `task_cancelled` in schema version 2. Early rejections before task creation have no recorded task state. Reports include the committed cursor or an append error in `event_publication`. Append failure returns nonzero while preserving the execution report. Publication is a separate post-execution transaction, so a process exit between execution and publication can leave a gap.
 
 Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. Use `follow` for local streaming and `replay` for discrete pages. Network subscriptions and broader lifecycle events remain roadmap work.
 

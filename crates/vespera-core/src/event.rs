@@ -5,8 +5,8 @@ use crate::{
     TaskId, validate_nonempty,
 };
 
-/// The only event wire schema supported by this milestone.
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+/// Latest supported event wire schema. Existing kinds still emit version 1.
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 /// Typed event payloads, not proof that the described activity has occurred.
 ///
@@ -60,6 +60,12 @@ pub enum EventKind {
     TaskCompleted {
         task_id: TaskId,
     },
+    TaskFailed {
+        task_id: TaskId,
+    },
+    TaskCancelled {
+        task_id: TaskId,
+    },
     /// Logical tick is distinct from the envelope wall-clock timestamp.
     SimulationAdvanced {
         simulation_id: String,
@@ -75,6 +81,13 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    fn minimum_schema_version(&self) -> u32 {
+        match self {
+            Self::TaskFailed { .. } | Self::TaskCancelled { .. } => 2,
+            _ => 1,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), DomainError> {
         // All domain IDs are invariant-preserving newtypes. A simulation name
         // is the sole free-form identifier in these payloads.
@@ -85,7 +98,7 @@ impl EventKind {
     }
 }
 
-/// A validated version-1 event wire envelope, with no publication side effects.
+/// A validated event wire envelope, with no publication side effects.
 ///
 /// `new` builds caller-supplied data; it does not observe activity, consult a
 /// clock, append to an event log, or publish to subscribers. Public field changes
@@ -103,14 +116,14 @@ pub struct EventEnvelope {
 }
 
 impl EventEnvelope {
-    /// Construct data with a new envelope ID and the supported schema version.
+    /// Construct data with a new envelope ID and the earliest compatible schema version.
     pub fn new(
         source: impl Into<String>,
         occurred_at_unix_ms: u64,
         kind: EventKind,
     ) -> Result<Self, DomainError> {
         let envelope = Self {
-            schema_version: EVENT_SCHEMA_VERSION,
+            schema_version: kind.minimum_schema_version(),
             event_id: EventId::new(),
             occurred_at_unix_ms,
             correlation_task_id: None,
@@ -122,10 +135,17 @@ impl EventEnvelope {
     }
 
     pub fn validate(&self) -> Result<(), DomainError> {
-        if self.schema_version != EVENT_SCHEMA_VERSION {
+        if !(1..=EVENT_SCHEMA_VERSION).contains(&self.schema_version) {
             return Err(DomainError::UnsupportedEventSchema {
                 version: self.schema_version,
                 supported: EVENT_SCHEMA_VERSION,
+            });
+        }
+        let minimum = self.kind.minimum_schema_version();
+        if self.schema_version < minimum {
+            return Err(DomainError::EventSchemaTooOld {
+                version: self.schema_version,
+                minimum,
             });
         }
         self.event_id.validate()?;

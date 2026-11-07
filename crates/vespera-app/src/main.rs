@@ -76,7 +76,7 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct RunAgentArgs {
-    /// Append successful inference completion to an existing local journal.
+    /// Record the observed terminal outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
     /// Retrieve a literal phrase from a UTF-8 file and attach matching owned memories.
@@ -116,7 +116,7 @@ struct RunAgentArgs {
 
 #[derive(Debug, Args)]
 struct RunWorkflowArgs {
-    /// Append successful workflow completion to an existing local journal.
+    /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
     #[arg(long, default_value = "config/local.toml")]

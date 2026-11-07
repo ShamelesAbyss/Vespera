@@ -34,6 +34,8 @@ pub enum DomainError {
     },
     #[error("task cannot transition from {from} to {to}")]
     InvalidTaskTransition { from: TaskState, to: TaskState },
-    #[error("unsupported event schema version {version}; supported version is {supported}")]
+    #[error("unsupported event schema version {version}; latest supported version is {supported}")]
     UnsupportedEventSchema { version: u32, supported: u32 },
+    #[error("event schema version {version} is too old for this event kind; requires {minimum}")]
+    EventSchemaTooOld { version: u32, minimum: u32 },
 }

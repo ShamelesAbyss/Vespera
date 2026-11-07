@@ -612,6 +612,23 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
     assert_eq!(page["has_more"], false);
 }
 
+fn assert_terminal_event(path: &Path, report: &serde_json::Value, kind: &str) {
+    let replay = execute(&["events", "--journal", path.to_str().unwrap(), "replay"]);
+    assert!(replay.status.success());
+    let page: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+    let entries = page["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry["cursor"], report["event_publication"]["cursor"]);
+    let event = &entry["event"];
+    assert_eq!(event["schema_version"], 2);
+    assert_eq!(event["correlation_task_id"], report["task_id"]);
+    assert_eq!(
+        event["kind"],
+        serde_json::json!({"kind": kind, "task_id": report["task_id"]})
+    );
+}
+
 #[test]
 fn event_follower_streams_new_commits_and_resumes_after_disconnect() {
     use std::io::{BufRead, BufReader};
@@ -925,15 +942,24 @@ fn workflow_command_deadline_preserves_cancelled_history_and_prevents_next_step(
     let directory = ScratchDirectory::new();
     let config = runtime_config(&fixture, false, true)
         .replace("permissions = []", "permissions = [\"delegate\"]");
+    let journal = directory.0.join("events.sqlite3");
+    vespera_events::Journal::initialize(&journal, 2).unwrap();
     let output = run_fixture_workflow(
         &directory,
         &config,
         &workflow_value().to_string(),
-        &["--resume", "--timeout-seconds", "1"],
+        &[
+            "--resume",
+            "--timeout-seconds",
+            "1",
+            "--event-journal",
+            journal.to_str().unwrap(),
+        ],
     );
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["workflow"]["task"]["state"], "cancelled");
+    assert_terminal_event(&journal, &report, "task_cancelled");
     assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 1);
     assert_eq!(report["workflow"]["attempts"][0]["task_state"], "cancelled");
     assert_eq!(report["cleanup"]["drained"], true);
@@ -1019,10 +1045,17 @@ fn unusable_model_context_is_rejected_before_preload() {
     let directory = ScratchDirectory::new();
     let config = runtime_config(&fixture, false, true)
         .replace("context_window_tokens = 512", "context_window_tokens = 16");
-    let output = run_fixture_agent(&directory, &config, &["--resume"]);
+    let journal = directory.0.join("events.sqlite3");
+    vespera_events::Journal::initialize(&journal, 2).unwrap();
+    let output = run_fixture_agent(
+        &directory,
+        &config,
+        &["--resume", "--event-journal", journal.to_str().unwrap()],
+    );
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["task_state"], "failed");
+    assert_terminal_event(&journal, &report, "task_failed");
     assert!(
         report["cleanup"]["remaining_models"]
             .as_array()
@@ -1222,14 +1255,23 @@ fn cli_deadline_cancels_inference_and_reports_retained_provider_reservation() {
     let fixture = HttpFixture::new(false);
     fixture.inference_delay_ms.store(1500, Ordering::SeqCst);
     let directory = ScratchDirectory::new();
+    let journal = directory.0.join("events.sqlite3");
+    vespera_events::Journal::initialize(&journal, 2).unwrap();
     let output = run_fixture_agent(
         &directory,
         &runtime_config(&fixture, true, true),
-        &["--resume", "--timeout-seconds", "1"],
+        &[
+            "--resume",
+            "--timeout-seconds",
+            "1",
+            "--event-journal",
+            journal.to_str().unwrap(),
+        ],
     );
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["task_state"], "cancelled");
+    assert_terminal_event(&journal, &report, "task_cancelled");
     assert!(report["execution"].is_null());
     assert!(
         report["error"]

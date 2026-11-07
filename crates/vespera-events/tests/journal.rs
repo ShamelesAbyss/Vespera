@@ -72,7 +72,7 @@ fn retained_duplicates_are_idempotent_and_invalid_writes_leave_history_intact() 
         Err(JournalError::Invalid(_))
     ));
     invalid = event();
-    invalid.schema_version += 1;
+    invalid.schema_version = vespera_core::EVENT_SCHEMA_VERSION + 1;
     assert!(matches!(
         journal.append(&invalid),
         Err(JournalError::Invalid(_))

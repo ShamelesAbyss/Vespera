@@ -62,16 +62,11 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let succeeded = workflow
         .as_ref()
         .is_some_and(|report| report.task.state == TaskState::Completed);
-    let event_publication = if let Some(journal) = journal.filter(|_| succeeded) {
-        Some(
-            event_commands::record(
-                journal,
-                "run-workflow",
-                task_id,
-                EventKind::TaskCompleted { task_id },
-            )
-            .await,
-        )
+    let event = workflow
+        .as_ref()
+        .and_then(|report| event_commands::terminal_event(task_id, report.task.state));
+    let event_publication = if let (Some(journal), Some(event)) = (journal, event) {
+        Some(event_commands::record(journal, "run-workflow", task_id, event).await)
     } else {
         None
     };
@@ -90,6 +85,9 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             })?
         );
     } else {
+        if let Some(publication) = &event_publication {
+            publication.report_failure();
+        }
         if let Some(report) = &workflow {
             if let Some(result) = report.selected_result() {
                 println!("{}", result.response.content);
@@ -270,20 +268,16 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Ok(execution) => (Some(execution), None),
         Err(error) => (None, Some(error)),
     };
-    let event_publication = if let (Some(journal), Some(execution)) = (journal, &execution) {
-        Some(
-            event_commands::record(
-                journal,
-                "run-agent",
-                task_id,
-                EventKind::InferenceCompleted {
-                    task_id,
-                    model_id: execution.model_id,
-                    agent_id: Some(execution.agent_id),
-                },
-            )
-            .await,
-        )
+    let event = match &execution {
+        Some(execution) => Some(EventKind::InferenceCompleted {
+            task_id,
+            model_id: execution.model_id,
+            agent_id: Some(execution.agent_id),
+        }),
+        None => task_state.and_then(|state| event_commands::terminal_event(task_id, state)),
+    };
+    let event_publication = if let (Some(journal), Some(event)) = (journal, event) {
+        Some(event_commands::record(journal, "run-agent", task_id, event).await)
     } else {
         None
     };
@@ -332,6 +326,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        if let Some(publication) = &event_publication {
+            publication.report_failure();
+        }
         if let Some(id) = stored_memory_id {
             println!("Stored memory {id}");
         }

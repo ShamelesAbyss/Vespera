@@ -75,7 +75,7 @@ fn every_event_payload_has_typed_round_trip() {
         assert_eq!(serde_json::from_value::<EventKind>(payload).unwrap(), kind);
         let mut envelope = EventEnvelope::new("test.fixture", 0, kind).unwrap();
         envelope.correlation_task_id = Some(task_id);
-        assert_eq!(envelope.schema_version, EVENT_SCHEMA_VERSION);
+        assert_eq!(envelope.schema_version, 1);
         envelope.validate().unwrap();
         let encoded = serde_json::to_string(&envelope).unwrap();
         assert_eq!(
@@ -101,7 +101,7 @@ fn simulation_ticks_are_not_wall_clock_timestamps() {
 
 #[test]
 fn unsupported_schema_versions_reject_validation_and_deserialization() {
-    for version in [0, 2, u32::MAX] {
+    for version in [0, EVENT_SCHEMA_VERSION + 1, u32::MAX] {
         let mut input = event_json();
         input["schema_version"] = json!(version);
         assert!(serde_json::from_value::<EventEnvelope>(input).is_err());
@@ -111,13 +111,36 @@ fn unsupported_schema_versions_reject_validation_and_deserialization() {
             envelope.validate(),
             Err(DomainError::UnsupportedEventSchema {
                 version,
-                supported: 1
+                supported: EVENT_SCHEMA_VERSION
             })
         );
     }
     let mut input = event_json();
     input.as_object_mut().unwrap().remove("schema_version");
     assert!(serde_json::from_value::<EventEnvelope>(input).is_err());
+}
+
+#[test]
+fn terminal_failure_kinds_require_version_two_while_legacy_envelopes_still_decode() {
+    let task_id = ID.parse().unwrap();
+    for kind in [
+        EventKind::TaskFailed { task_id },
+        EventKind::TaskCancelled { task_id },
+    ] {
+        let envelope = EventEnvelope::new("fixture", 0, kind).unwrap();
+        assert_eq!(envelope.schema_version, 2);
+        let mut wire = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(
+            serde_json::from_value::<EventEnvelope>(wire.clone()).unwrap(),
+            envelope
+        );
+        wire["schema_version"] = json!(1);
+        assert!(serde_json::from_value::<EventEnvelope>(wire).is_err());
+    }
+    let mut legacy = event_json();
+    assert!(serde_json::from_value::<EventEnvelope>(legacy.clone()).is_ok());
+    legacy["schema_version"] = json!(2);
+    assert!(serde_json::from_value::<EventEnvelope>(legacy).is_ok());
 }
 
 #[test]

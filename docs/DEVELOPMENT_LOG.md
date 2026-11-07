@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-06 — Versioned task failure and cancellation events
+
+Previous checkpoint `11fdcd74c8949fb6ac0be20a089c36c7c65eb559` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42334971707). The CLI now journals observed failed and cancelled agent tasks and workflow roots. Existing event kinds still emit version 1. New `task_failed` and `task_cancelled` kinds require version 2, and current readers decode both versions. Records contain task IDs and omit provider errors and user payloads. Publication follows observed terminal state and remains separate from execution. JSON and human reports expose journal errors alongside execution evidence.
+
+Validation passed 193 offline tests, strict Clippy and rustdoc, the optimized workspace build and all 30 release CLI subprocess tests. The schema compatibility regression covers legacy decoding and rejection of new kinds in version 1. Existing admission and deadline tests now verify replay of correlated failure and cancellation records for agent and workflow execution. Broader lifecycle coverage, atomic audit coordination and external-agent interoperability remain open.
+
 ## 2026-11-06 — Local event streaming and cursor resume
 
 Previous checkpoint `1fc484b6663d7717c9ee10704ec696a60848659f` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42334621248). Added `events follow` for newline-delimited JSON delivery from the existing read-only journal. The follower flushes one entry at a time, buffers at most one replay page and holds no database transaction while writing. Clients can resume from a consumed cursor. Expiry exits nonzero, and a cursorless start reports earlier discarded history on stderr. Optional idle and event-count bounds support unattended consumers. A blocked stdout write can outlast the idle bound.
