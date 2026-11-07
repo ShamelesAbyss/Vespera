@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Interactive Swarm evidence timeline
+
+The World Mode timeline checkpoint `034a7030a0ad851d3b96f4c02617322a3060abf7` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42350667278). Swarm now captures a bounded view of accepted relations and terminal observations. The brackets step across retained evidence, and the live source keeps advancing while the inspector displays an earlier sequence. Compound acceptance events retain their delegation and dependency edges together. A source reset starts a separate live view.
+
+Windows validation passed 224 offline workspace tests, the SDK doctest, five graphics tests, strict workspace and graphics Clippy, and the graphics build. In the native journal-backed view, a held local provider fixture left the Swarm inspector frozen on sequence 1 while the backend advanced to sequence 5. Returning live and stepping between sequences 4 and 5 preserved the selected agent and showed the workflow outcome only at 5. The graphics regression also covered the shared message projection and bounded eviction.
+
+The signed broker and journal windows still use separate sources. The native timeline was exercised with the journal. The signed broker timeline lacks a dedicated desktop smoke result for this checkpoint. The broker task view and cross-layer navigation remain open.
+
 ## 2026-11-06 — Interactive World Mode timeline
 
 Verified implementation checkpoint `034a7030a0ad851d3b96f4c02617322a3060abf7` was pushed to `main`.

@@ -453,7 +453,11 @@ To observe live worker messages, use broker mode with the operator signing key i
 cargo run --locked -p vespera-view --features graphics -- --swarm-broker --broker 127.0.0.1:8765
 ```
 
-Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Both Swarm modes are read-only and show up to 24 agents from the latest 128 relationships loaded into the window. A retention gap is labeled. Journal and broker modes use separate sources. Delivery acknowledgements and contention evidence remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
+Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Journal and broker modes use separate sources. Delivery acknowledgements and contention evidence remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
+
+In either Swarm mode, press T to freeze the current evidence window or return live. Press [ to freeze and step back, then use [ and ] to move between retained observations and the captured range boundaries. The inspector displays the viewed sequence and the live source position separately. New events continue to arrive while frozen. An attempt's terminal state appears only once the viewed sequence includes its terminal event.
+
+Both modes are read-only. A window keeps up to 128 relationships and 128 terminal observations, with up to 24 agents visible. The inspector labels the cutoff when source retention or the window limit removes earlier evidence. Replay stays within the captured window, and returning live refreshes it from the current feed.
 
 ### Follow committed events
 

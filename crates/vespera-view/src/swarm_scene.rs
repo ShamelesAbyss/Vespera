@@ -42,7 +42,9 @@ struct Evidence {
     edges: VecDeque<Edge>,
     outcomes: VecDeque<(u64, TaskId, TaskState)>,
     floor: u64,
-    clipped: bool,
+    clipped_through: u64,
+    head: u64,
+    generation: u64,
     status: &'static str,
 }
 
@@ -52,6 +54,7 @@ impl Evidence {
         for entry in page.entries {
             self.push(entry.cursor.sequence.unsigned_abs(), entry.event);
         }
+        self.head = self.head.max(page.next_cursor.sequence.unsigned_abs());
         self.status = if page.has_more {
             "Catching up"
         } else {
@@ -61,12 +64,26 @@ impl Evidence {
 
     fn prune(&mut self, floor: u64) {
         self.floor = floor;
-        self.edges.retain(|edge| edge.sequence > self.floor);
-        self.outcomes
-            .retain(|(sequence, _, _)| *sequence > self.floor);
+        self.head = self.head.max(floor);
+        self.retain_window();
+    }
+
+    fn retain_window(&mut self) {
+        let floor = self.floor.max(self.clipped_through);
+        self.edges.retain(|edge| edge.sequence > floor);
+        self.outcomes.retain(|(sequence, _, _)| *sequence > floor);
+    }
+
+    fn reset(&mut self, status: &'static str) {
+        *self = Self {
+            generation: self.generation.wrapping_add(1),
+            status,
+            ..default()
+        };
     }
 
     fn push(&mut self, sequence: u64, event: EventEnvelope) {
+        self.head = self.head.max(sequence);
         match event.kind {
             EventKind::TaskDelegated {
                 task_id,
@@ -142,18 +159,16 @@ impl Evidence {
             }
             _ => {}
         }
-        if let Some(excess) = self
-            .edges
-            .len()
-            .checked_sub(MAX_OBSERVATIONS)
-            .filter(|count| *count > 0)
-        {
-            self.edges.drain(..excess);
-            self.clipped = true;
+        // Keep each compound observation intact when advancing the window.
+        if self.edges.len() > MAX_OBSERVATIONS {
+            let through = self.edges[self.edges.len() - MAX_OBSERVATIONS - 1].sequence;
+            self.clipped_through = self.clipped_through.max(through);
+            self.retain_window();
         }
         if self.outcomes.len() > MAX_OBSERVATIONS {
-            self.outcomes.pop_front();
-            self.clipped = true;
+            let through = self.outcomes[0].0;
+            self.clipped_through = self.clipped_through.max(through);
+            self.retain_window();
         }
     }
 
@@ -170,7 +185,52 @@ impl Evidence {
 #[derive(Resource)]
 struct Feed {
     input: watch::Receiver<Evidence>,
+    live: Evidence,
     evidence: Evidence,
+    frozen: Option<Frozen>,
+}
+
+struct Frozen {
+    captured: Evidence,
+    sequence: u64,
+}
+
+impl Frozen {
+    fn new(captured: Evidence) -> Self {
+        let sequence = captured.head;
+        Self { captured, sequence }
+    }
+
+    fn step(&mut self, earlier: bool) {
+        let sequences = self
+            .captured
+            .edges
+            .iter()
+            .map(|edge| edge.sequence)
+            .chain(self.captured.outcomes.iter().map(|outcome| outcome.0))
+            .chain([
+                self.captured.floor.max(self.captured.clipped_through),
+                self.captured.head,
+            ]);
+        let next = if earlier {
+            sequences.filter(|sequence| *sequence < self.sequence).max()
+        } else {
+            sequences.filter(|sequence| *sequence > self.sequence).min()
+        };
+        if let Some(sequence) = next {
+            self.sequence = sequence;
+        }
+    }
+
+    fn projection(&self) -> Evidence {
+        let mut evidence = self.captured.clone();
+        evidence.edges.retain(|edge| edge.sequence <= self.sequence);
+        evidence
+            .outcomes
+            .retain(|(sequence, _, _)| *sequence <= self.sequence);
+        evidence.head = self.sequence;
+        evidence
+    }
 }
 
 #[derive(Resource, Default)]
@@ -243,12 +303,7 @@ pub(super) fn run_broker(mut updates: mpsc::Receiver<Update>, reduced_motion: bo
                 }
                 Update::Observation(entry) => observed.push(entry.cursor.sequence, entry.event),
                 Update::Status(status) => observed.status = status,
-                Update::Reset => {
-                    observed = Evidence {
-                        status: "Broker history changed; rebuilding",
-                        ..default()
-                    };
-                }
+                Update::Reset => observed.reset("Broker history changed; rebuilding"),
                 Update::Cancelled(..) | Update::CancelFailed => {}
             }
             publish(&send, &observed);
@@ -262,7 +317,12 @@ pub(super) fn run_broker(mut updates: mpsc::Receiver<Update>, reduced_motion: bo
 
 fn run_window(input: watch::Receiver<Evidence>, evidence: Evidence, reduced_motion: bool) {
     desktop("Vespera | Swarm", Color::srgb(0.018, 0.025, 0.047))
-        .insert_resource(Feed { input, evidence })
+        .insert_resource(Feed {
+            input,
+            live: evidence.clone(),
+            evidence,
+            frozen: None,
+        })
         .init_resource::<Layout>()
         .insert_resource(CameraFocus {
             point: None,
@@ -290,10 +350,7 @@ fn observe(path: &Path, send: &watch::Sender<Evidence>) {
                 | JournalError::FutureCursor,
             ) => {
                 cursor = None;
-                evidence = Evidence {
-                    status: "Journal changed; rebuilding observations",
-                    ..default()
-                };
+                evidence.reset("Journal changed; rebuilding observations");
             }
             Err(_) => evidence.status = "Journal unavailable; showing last observations",
         }
@@ -363,12 +420,39 @@ fn sync(
     mut feed: ResMut<Feed>,
     mut layout: ResMut<Layout>,
     mesh: Res<AgentMesh>,
+    keys: Res<ButtonInput<KeyCode>>,
 ) {
-    let Ok(true) = feed.input.has_changed() else {
+    let changed = feed.input.has_changed().unwrap_or(false);
+    let toggle = keys.just_pressed(KeyCode::KeyT);
+    let earlier = keys.just_pressed(KeyCode::BracketLeft);
+    let later = keys.just_pressed(KeyCode::BracketRight) && feed.frozen.is_some();
+    if !(changed || toggle || earlier || later) {
         return;
-    };
-    let latest = feed.input.borrow_and_update().clone();
-    feed.evidence = latest;
+    }
+    if changed {
+        let latest = feed.input.borrow_and_update().clone();
+        feed.live = latest;
+    }
+    if toggle {
+        feed.frozen = if feed.frozen.is_some() {
+            None
+        } else {
+            Some(Frozen::new(feed.evidence.clone()))
+        };
+    } else if earlier || later {
+        if feed.frozen.is_none() {
+            feed.frozen = Some(Frozen::new(feed.evidence.clone()));
+        }
+        if let Some(frozen) = &mut feed.frozen {
+            frozen.step(earlier);
+        }
+    } else if feed.frozen.is_some() {
+        return;
+    }
+    feed.evidence = feed
+        .frozen
+        .as_ref()
+        .map_or_else(|| feed.live.clone(), Frozen::projection);
     let mut agents = BTreeSet::new();
     for edge in feed.evidence.edges.iter().rev() {
         for id in [edge.from, edge.to] {
@@ -384,9 +468,6 @@ fn sync(
         commands.entity(*entity).despawn();
         false
     });
-    if layout.selected.is_some_and(|id| !agents.contains(&id)) {
-        layout.selected = None;
-    }
     let columns = agents.len().clamp(1, 6);
     let rows = agents.len().div_ceil(columns);
     for (index, id) in agents.into_iter().enumerate() {
@@ -501,7 +582,11 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
             .filter(|edge| layout.filter.includes(edge) && (edge.from == id || edge.to == id));
         let latest = edges.next();
         let count = edges.count() + usize::from(latest.is_some());
-        detail = format!("AGENT\n{id}\n\n{count} matching observations");
+        detail = if layout.agents.contains_key(&id) {
+            format!("AGENT\n{id}\n\n{count} matching observations")
+        } else {
+            format!("AGENT\n{id}\n\nOutside the visible agent set")
+        };
         if let Some(edge) = latest {
             let peer = if edge.from == id { edge.to } else { edge.from };
             let direction = if edge.from == edge.to {
@@ -551,16 +636,115 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
             ));
         }
     }
-    let history = if evidence.floor > 0 || evidence.clipped {
-        format!("History limited / source floor {}", evidence.floor)
+    let floor = evidence.floor.max(evidence.clipped_through);
+    let timeline = if let Some(frozen) = &feed.frozen {
+        let live = if feed.live.generation == evidence.generation {
+            format!("Live sequence {}", feed.live.head)
+        } else {
+            format!("Live feed reset / sequence {}", feed.live.head)
+        };
+        format!(
+            "Frozen at {} / captured {floor}-{}\n{live}",
+            frozen.sequence, frozen.captured.head
+        )
     } else {
-        "Window shows up to 24 agents".into()
+        format!("Live sequence {}", evidence.head)
+    };
+    let history = if floor > 0 {
+        format!("History limited through sequence {floor}\n")
+    } else {
+        String::new()
     };
     readout.0 = format!(
-        "VESPERA / SWARM\n{}\n{history}\n{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Amber message\nGreen dependency\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
-        evidence.status,
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Amber message\nGreen dependency\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
         layout.filter.label(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vespera_core::WorkflowDependency;
+
+    #[test]
+    fn replay_steps_through_whole_observations_and_hides_future_results() {
+        let task = TaskId::new();
+        let from = AgentId::new();
+        let to = AgentId::new();
+        let mut live = Evidence::default();
+        live.push(
+            3,
+            EventEnvelope::new(
+                "run-workflow",
+                0,
+                EventKind::WorkflowAttemptAccepted {
+                    task_id: task,
+                    from_agent_id: from,
+                    to_agent_id: to,
+                    dependencies: vec![WorkflowDependency {
+                        task_id: TaskId::new(),
+                        agent_id: AgentId::new(),
+                    }],
+                },
+            )
+            .unwrap(),
+        );
+        live.push(
+            7,
+            EventEnvelope::new(
+                "run-workflow",
+                0,
+                EventKind::WorkflowAttemptFinished {
+                    task_id: task,
+                    state: TaskState::Completed,
+                },
+            )
+            .unwrap(),
+        );
+        let mut frozen = Frozen::new(live.clone());
+        assert_eq!(
+            frozen.projection().outcome(task, 3),
+            Some(TaskState::Completed)
+        );
+        frozen.step(true);
+        assert_eq!(frozen.sequence, 3);
+        assert_eq!(frozen.projection().edges.len(), 2);
+        assert_eq!(frozen.projection().outcome(task, 3), None);
+        frozen.step(true);
+        assert_eq!(frozen.sequence, 0);
+        assert!(frozen.projection().edges.is_empty());
+        for sequence in 8..8 + MAX_OBSERVATIONS as u64 - 1 {
+            live.push(
+                sequence,
+                EventEnvelope::new(
+                    "broker",
+                    0,
+                    EventKind::AgentMessageSent {
+                        from_agent_id: from,
+                        to_agent_id: to,
+                    },
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(live.clipped_through, 3);
+        assert_eq!(live.edges.len(), MAX_OBSERVATIONS - 1);
+        assert!(
+            live.edges
+                .iter()
+                .all(|edge| edge.relation == Relation::Message)
+        );
+        live.reset("reset");
+        assert_ne!(live.generation, frozen.captured.generation);
+        frozen.step(false);
+        frozen.step(false);
+        assert_eq!(frozen.sequence, 7);
+        assert_eq!(
+            frozen.projection().outcome(task, 3),
+            Some(TaskState::Completed)
+        );
+    }
 }
