@@ -28,7 +28,7 @@ The CLI enables Tokio `signal` to route Ctrl+C through owned cancellation rather
 
 ## Deferred dependencies
 
-Axum and WebSockets belong at a later authenticated API boundary.
+The loopback worker service enables HTTP/1 server support in the existing Hyper dependency. It uses Hyper-util's Tokio adapters, HTTP Body Util's streaming size limit and Subtle's constant-time credential equality. Enabling Hyper server mode added only `httpdate 1.0.3` to the lockfile. WebSocket event transport remains deferred.
 
 SQLite storage now uses exactly `rusqlite 0.41.1` with default features disabled and explicit `libsqlite3-sys`/`bundled` features. The native source bundle reports SQLite 3.54.1; FTS5 is exercised by actual retrieval tests. No separate database server, SQLCipher, loadable extensions, generated bindings or Wasm SQLite backend is enabled. The build requires a C compiler in addition to Rust. Optional vectors remain deferred until their provenance, rebuild/resource limits and retrieval quality can be verified.
 

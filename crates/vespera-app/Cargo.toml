@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 vespera-core.workspace = true
+vespera-api = { path = "../vespera-api" }
 vespera-events = { path = "../vespera-events" }
 vespera-memory = { path = "../vespera-memory" }
 vespera-config.workspace = true
@@ -26,6 +27,9 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
 
 [lints]
 workspace = true

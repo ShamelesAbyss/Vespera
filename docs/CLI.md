@@ -13,14 +13,16 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `models` | List declared model metadata | None |
 | `agents` | List declared identities, status, policy and permissions | None |
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
+| `serve` | Host the external worker task broker | Explicit loopback HTTP listener |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
 | `events` | Initialize, replay or follow a local event journal | None. Local SQLite access. |
 
-Every command supports `--help`; the root supports `--version`. All except
-`doctor` take `--config <PATH>` (default `config/local.toml`). Each command supports
-`--json`. Offline inventory does not resolve credential environment variables,
+Every command supports `--help`. The root supports `--version`. Provider,
+inventory and inference commands use `--config <PATH>` (default
+`config/local.toml`). See each command's help for its output and input options.
+Offline inventory does not resolve credential environment variables,
 verify model existence, resume agents, or activate models.
 
 Exit status is zero on success and nonzero on failure, unhealthy/stale provider
@@ -215,6 +217,65 @@ Use these options on `run-agent` after initializing a database with `memory init
 Retrieval examines the first eight matches in namespace order. Whole records that fit within an 8 KiB serialized JSON message are sent as untrusted user content before the original task prompt. This is a byte limit. Provider tokenization and context handling still apply. The JSON execution report lists included IDs in `memory_context_ids` when at least one record is attached. The stored task snapshot keeps the original prompt.
 
 A retained response carries the accepted task ID and appears as `stored_memory_id` in the JSON report. Storage failure returns nonzero with `memory_error` and preserves the completed execution evidence. File and database preparation and post-inference persistence run on blocking workers outside the inference deadline.
+
+## External worker service
+
+`vespera serve --access-file <path> [--listen <address:port>]` starts the broker until Ctrl+C or process exit. It prints the bound HTTP URL to stdout. The default address is `127.0.0.1:8765`. A numeric loopback address is required. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
+
+Save this strict JSON as `data/worker-access.json`. The policy references environment variables and grants one worker the `text-generation` capability.
+
+```json
+{
+  "operator_token_env": "VESPERA_OPERATOR_TOKEN",
+  "workers": [
+    {
+      "id": "73c7d9eb-eddf-418a-b604-ff0cc751ee67",
+      "capabilities": ["text-generation"],
+      "token_env": "VESPERA_WORKER_TOKEN"
+    }
+  ]
+}
+```
+
+This Windows PowerShell 7 example uses one shell to exercise both roles. In a deployment, give each worker process only its own credential. Generate a distinct token from 32 cryptographically random bytes for each principal.
+
+```powershell
+$env:VESPERA_OPERATOR_TOKEN = [Convert]::ToHexString(
+    [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
+$env:VESPERA_WORKER_TOKEN = [Convert]::ToHexString(
+    [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
+cargo build -p vespera-app --locked
+$server = Start-Process .\target\debug\vespera.exe -ArgumentList 'serve', '--access-file', 'data/worker-access.json' -PassThru -WindowStyle Hidden
+```
+
+With the service running, submit one task, claim it, post a result and inspect the accepted outcome.
+
+```powershell
+$worker = '73c7d9eb-eddf-418a-b604-ff0cc751ee67'
+$task = [guid]::NewGuid().ToString()
+$operatorHeaders = @{ Authorization = "Bearer $env:VESPERA_OPERATOR_TOKEN" }
+$workerHeaders = @{ Authorization = "Bearer $env:VESPERA_WORKER_TOKEN" }
+$operatorUrl = 'http://127.0.0.1:8765/v1/operator'
+$workerUrl = 'http://127.0.0.1:8765/v1/worker'
+$submit = @{
+    action = 'submit'
+    task_id = $task
+    prompt = 'Return a short acknowledgement.'
+    required_capabilities = @('text-generation')
+    eligible_workers = @($worker)
+    lifetime_seconds = 60
+    max_attempts = 2
+}
+Invoke-RestMethod $operatorUrl -Method Post -Headers $operatorHeaders -ContentType 'application/json' -Body ($submit | ConvertTo-Json)
+$lease = Invoke-RestMethod $workerUrl -Method Post -Headers $workerHeaders -ContentType 'application/json' -Body '{"action":"claim"}'
+$result = @{ action = 'complete'; fence = $lease.fence; content = 'Acknowledged.' }
+Invoke-RestMethod $workerUrl -Method Post -Headers $workerHeaders -ContentType 'application/json' -Body ($result | ConvertTo-Json -Depth 4)
+Invoke-RestMethod $operatorUrl -Method Post -Headers $operatorHeaders -ContentType 'application/json' -Body (@{ action = 'inspect'; task_id = $task } | ConvertTo-Json)
+Stop-Process -InputObject $server
+Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
+```
+
+See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
 
 ## Local task outcome journal
 

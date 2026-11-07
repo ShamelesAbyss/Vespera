@@ -5,6 +5,7 @@ mod doctor;
 mod event_commands;
 mod memory_commands;
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -59,6 +60,15 @@ enum Command {
     Memory(memory_commands::MemoryArgs),
     /// Initialize, replay or follow a local event journal.
     Events(event_commands::EventArgs),
+    /// Serve the external worker task broker over loopback HTTP.
+    Serve {
+        /// Strict JSON access policy with environment variable references.
+        #[arg(long)]
+        access_file: PathBuf,
+        /// Numeric IPv4 or IPv6 loopback address and port.
+        #[arg(long, default_value = "127.0.0.1:8765")]
+        listen: SocketAddr,
+    },
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
@@ -151,6 +161,10 @@ struct ConfigReport {
 #[derive(Debug, Error)]
 enum AppError {
     #[error(transparent)]
+    BrokerServer(#[from] vespera_api::http::ServerError),
+    #[error("could not monitor shutdown signal: {0}")]
+    ShutdownSignal(std::io::Error),
+    #[error(transparent)]
     Journal(#[from] vespera_events::JournalError),
     #[error("cannot write event output: {0}")]
     EventOutput(std::io::Error),
@@ -241,6 +255,17 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::Memory(args) => memory_commands::run(args).await?,
         Command::Events(args) => event_commands::run(args).await?,
+        Command::Serve {
+            access_file,
+            listen,
+        } => {
+            let server = vespera_api::http::Server::bind(listen, access_file).await?;
+            println!("http://{}", server.address());
+            tokio::select! {
+                result = server.serve() => result?,
+                result = tokio::signal::ctrl_c() => result.map_err(AppError::ShutdownSignal)?,
+            }
+        }
         Command::ValidateConfig { config, json } => {
             let config = AppConfig::load(config)?;
             let report = ConfigReport {

@@ -9,8 +9,14 @@ license-file.workspace = true
 [dependencies]
 vespera-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 uuid.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+subtle = { version = "2.6", default-features = false }
 
 [lints]
 workspace = true

@@ -1,10 +1,43 @@
 # Protocol and events
 
-## Current surface versus future draft
+## Implemented loopback worker API
 
-Vespera provides typed event envelopes, independent UUID identities and checked task transitions. The CLI can record task outcomes in a local SQLite journal and supports bounded replay and local streaming. The HTTP and WebSocket server, external-agent authentication, remote task leases and SDK remain roadmap work. See the [local journal CLI](CLI.md#local-task-outcome-journal).
+Launch the broker with `vespera serve --access-file <path>`. Clients send HTTP/1 POST requests to one of two versioned endpoints with `Content-Type: application/json` and `Authorization: Bearer <token>`. The access file approves worker UUIDs and their capability sets at startup. Workers derive their identity from their credential and cannot enroll or amend their grants over HTTP. Setup and a working PowerShell example are in the [CLI reference](CLI.md#external-worker-service).
 
-The following protocol is a **draft proposal for Milestones 9 and 10**, requiring implementation, security review, and contract tests before it is stable. REST over HTTP and a WebSocket event stream are the selected future transports. Remote deployments require protected transport and explicit opt-in. Do not add gRPC now. A future native Rust SDK should wrap authentication, typed requests/results, retries, leases, cancellation, and replay without depending on server implementation crates. External clients in other languages are permitted; they add no JavaScript/Python runtime to VESPERA.
+| Path | `action` | Additional JSON fields | Success |
+| --- | --- | --- | --- |
+| `/v1/operator` | `submit` | `task_id`, `prompt`, `required_capabilities`, `eligible_workers`, `lifetime_seconds`, `max_attempts` | 201 with `task_id` and `state` |
+| `/v1/operator` | `inspect` | `task_id` | 200 with `state` and `result` (nullable) |
+| `/v1/operator` | `cancel` | `task_id` | 200 with resulting `state` |
+| `/v1/operator` | `revoke` | `worker_id` | 204 |
+| `/v1/worker` | `claim` | None | 200 with `task`, `fence` and `expires_in_ms`, or 204 when no work is eligible |
+| `/v1/worker` | `renew` | `fence` | 200 with `expires_in_ms` |
+| `/v1/worker` | `complete` | `fence`, `content` | 200 with `worker`, `fence` and `content` |
+
+IDs are UUID strings. Capabilities are strings and capability sets and worker allowlists are JSON arrays. The claimed `task` contains `id`, `prompt`, `required_capabilities` and `state`. Task states are `queued`, `running`, `completed`, `failed` and `cancelled`. A `fence` contains `task_id`, `attempt_id` and integer `generation`. Send the entire returned fence unchanged on renewal or completion. After an uncertain submit, inspect by task ID. After an uncertain completion, retry with the same fence and content while the credential remains valid. After an uncertain claim, the lease can expire and become eligible for reassignment.
+
+Application errors carry `{"error":"code"}`.
+
+| Status | Codes |
+| --- | --- |
+| 400 | `invalid_json`, `invalid_input`, `invalid_body`, `unexpected_query` |
+| 401 | `unauthorized` |
+| 404 | `unknown_route`, `unknown_task`, `unknown_worker` |
+| 405 | `method_not_allowed` |
+| 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict` |
+| 413 | `body_limit` |
+| 415 | `expected_json` |
+| 503 | `capacity` |
+
+The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
+
+Treat loopback as a deployment boundary. Keep each token private and use an isolated local account where appropriate. These are reusable bearer credentials and the service uses plaintext HTTP on loopback. Request signing, credential expiry, remote TLS deployment, network events, SDK and durable restart recovery remain open. Rotate credentials by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked.
+
+The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
+
+## Future interoperability draft
+
+The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. A future native Rust SDK should wrap authentication, typed requests/results, retries, leases, cancellation, and replay without depending on server implementation crates.
 
 ## Authentication and registration — draft
 
@@ -26,7 +59,7 @@ Version the public API independently from event payload schemas and domain stora
 
 Leases last up to 30 seconds and are capped by the task deadline. Renewal uses the host's monotonic clock. Every claim assigns a fresh attempt UUID and increments the task generation. Expiry or revocation fences the attempt and queues another attempt if time and budget remain. Cancellation and completion leave one terminal state. A result retry with the same worker, fence and content returns the accepted result. A different result under that fence is rejected.
 
-The broker retains up to 64 workers and 256 tasks per process, including terminal tasks. Prompts and results are capped at 64 KiB each. The host serializes mutations and owns operator authorization. Restart drops broker state. Network authentication, HTTP and WebSocket transport, durable reconciliation and an SDK remain separate milestones.
+The broker retains up to 64 workers and 256 tasks per process, including terminal tasks. Prompts and results are capped at 64 KiB each. The HTTP host serializes mutations and owns operator authorization. Restart drops broker state.
 
 ## Remote task lease and result semantics — draft
 

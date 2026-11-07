@@ -48,7 +48,7 @@ flowchart TD
 | `vespera-scheduler` | Conservative reservation admission, per-model lifecycle gates, owned leases, acknowledged unload, bounded priority/fairness queue and shutdown drain |
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
-| `vespera-api` | In-process broker for approved external workers and fenced task attempts |
+| `vespera-api` | Bounded loopback HTTP service with role-separated credentials and fenced task attempts |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |
@@ -118,13 +118,14 @@ aggregate byte and whole-request deadlines; streaming has line/event, aggregate
 wire-body, idle and total-lifetime bounds. Extra server response fields are not
 retained as private reasoning or privileged actions. Local cancellation cannot
 prove remote compute stopped, so uncertain residency and remaining reservations
-remain explicit. No arbitrary tool process, OS sandbox or external-agent server
-is present yet.
+remain explicit. The external worker service is an independent, explicitly
+started loopback listener. Its broker derives worker authority from credentials,
+serializes task state transitions and leaves execution to the worker process.
 
 ## State, clocks and remaining architecture
 
 Registry, workflow/task histories and the original agent memory buffers remain in-process. The independent memory library now persists authorized records and lineage in SQLite when explicitly opened. `MemoryNamespace`
-is the logical address used to scope a record. The CLI supports bounded multi-step workflow submission, offline memory management and opt-in single-agent retrieval and result persistence. The CLI can append typed task outcome envelopes to an explicit local journal, replay bounded pages and stream committed entries to a local consumer. Automatic decomposition, durable task history, remote event delivery, authenticated interoperability and independent deterministic world state remain required work.
+is the logical address used to scope a record. The CLI supports bounded multi-step workflow submission, offline memory management and opt-in single-agent retrieval and result persistence. The CLI can append typed task outcome envelopes to an explicit local journal, replay bounded pages and stream committed entries to a local consumer. Automatic decomposition, durable task history, remote event delivery, broader authenticated interoperability and independent deterministic world state remain required work.
 
 Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
 simulation ticks separate. In-process monotonic instants do not survive restart.

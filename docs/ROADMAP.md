@@ -13,7 +13,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 7: agents | Partial: bounded records/history, permissions/provenance, delegation, owned actual inference and cancellation/abort tested; CLI composition and HTTP end-to-end fixtures implemented. Bounded workflow library integrates delegation/execution; durable retention and autonomous planning remain. See [AGENTS.md](AGENTS.md). |
 | 8: memory | Authorized SQLite library with FTS, lineage, quotas, transactional initialization and process-exit recovery tested; real agent adapter/rebind/reopen verified. Offline CLI initialization/inspection/write/consolidation/deletion verified across processes. Opt-in retrieval and generated-result persistence verified through single-agent inference. Backup, restore and durable task sources remain. See [MEMORY.md](MEMORY.md). |
 | 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
-| 10: interoperability | In-process broker implements approved workers, fenced task leases, expiry, revocation, cancellation and idempotent completion. Authenticated transport, durable reconciliation and SDK remain. |
+| 10: interoperability | Loopback HTTP service and CLI process tests cover scoped bearer credentials, fenced task leases, expiry, revocation, cancellation and idempotent completion. Replay resistance, durable reconciliation, remote event transport and SDK remain. |
 | 11: simulation | Pending; independent deterministic world engine required. |
 | 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
@@ -100,7 +100,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 
 ## Milestone 10 — External agent interoperability
 
-Implement draft REST/WebSocket semantics and a small Rust SDK; no server/SDK exists now.
+Extend the [loopback worker service](PROTOCOL.md#implemented-loopback-worker-api) with replay-resistant authentication, authorized network events, protected remote transport and a small Rust SDK.
 
 - An authenticated test agent registers with approved authority, receives a task lease, submits a result, and reads authorized events.
 - Reject invalid credentials, expired/revoked leases, stale attempts, duplicate conflicts, auth replay, and unauthorized identity/namespace/permission changes.

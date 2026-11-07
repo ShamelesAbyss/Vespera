@@ -3,6 +3,8 @@
 //! The host authenticates callers before passing their worker identity here.
 //! Calls that approve, revoke, submit or cancel belong to the operator.
 
+pub mod http;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 

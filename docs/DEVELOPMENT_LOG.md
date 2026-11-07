@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Authenticated loopback worker HTTP service
+
+Previous checkpoint `ba0cf36581074fe196b584820c6dd70436a22f80` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42335796654). Added `vespera serve` and two versioned HTTP/1 endpoints for operator and worker actions. The access file approves identities and capabilities and references distinct environment credentials. The authenticated credential determines the worker identity. Revocation removes its credential and fences the attempt in one serialized operation. The listener requires numeric loopback and caps connections, header time, total connection time and body bytes. HTTP/1 server support adds one transitive package, `httpdate`.
+
+Windows validation passed all 199 offline tests, formatting, strict Clippy and rustdoc, and the optimized workspace build. Two subprocess tests passed in debug and release, covering credential scope, strict decoding, body limits, non-loopback rejection, revocation/reassignment, fenced renewal and result retries. The documented PowerShell submit, claim, complete and inspect example returned the expected result. See the [wire contract](PROTOCOL.md#implemented-loopback-worker-api).
+
+The process holds task state in memory. Bearer credentials are reusable, and revoked workers can return after restart if their grants remain in the file. The broker does not yet integrate with native workflows or the event journal. Next work includes replay-resistant authentication, a client SDK, durable reconciliation and authorized event delivery.
+
 ## 2026-11-06 — External worker lease broker
 
 Previous checkpoint `8527f95d007e432c5a8b346f84527bdedbb6737a` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42335390456). Added `vespera-api::LeaseBroker` with operator-approved workers, capability matching and explicit task allowlists. Each lease carries a fresh attempt ID, a per-task fencing generation and a monotonic expiry capped by the task deadline. Expiry and revocation permit bounded reassignment. Completion accepts one result and returns the same record on exact retry. Cancellation fences late work and preserves an already accepted result.
