@@ -8,8 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -24,6 +23,18 @@ use vespera_scheduler::{ResourceScheduler, ScheduledInference, SchedulerError};
 /// Error taxonomy for agent runtime operations.
 #[derive(Debug, Error)]
 pub enum AgentRuntimeError {
+    /// Task identities and assignments are immutable once accepted.
+    #[error("task {task_id} conflicts with an existing task or execution")]
+    TaskConflict {
+        /// Conflicting task identity.
+        task_id: TaskId,
+    },
+    /// The caller supplied a model other than the execution's owned lease.
+    #[error("model does not match the recorded execution for task {task_id}")]
+    ExecutionMismatch {
+        /// Target task.
+        task_id: TaskId,
+    },
     /// Domain validation error from `vespera-core`.
     #[error("agent domain validation error: {0}")]
     Domain(#[from] DomainError),
@@ -135,7 +146,46 @@ struct RuntimeState {
     inbox: BTreeMap<AgentId, Vec<AgentMessage>>,
     tasks: BTreeMap<TaskId, Task>,
     task_assignments: BTreeMap<TaskId, AgentId>,
+    executions: BTreeMap<TaskId, ScheduledInference>,
     logical_tick: u64,
+}
+
+fn lock_state(state: &Mutex<RuntimeState>) -> MutexGuard<'_, RuntimeState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+// Cancels local task preparation even when the owning future is dropped/aborted.
+// Scheduler lifecycle guards independently retain uncertain provider reservations.
+struct TaskStartGuard {
+    state: Arc<Mutex<RuntimeState>>,
+    task_id: TaskId,
+    agent_id: AgentId,
+    armed: bool,
+    failed: bool,
+}
+impl Drop for TaskStartGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut state = lock_state(&self.state);
+        if let Some(task) = state.tasks.get_mut(&self.task_id) {
+            let _ = task.state.transition(if self.failed {
+                TaskState::Failed
+            } else {
+                TaskState::Cancelled
+            });
+        }
+        if let Some(agent) = state.agents.get_mut(&self.agent_id) {
+            agent.status = if self.failed {
+                AgentStatus::Failed
+            } else {
+                AgentStatus::Idle
+            };
+        }
+    }
 }
 
 impl RuntimeState {
@@ -150,7 +200,7 @@ impl RuntimeState {
 pub struct AgentRuntime {
     registry: Arc<ModelRegistry>,
     scheduler: Arc<ResourceScheduler>,
-    state: Arc<RwLock<RuntimeState>>,
+    state: Arc<Mutex<RuntimeState>>,
 }
 
 impl fmt::Debug for AgentRuntime {
@@ -169,7 +219,7 @@ impl AgentRuntime {
         Self {
             registry,
             scheduler,
-            state: Arc::new(RwLock::new(RuntimeState::default())),
+            state: Arc::new(Mutex::new(RuntimeState::default())),
         }
     }
 
@@ -177,8 +227,14 @@ impl AgentRuntime {
     pub async fn register_agent(&self, agent: AgentDefinition) -> Result<(), AgentRuntimeError> {
         agent.validate()?;
         let agent_id = agent.identity.id;
+        if agent.status == AgentStatus::Running {
+            return Err(AgentRuntimeError::InvalidAgentState {
+                agent_id,
+                status: agent.status,
+            });
+        }
 
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
         if state.agents.contains_key(&agent_id) {
             return Err(AgentRuntimeError::DuplicateAgent { agent_id });
         }
@@ -191,12 +247,21 @@ impl AgentRuntime {
 
     /// Retrieves a registered agent definition by ID.
     pub async fn get_agent(&self, agent_id: AgentId) -> Result<AgentDefinition, AgentRuntimeError> {
-        let state = self.state.read().await;
+        let state = lock_state(&self.state);
         state
             .agents
             .get(&agent_id)
             .cloned()
             .ok_or(AgentRuntimeError::AgentNotFound { agent_id })
+    }
+
+    /// Inspect a control-plane task snapshot without exposing mutable runtime state.
+    pub async fn get_task(&self, task_id: TaskId) -> Result<Task, AgentRuntimeError> {
+        lock_state(&self.state)
+            .tasks
+            .get(&task_id)
+            .cloned()
+            .ok_or(AgentRuntimeError::TaskNotFound { task_id })
     }
 
     /// Updates an agent's operational status (`Suspended`, `Idle`, `Running`, `Failed`).
@@ -205,11 +270,17 @@ impl AgentRuntime {
         agent_id: AgentId,
         status: AgentStatus,
     ) -> Result<(), AgentRuntimeError> {
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
         let agent = state
             .agents
             .get_mut(&agent_id)
             .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
+        if agent.status == AgentStatus::Running || status == AgentStatus::Running {
+            return Err(AgentRuntimeError::InvalidAgentState {
+                agent_id,
+                status: agent.status,
+            });
+        }
         agent.status = status;
         Ok(())
     }
@@ -221,11 +292,17 @@ impl AgentRuntime {
         new_policy: ModelSelectionPolicy,
     ) -> Result<(), AgentRuntimeError> {
         new_policy.validate()?;
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
         let agent = state
             .agents
             .get_mut(&agent_id)
             .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
+        if agent.status == AgentStatus::Running {
+            return Err(AgentRuntimeError::InvalidAgentState {
+                agent_id,
+                status: agent.status,
+            });
+        }
         agent.model_policy = new_policy;
         Ok(())
     }
@@ -245,7 +322,7 @@ impl AgentRuntime {
             }));
         }
 
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
         let agent = state
             .agents
             .get(&agent_id)
@@ -282,7 +359,7 @@ impl AgentRuntime {
         agent_id: AgentId,
         layer_filter: Option<MemoryLayer>,
     ) -> Result<Vec<AgentMemoryEntry>, AgentRuntimeError> {
-        let state = self.state.read().await;
+        let state = lock_state(&self.state);
         let agent = state
             .agents
             .get(&agent_id)
@@ -323,7 +400,7 @@ impl AgentRuntime {
             }));
         }
 
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
         let sender = state
             .agents
             .get(&from_agent_id)
@@ -366,9 +443,16 @@ impl AgentRuntime {
         &self,
         agent_id: AgentId,
     ) -> Result<Vec<AgentMessage>, AgentRuntimeError> {
-        let state = self.state.read().await;
-        if !state.agents.contains_key(&agent_id) {
-            return Err(AgentRuntimeError::AgentNotFound { agent_id });
+        let state = lock_state(&self.state);
+        let agent = state
+            .agents
+            .get(&agent_id)
+            .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
+        if !agent.permissions.contains(&Permission::Communicate) {
+            return Err(AgentRuntimeError::PermissionDenied {
+                agent_id,
+                permission: Permission::Communicate,
+            });
         }
         Ok(state.inbox.get(&agent_id).cloned().unwrap_or_default())
     }
@@ -378,7 +462,7 @@ impl AgentRuntime {
         &self,
         agent_id: AgentId,
     ) -> Result<(), AgentRuntimeError> {
-        let state = self.state.read().await;
+        let state = lock_state(&self.state);
         let agent = state
             .agents
             .get(&agent_id)
@@ -401,7 +485,15 @@ impl AgentRuntime {
         task: Task,
     ) -> Result<TaskId, AgentRuntimeError> {
         task.validate()?;
-        let mut state = self.state.write().await;
+        if task.state != TaskState::Queued {
+            return Err(AgentRuntimeError::Domain(
+                DomainError::InvalidTaskTransition {
+                    from: task.state,
+                    to: TaskState::Queued,
+                },
+            ));
+        }
+        let mut state = lock_state(&self.state);
 
         let sender = state
             .agents
@@ -424,6 +516,9 @@ impl AgentRuntime {
         }
 
         let task_id = task.id;
+        if state.tasks.contains_key(&task_id) {
+            return Err(AgentRuntimeError::TaskConflict { task_id });
+        }
         state.tasks.insert(task_id, task);
         state.task_assignments.insert(task_id, to_agent_id);
         Ok(task_id)
@@ -477,7 +572,7 @@ impl AgentRuntime {
         }
 
         {
-            let state = self.state.read().await;
+            let mut state = lock_state(&self.state);
             let agent = state
                 .agents
                 .get(&agent_id)
@@ -488,28 +583,63 @@ impl AgentRuntime {
                     status: agent.status,
                 });
             }
-        }
-
-        let resolved_model = self
-            .resolve_model_for_agent(agent_id, &task.required_capabilities)
-            .await?;
-
-        let inference = self
-            .scheduler
-            .admit_and_prepare(resolved_model.model_id, requested_context_tokens, cancel)
-            .await?;
-
-        let task_id = task.id;
-        task.state = TaskState::Running;
-
-        {
-            let mut state = self.state.write().await;
+            if let Some(existing) = state.tasks.get(&task.id)
+                && (existing != &task || state.task_assignments.get(&task.id) != Some(&agent_id))
+            {
+                return Err(AgentRuntimeError::TaskConflict { task_id: task.id });
+            }
+            task.state.transition(TaskState::Running)?;
+            state.tasks.insert(task.id, task.clone());
+            state.task_assignments.insert(task.id, agent_id);
             if let Some(agent) = state.agents.get_mut(&agent_id) {
                 agent.status = AgentStatus::Running;
             }
-            state.tasks.insert(task_id, task);
-            state.task_assignments.insert(task_id, agent_id);
         }
+
+        let mut preparation = TaskStartGuard {
+            state: self.state.clone(),
+            task_id: task.id,
+            agent_id,
+            armed: true,
+            failed: false,
+        };
+
+        let resolved_model = match self
+            .resolve_model_for_agent(agent_id, &task.required_capabilities)
+            .await
+        {
+            Ok(model) => model,
+            Err(error) => {
+                preparation.failed = true;
+                return Err(error);
+            }
+        };
+
+        let inference = match self
+            .scheduler
+            .admit_and_prepare(resolved_model.model_id, requested_context_tokens, cancel)
+            .await
+        {
+            Ok(inference) => inference,
+            Err(error) => {
+                preparation.failed = !matches!(
+                    error,
+                    SchedulerError::Cancelled
+                        | SchedulerError::Provider(
+                            vespera_providers::ProviderError::Cancelled { .. }
+                        )
+                );
+                return Err(error.into());
+            }
+        };
+
+        let task_id = task.id;
+
+        {
+            let mut state = lock_state(&self.state);
+            state.executions.insert(task_id, inference.clone());
+        }
+        preparation.armed = false;
 
         Ok(ActiveTaskExecution {
             task_id,
@@ -537,9 +667,14 @@ impl AgentRuntime {
             ));
         }
 
-        self.scheduler.release_inference(model_id).await;
-
-        let mut state = self.state.write().await;
+        let mut state = lock_state(&self.state);
+        let inference = state
+            .executions
+            .get(&task_id)
+            .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
+        if inference.model_id != model_id {
+            return Err(AgentRuntimeError::ExecutionMismatch { task_id });
+        }
         let assigned_agent = state.task_assignments.get(&task_id).copied();
         let task = state
             .tasks
@@ -555,7 +690,7 @@ impl AgentRuntime {
             ));
         }
 
-        task.state = terminal_state;
+        task.state.transition(terminal_state)?;
         let snapshot = task.clone();
 
         if let Some(agent_id) = assigned_agent
@@ -566,6 +701,10 @@ impl AgentRuntime {
             } else {
                 AgentStatus::Idle
             };
+        }
+
+        if let Some(inference) = state.executions.remove(&task_id) {
+            inference.release();
         }
 
         Ok(snapshot)

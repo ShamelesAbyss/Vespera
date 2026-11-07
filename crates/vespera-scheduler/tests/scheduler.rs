@@ -317,7 +317,7 @@ async fn failed_or_unsupported_unload_never_frees_memory() {
             .admit_and_prepare(a, None, CancellationToken::new())
             .await
             .unwrap();
-        scheduler.release_inference(a).await;
+
         provider.unload_mode.store(mode, Ordering::SeqCst);
         assert!(
             scheduler
@@ -370,8 +370,8 @@ async fn successful_pressure_eviction_and_reuse_account_once() {
             .await
             .unwrap()
     );
-    scheduler.release_inference(a).await;
-    scheduler.release_inference(a).await;
+    first.release();
+    second.release();
     scheduler
         .admit_and_prepare(b, None, CancellationToken::new())
         .await
@@ -398,8 +398,8 @@ async fn concurrent_requests_wait_for_one_load_without_blocking_accounting() {
     assert!(!second.is_finished());
     assert_eq!(provider.loads.load(Ordering::SeqCst), 1);
     provider.proceed.notify_one();
-    first.await.unwrap().unwrap();
-    second.await.unwrap().unwrap();
+    let _first_lease = first.await.unwrap().unwrap();
+    let _second_lease = second.await.unwrap().unwrap();
     assert_eq!(provider.loads.load(Ordering::SeqCst), 1);
     assert_eq!(scheduler.usage_snapshot().await.active_inferences, 2);
 }
@@ -444,7 +444,7 @@ async fn interrupted_unload_retains_memory_and_cannot_admit_replacement() {
         .admit_and_prepare(a, None, CancellationToken::new())
         .await
         .unwrap();
-    scheduler.release_inference(a).await;
+
     provider.unload_mode.store(4, Ordering::SeqCst);
     let s = scheduler.clone();
     let unloading = tokio::spawn(async move { s.evict_model(a, CancellationToken::new()).await });
@@ -473,4 +473,29 @@ async fn failed_load_retains_uncertain_memory_but_not_an_inference_slot() {
         let usage = scheduler.usage_snapshot().await;
         assert_eq!((usage.ram_bytes, usage.active_inferences), (100, 0));
     }
+}
+
+#[tokio::test]
+async fn lease_clones_release_exactly_once_and_last_drop_returns_slot() {
+    let (scheduler, _, a, _) = fixture().await;
+    let first = scheduler
+        .admit_and_prepare(a, None, CancellationToken::new())
+        .await
+        .unwrap();
+    let clone = first.clone();
+    let second = scheduler
+        .admit_and_prepare(a, None, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(first.lease_id(), clone.lease_id());
+    assert_ne!(first.lease_id(), second.lease_id());
+    drop(first);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 2);
+    assert!(clone.release());
+    assert!(!clone.release());
+    drop(clone);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 1);
+    drop(second);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
 }

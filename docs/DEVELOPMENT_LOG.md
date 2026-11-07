@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Owned inference leases and exclusive agent execution
+
+Previous verified checkpoint: `60db6742343831be7d47f588b524c338205e3314`, pushed to the recovery branch.
+
+Replaced scheduler release-by-model with private UUID-backed inference leases. Clones share one reservation; explicit release is idempotent, and the final handle's drop releases the local slot synchronously. Provider memory stays charged. Runtime task completion validates the recorded model/lease before any release, preventing wrong-model, unknown-task, or duplicate completion from releasing another inference.
+
+Agent/task reservation is now atomic before asynchronous model resolution and loading. A synchronous preparation guard records cancellation on future abort, or failure on model/provider errors, and restores a usable agent state. Runtime state locks never span I/O. Duplicate IDs cannot overwrite accepted tasks, delegated tasks can only start unchanged for the assigned recipient, and arbitrary status/model-policy changes cannot bypass an active execution. Registration cannot fabricate a running agent. Inbox reads now enforce the communication grant; the previous test expecting unauthorized reads was corrected.
+
+Added task snapshots and deterministic regressions for lease clone/drop/idempotence, wrong/duplicate completion, exclusive preparation, aborted/failed preparation, duplicate delegation, recipient ownership, and inbox permission checks. Full validation passed: formatting, all-target workspace check, all 74 tests, strict Clippy, rustdoc, and optimized workspace build. No claim of actual inference execution is made yet: `start_task_execution` prepares an owned execution, and provider invocation is the next integration task.
+
+API migration: callers use `ScheduledInference::release()` or owned-handle drop instead of `release_inference(model_id)`. `finish_task_execution` keeps its signature but verifies its model argument against runtime-owned state. Queueing, shutdown, bounded memory/message history, persistence, and task inference remain outstanding.
+
 ## 2026-11-06 — Coordinated and conservative provider lifecycle
 
 Previous verified checkpoint: `541fec8` (`fix: reject unknown scheduler resource estimates`), pushed to `origin/codex/scheduler-recovery`.

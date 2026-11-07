@@ -1,4 +1,4 @@
-﻿//! Integration tests for `vespera-agents`.
+//! Integration tests for `vespera-agents`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -239,7 +239,18 @@ async fn enforces_permissions_for_memory_messaging_delegation_and_simulation() {
         .await
         .expect("message sent");
 
-    let inbox = runtime.inbox_messages(restricted_id).await.unwrap();
+    assert!(matches!(
+        runtime.inbox_messages(restricted_id).await,
+        Err(AgentRuntimeError::PermissionDenied {
+            permission: Permission::Communicate,
+            ..
+        })
+    ));
+    runtime
+        .send_message(peer_id, peer_id, "directive".to_string(), Some(task_id))
+        .await
+        .unwrap();
+    let inbox = runtime.inbox_messages(peer_id).await.unwrap();
     assert_eq!(inbox.len(), 1);
     assert_eq!(inbox[0].content, "directive");
 

@@ -39,9 +39,19 @@ assumes that dropping a request stopped remote work or freed provider memory.
 Both estimate dimensions must be known; CPU-only models use explicit zero VRAM.
 The caller must include overhead and headroom in supplied estimates. There is
 no automatic per-request KV-cache costing, hardware discovery, telemetry
-reconciliation, priority queue, or shutdown coordinator yet. Model-ID release
-is still a temporary API pending owned leases. See the development log for
+reconciliation, priority queue, or shutdown coordinator yet. See the development log for
 checkpoint validation and the roadmap for the complete acceptance gates.
+
+## Inference lease ownership
+
+Each admission creates a private UUID-backed lease. `ScheduledInference` clones
+share that lease; they do not create additional inference reservations.
+`ScheduledInference::release()` returns the local slot once, and dropping the
+last clone returns an unreleased slot synchronously. Neither action unloads the
+model. Model-ID-based release has been removed so a caller cannot accidentally
+release another admission for the same model. The runtime retains its own lease
+handle and validates task/model ownership before completing a task. A local slot
+release does not establish that provider-side computation stopped.
 
 ## Tests
 

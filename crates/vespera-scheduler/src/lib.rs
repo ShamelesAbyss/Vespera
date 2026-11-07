@@ -105,9 +105,11 @@ pub struct ResidentModel {
     pub residency: ResidencyState,
 }
 
-/// Admitted provider access. Lease ownership is hardened in the next checkpoint.
+/// Admitted provider access with a shared, uniquely identified local inference lease.
+/// Clones share ownership; the last drop or explicit release returns the slot once.
 #[derive(Clone)]
 pub struct ScheduledInference {
+    lease: Arc<InferenceLease>,
     /// Model identity.
     pub model_id: ModelId,
     /// Provider identity.
@@ -118,6 +120,42 @@ pub struct ScheduledInference {
     pub context_tokens: u32,
     /// Whether explicit load was acknowledged by this admission.
     pub loaded_on_demand: bool,
+}
+impl ScheduledInference {
+    /// Unique identity of this admission, shared by clones.
+    #[must_use]
+    pub fn lease_id(&self) -> uuid::Uuid {
+        self.lease.id
+    }
+
+    /// Return this local inference slot exactly once. Does not unload provider memory.
+    /// Call only after local inference has stopped; remote cancellation is unverified.
+    pub fn release(&self) -> bool {
+        self.lease.release()
+    }
+}
+
+struct InferenceLease {
+    id: uuid::Uuid,
+    state: Arc<Mutex<SchedulerState>>,
+}
+impl InferenceLease {
+    fn release(&self) -> bool {
+        let mut state = lock(&self.state);
+        let Some(model_id) = state.leases.remove(&self.id) else {
+            return false;
+        };
+        if let Some(model) = state.resident_models.get_mut(&model_id) {
+            model.active_inferences -= 1;
+            state.usage.active_inferences -= 1;
+        }
+        true
+    }
+}
+impl Drop for InferenceLease {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 impl fmt::Debug for ScheduledInference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -135,6 +173,7 @@ struct SchedulerState {
     usage: ResourceUsage,
     resident_models: BTreeMap<ModelId, ResidentModel>,
     logical_tick: u64,
+    leases: BTreeMap<uuid::Uuid, ModelId>,
 }
 
 /// Marks an interrupted transition unknown synchronously, including future/task abort.
@@ -372,27 +411,23 @@ impl ResourceScheduler {
             }
             transition.armed = false;
         }
-        if cancel.is_cancelled() {
-            self.release_inference(model_id).await;
-            return Err(SchedulerError::Cancelled);
-        }
-        Ok(ScheduledInference {
+        let id = uuid::Uuid::new_v4();
+        lock(&self.state).leases.insert(id, model_id);
+        let inference = ScheduledInference {
+            lease: Arc::new(InferenceLease {
+                id,
+                state: self.state.clone(),
+            }),
             model_id,
             provider_id: model.provider_id,
             provider,
             context_tokens,
             loaded_on_demand,
-        })
-    }
-    /// Release an active local slot; model reservation remains until acknowledged unload.
-    pub async fn release_inference(&self, model_id: ModelId) {
-        let mut state = lock(&self.state);
-        if let Some(entry) = state.resident_models.get_mut(&model_id)
-            && entry.active_inferences > 0
-        {
-            entry.active_inferences -= 1;
-            state.usage.active_inferences -= 1;
+        };
+        if cancel.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
         }
+        Ok(inference)
     }
     /// Evict an idle reservation only after a matching acknowledged unload.
     /// Unsupported, failed, unacknowledged, and interrupted unloads retain accounting.
