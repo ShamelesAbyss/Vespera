@@ -100,6 +100,8 @@ happen in TOML; no agent/model administrative subcommand is supplied yet.
 | `--temperature <FLOAT>` | Optional finite value in 0–2 |
 | `--timeout-seconds <N>` | 1–3,600; default 60 across health and task execution |
 | `--reconcile-residency` | Observe external residency at startup and before each admission |
+| `--residency-journal <PATH>` | Create or reopen a private local SQLite journal. Requires `--reconcile-residency` |
+| `--acknowledge-residency-recovery` | Confirm earlier provider work has stopped. Clear recovered records verified absent from scoped providers |
 | `--unload-after` | Request explicit unload of this runtime's reservations after work |
 | `--json` | Structured task state, result/error and cleanup evidence |
 
@@ -120,6 +122,11 @@ return an unsupported operation before execution. JSON reports
 Each includes `providers_observed`, `external_models`, `ram_bytes` and
 `vram_bytes`. The latest complete admission probe is reported even when its
 observed pressure causes rejection. See [scheduler accounting and scope](SCHEDULER.md#startup-and-admission-residency-reconciliation).
+
+Use the same `--residency-journal` path when restarting a runtime with
+unresolved model lifecycle work. An acknowledged unload retires its record.
+An unresolved record fences its model name until operator-confirmed recovery.
+See [durable restart recovery](SCHEDULER.md#durable-restart-recovery).
 
 New admissions are closed and local permits drained after the invocation.
 Cleanup has an additional five-second bound. Default cleanup does not unload
@@ -171,6 +178,8 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |
 | `--reconcile-residency` | Observe external residency at startup and before each admission |
+| `--residency-journal <PATH>` | Create or reopen a private local SQLite journal. Requires `--reconcile-residency` |
+| `--acknowledge-residency-recovery` | Confirm earlier provider work has stopped. Clear recovered records verified absent from scoped providers |
 | `--unload-after` | Explicit supported unload after local execution, including failure |
 | `--json` | Root/child history, accepted contributions/errors and cleanup evidence |
 

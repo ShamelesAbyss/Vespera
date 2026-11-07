@@ -3,13 +3,17 @@
 //! Accounting records are estimates reserved by this process, not measured residency.
 //! Uncertain lifecycle outcomes retain their memory reservation until acknowledged unload.
 
+mod journal;
 mod queue;
+pub use journal::ResidencyJournalError;
+use journal::{Intent, Journal};
 use queue::{AdmissionQueue, QueuePermit};
 pub use queue::{QueueError, QueuePolicy, QueueSnapshot};
 
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use thiserror::Error;
@@ -37,6 +41,12 @@ pub enum SchedulerError {
     /// The selected provider model is already loaded outside local ownership.
     #[error("model {model_id} is externally resident and cannot be activated by this scheduler")]
     ExternallyResident { model_id: ModelId },
+    /// An earlier invocation could have left provider work in flight.
+    #[error("model {model_id} has an unresolved residency record from an earlier invocation")]
+    RecoveredResidency { model_id: ModelId },
+    /// Durable residency record could not be read or committed.
+    #[error(transparent)]
+    ResidencyJournal(#[from] ResidencyJournalError),
     /// A provider model is already reserved under a different registry identity.
     #[error("model {model_id} aliases a reservation held by model {reserved_model_id}")]
     ResidencyAlias {
@@ -272,6 +282,8 @@ struct StartupResidency {
     adapters: BTreeMap<ProviderId, Arc<dyn InferenceProvider>>,
     report: StartupResidencyReport,
     latest_admission: Option<StartupResidencyReport>,
+    journal: Option<Arc<Mutex<Journal>>>,
+    recovered: Vec<Intent>,
 }
 
 /// Aggregate provider observations used as external pressure.
@@ -288,6 +300,13 @@ pub struct StartupResidencyReport {
 }
 
 impl SchedulerState {
+    fn forget_model(&mut self, model_id: ModelId) {
+        if let Some(entry) = self.resident_models.remove(&model_id) {
+            self.usage.ram_bytes -= entry.ram_bytes;
+            self.usage.vram_bytes -= entry.vram_bytes;
+        }
+        self.bindings.remove(&model_id);
+    }
     fn finish_inference(&mut self, model_id: ModelId, memory: InferenceMemory) {
         self.resident_models
             .get_mut(&model_id)
@@ -352,7 +371,7 @@ impl Drop for TransitionGuard {
 
 // No user code or network I/O executes while holding this lock. Poison recovery keeps
 // conservative reservations visible if an unrelated task panics.
-fn lock(state: &Mutex<SchedulerState>) -> MutexGuard<'_, SchedulerState> {
+fn lock<T>(state: &Mutex<T>) -> MutexGuard<'_, T> {
     state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -409,6 +428,27 @@ impl ResourceScheduler {
 
     /// Enable live residency checks and capture the baseline before the first admission.
     pub async fn reconcile_startup(&self, cancel: CancellationToken) -> Result<(), SchedulerError> {
+        self.reconcile_startup_inner(None, false, cancel).await
+    }
+
+    /// Enable write-ahead residency recording and recover unresolved intent.
+    /// Acknowledgement may clear only records absent from a current scoped provider snapshot.
+    pub async fn reconcile_startup_with_journal(
+        &self,
+        path: &Path,
+        acknowledge: bool,
+        cancel: CancellationToken,
+    ) -> Result<(), SchedulerError> {
+        self.reconcile_startup_inner(Some(path), acknowledge, cancel)
+            .await
+    }
+
+    async fn reconcile_startup_inner(
+        &self,
+        path: Option<&Path>,
+        acknowledge: bool,
+        cancel: CancellationToken,
+    ) -> Result<(), SchedulerError> {
         {
             let state = lock(&self.state);
             if state.admission_started || state.startup.is_some() {
@@ -426,10 +466,15 @@ impl ResourceScheduler {
         for id in providers {
             adapters.insert(id, self.registry.get_provider(id).await?);
         }
-        let report = self
+        let mut journal = path.map(Journal::open).transpose()?;
+        let mut recovered = journal
+            .as_ref()
+            .map(Journal::records)
+            .transpose()?
+            .unwrap_or_default();
+        let observation = self
             .observe_residency(&adapters, &BTreeMap::new(), &cancel)
-            .await?
-            .report;
+            .await?;
         let mut state = lock(&self.state);
         if cancel.is_cancelled() {
             return Err(SchedulerError::Cancelled);
@@ -437,10 +482,22 @@ impl ResourceScheduler {
         if state.admission_started || state.startup.is_some() {
             return Err(SchedulerError::StartupAlreadyUsed);
         }
+        if let Some(journal) = &mut journal
+            && acknowledge
+        {
+            recovered = journal.clear_acknowledged(recovered, |intent| {
+                observation
+                    .external_models
+                    .get(&intent.provider_id)
+                    .is_some_and(|models| !models.contains(&intent.model_key))
+            })?;
+        }
         state.startup = Some(StartupResidency {
             adapters,
-            report,
+            report: observation.report,
             latest_admission: None,
+            journal: journal.map(|journal| Arc::new(Mutex::new(journal))),
+            recovered,
         });
         Ok(())
     }
@@ -516,7 +573,7 @@ impl ResourceScheduler {
         provider: &Arc<dyn InferenceProvider>,
         model_name: &str,
         cancel: &CancellationToken,
-    ) -> Result<StartupResidencyReport, SchedulerError> {
+    ) -> Result<InferenceMemory, SchedulerError> {
         let provider_id = provider.provider_id();
         let model_key = provider.residency_model_key(model_name);
         let (adapters, reserved) = {
@@ -570,15 +627,35 @@ impl ResourceScheduler {
         if cancel.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
-        lock(&self.state)
+        let mut state = lock(&self.state);
+        let startup = state
             .startup
             .as_mut()
-            .expect("residency checking is enabled")
-            .latest_admission = Some(observation.report);
+            .expect("residency checking is enabled");
+        startup.latest_admission = Some(observation.report);
+        let mut pressure = InferenceMemory {
+            ram_bytes: observation.report.ram_bytes,
+            vram_bytes: observation.report.vram_bytes,
+        };
+        for intent in &startup.recovered {
+            if intent.provider_id == provider_id && intent.model_key == model_key {
+                return Err(SchedulerError::RecoveredResidency { model_id });
+            }
+            let observed = observation
+                .external_models
+                .get(&intent.provider_id)
+                .is_some_and(|models| models.contains(&intent.model_key));
+            if !observed {
+                pressure.ram_bytes =
+                    add_memory(pressure.ram_bytes, intent.ram_bytes, ResourceKind::Ram)?;
+                pressure.vram_bytes =
+                    add_memory(pressure.vram_bytes, intent.vram_bytes, ResourceKind::Vram)?;
+            }
+        }
         if observation.external_models[&provider_id].contains(&model_key) {
             return Err(SchedulerError::ExternallyResident { model_id });
         }
-        Ok(observation.report)
+        Ok(pressure)
     }
 
     async fn lock_residency(
@@ -610,6 +687,17 @@ impl ResourceScheduler {
             .startup
             .as_ref()
             .and_then(|startup| startup.latest_admission)
+    }
+
+    /// Unresolved records carried into this invocation, after any acknowledged recovery.
+    pub fn recovered_residency_count(&self) -> Option<usize> {
+        let state = lock(&self.state);
+        let startup = state.startup.as_ref()?;
+        startup.journal.as_ref().map(|_| startup.recovered.len())
+    }
+
+    fn residency_journal(&self) -> Option<Arc<Mutex<Journal>>> {
+        lock(&self.state).startup.as_ref()?.journal.clone()
     }
 
     /// Capture reservation counters and model states under one accounting lock.
@@ -833,7 +921,10 @@ impl ResourceScheduler {
             )
             .await?
         } else {
-            StartupResidencyReport::default()
+            InferenceMemory {
+                ram_bytes: 0,
+                vram_bytes: 0,
+            }
         };
         let mut attempted = std::collections::BTreeSet::new();
         let needs_load = loop {
@@ -998,6 +1089,21 @@ impl ResourceScheduler {
             };
             let explicit = provider.lifecycle_support().explicit_model_load
                 == LifecycleCapabilityState::Supported;
+            if let Some(journal) = self.residency_journal() {
+                let intent = Intent {
+                    provider_id: model.provider_id,
+                    model_key: provider.residency_model_key(&model.provider_model_identifier),
+                    ram_bytes,
+                    vram_bytes,
+                };
+                if let Err(error) = lock(&journal).record(&intent) {
+                    let mut state = lock(&self.state);
+                    state.finish_inference(model_id, inference_memory);
+                    state.forget_model(model_id);
+                    transition.armed = false;
+                    return Err(error.into());
+                }
+            }
             if explicit {
                 let outcome = provider
                     .load_model_with_context(
@@ -1120,12 +1226,13 @@ impl ResourceScheduler {
         {
             return Err(SchedulerError::UnacknowledgedLifecycle { model_id });
         }
-        let mut state = lock(&self.state);
-        if let Some(entry) = state.resident_models.remove(&model_id) {
-            state.usage.ram_bytes -= entry.ram_bytes;
-            state.usage.vram_bytes -= entry.vram_bytes;
+        if let Some(journal) = self.residency_journal() {
+            lock(&journal).remove(
+                model.provider_id,
+                &provider.residency_model_key(&model.provider_model_identifier),
+            )?;
         }
-        state.bindings.remove(&model_id);
+        lock(&self.state).forget_model(model_id);
         transition.armed = false;
         Ok(true)
     }

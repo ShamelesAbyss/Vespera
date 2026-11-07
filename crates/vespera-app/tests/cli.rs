@@ -970,6 +970,147 @@ fn startup_residency_fences_external_models_and_charges_memory() {
 }
 
 #[test]
+fn residency_journal_fences_an_interrupted_load_across_cli_processes() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let fixture = HttpFixture::new(false);
+    fixture.lifecycle_delay_ms.store(1500, Ordering::SeqCst);
+    let scratch = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true);
+    let config_path = scratch.write_config(&config);
+    let prompt_path = scratch.0.join("crash-prompt.txt");
+    fs::write(&prompt_path, "bounded task").unwrap();
+    let journal = scratch.0.join("scheduler.sqlite3");
+    let flags = [
+        "--resume",
+        "--reconcile-residency",
+        "--residency-journal",
+        journal.to_str().unwrap(),
+        "--unload-after",
+    ];
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "run-agent",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--agent",
+            AGENT,
+            "--prompt-file",
+            prompt_path.to_str().unwrap(),
+            "--max-output-tokens",
+            "32",
+            "--json",
+        ])
+        .args(flags)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut busy = None;
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        if fixture
+            .captured()
+            .iter()
+            .any(|request| request.path == "/api/generate")
+        {
+            busy = Some(run_fixture_agent(&scratch, &config, &flags));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    assert!(!child.wait().unwrap().success());
+    let busy = busy.expect("child reached the provider load");
+    assert!(!busy.status.success());
+    assert!(String::from_utf8_lossy(&busy.stderr).contains("residency journal is in use"));
+    fixture.lifecycle_delay_ms.store(0, Ordering::SeqCst);
+
+    let check_fenced = |extra: &[&str], external_models: u64| {
+        let output = run_fixture_agent(&scratch, &config, extra);
+        assert!(!output.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["recovered_reservations"], 1, "{report}");
+        assert_eq!(
+            report["admission_residency"]["external_models"], external_models,
+            "{report}"
+        );
+        assert!(
+            report["error"]
+                .as_str()
+                .unwrap()
+                .contains("unresolved residency record"),
+            "{report}"
+        );
+    };
+    check_fenced(&flags, 0);
+
+    let other_config = config
+        .replace("fixture-model", "other-model")
+        .replace("ram_bytes = 4294967296", "ram_bytes = 120");
+    let other = run_fixture_agent(&scratch, &other_config, &flags);
+    assert!(!other.status.success());
+    assert!(
+        String::from_utf8_lossy(&other.stderr)
+            .contains("RAM bytes request/usage 200 exceeds budget 120")
+    );
+
+    let mut recovery = flags.to_vec();
+    recovery.push("--acknowledge-residency-recovery");
+    *fixture.residency.lock().unwrap() =
+        r#"{"models":[{"name":"fixture-model:latest","size":100,"size_vram":0}]}"#.into();
+    check_fenced(&recovery, 1);
+    assert_eq!(
+        fixture
+            .captured()
+            .iter()
+            .filter(|request| request.path == "/api/generate")
+            .count(),
+        1
+    );
+    assert!(
+        !fixture
+            .captured()
+            .iter()
+            .any(|request| request.path == "/api/chat")
+    );
+
+    *fixture.residency.lock().unwrap() = r#"{"models":[]}"#.into();
+    let recovered = run_fixture_agent(&scratch, &config, &recovery);
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(report["recovered_reservations"], 0);
+    assert_eq!(
+        report["cleanup"]["unloaded_models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let reopened = run_fixture_agent(&scratch, &config, &flags);
+    assert!(
+        reopened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reopened.stderr)
+    );
+
+    let foreign = scratch.0.join("foreign.sqlite3");
+    fs::write(&foreign, b"unrelated data").unwrap();
+    let mut foreign_flags = flags;
+    foreign_flags[3] = foreign.to_str().unwrap();
+    let requests_before = fixture.captured().len();
+    let rejected = run_fixture_agent(&scratch, &config, &foreign_flags);
+    assert!(!rejected.status.success());
+    assert_eq!(fixture.captured().len(), requests_before);
+    assert_eq!(fs::read(&foreign).unwrap(), b"unrelated data");
+}
+
+#[test]
 fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     use std::time::{Duration, Instant};
     use vespera_core::{ReservationState, SchedulerSample};

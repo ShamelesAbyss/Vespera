@@ -34,6 +34,8 @@ struct WorkflowRunReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     admission_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    recovered_reservations: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
 }
 
@@ -66,7 +68,15 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         Duration::from_secs(args.timeout_seconds),
         cancel.clone(),
         async {
-            if args.reconcile_residency {
+            if let Some(path) = &args.residency_journal {
+                runtime
+                    .reconcile_startup_with_journal(
+                        path,
+                        args.acknowledge_residency_recovery,
+                        cancel.clone(),
+                    )
+                    .await?;
+            } else if args.reconcile_residency {
                 runtime.reconcile_startup(cancel.clone()).await?;
             }
             runtime
@@ -121,6 +131,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .is_some_and(event_commands::Publication::failed);
     let startup_residency = runtime.scheduler().startup_residency();
     let admission_residency = runtime.scheduler().admission_residency();
+    let recovered_reservations = runtime.scheduler().recovered_residency_count();
     if args.json {
         println!(
             "{}",
@@ -131,12 +142,14 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 cleanup,
                 startup_residency,
                 admission_residency,
+                recovered_reservations,
                 event_publication
             })?
         );
     } else {
         print_residency("startup", startup_residency);
         print_residency("latest admission", admission_residency);
+        print_recovered_reservations(recovered_reservations);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }
@@ -317,6 +330,8 @@ struct RunReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     admission_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    recovered_reservations: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stored_memory_id: Option<MemoryId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_error: Option<String>,
@@ -330,6 +345,12 @@ fn print_residency(phase: &str, report: Option<StartupResidencyReport>) {
             "External {phase} residency: {} models across {} providers, {} RAM bytes, {} VRAM bytes",
             report.external_models, report.providers_observed, report.ram_bytes, report.vram_bytes,
         );
+    }
+}
+
+fn print_recovered_reservations(count: Option<usize>) {
+    if let Some(count) = count {
+        println!("Unresolved residency records from earlier invocations: {count}");
     }
 }
 
@@ -405,7 +426,15 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let cancel = CancellationToken::new();
     let outcome = cancellable(timeout, cancel.clone(), async {
-        if args.reconcile_residency {
+        if let Some(path) = &args.residency_journal {
+            runtime
+                .reconcile_startup_with_journal(
+                    path,
+                    args.acknowledge_residency_recovery,
+                    cancel.clone(),
+                )
+                .await?;
+        } else if args.reconcile_residency {
             runtime.reconcile_startup(cancel.clone()).await?;
         }
         runtime
@@ -475,6 +504,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     };
     let startup_residency = runtime.scheduler().startup_residency();
     let admission_residency = runtime.scheduler().admission_residency();
+    let recovered_reservations = runtime.scheduler().recovered_residency_count();
     if args.json {
         let report = RunReport {
             task_id,
@@ -484,6 +514,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             cleanup,
             startup_residency,
             admission_residency,
+            recovered_reservations,
             stored_memory_id,
             memory_error: memory_error.as_ref().map(ToString::to_string),
             event_publication,
@@ -492,6 +523,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     } else {
         print_residency("startup", startup_residency);
         print_residency("latest admission", admission_residency);
+        print_recovered_reservations(recovered_reservations);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }

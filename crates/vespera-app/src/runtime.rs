@@ -432,6 +432,19 @@ impl VesperaRuntime {
             .await
             .map_err(RuntimeError::StartupResidency)
     }
+
+    /// Capture startup residency using a durable local lifecycle journal.
+    pub async fn reconcile_startup_with_journal(
+        &self,
+        path: &std::path::Path,
+        acknowledge: bool,
+        cancel: CancellationToken,
+    ) -> Result<(), RuntimeError> {
+        self.scheduler
+            .reconcile_startup_with_journal(path, acknowledge, cancel)
+            .await
+            .map_err(RuntimeError::StartupResidency)
+    }
     /// Explicit provider health I/O without model loading.
     pub async fn refresh_health(
         &self,

@@ -122,6 +122,12 @@ struct RunAgentArgs {
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
     reconcile_residency: bool,
+    /// Keep unresolved lifecycle records in a private SQLite file.
+    #[arg(long, requires = "reconcile_residency")]
+    residency_journal: Option<PathBuf>,
+    /// Confirm older provider work has stopped and clear records verified absent.
+    #[arg(long, requires = "residency_journal")]
+    acknowledge_residency_recovery: bool,
     /// Record the observed terminal outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
@@ -171,6 +177,12 @@ struct RunWorkflowArgs {
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
     reconcile_residency: bool,
+    /// Keep unresolved lifecycle records in a private SQLite file.
+    #[arg(long, requires = "reconcile_residency")]
+    residency_journal: Option<PathBuf>,
+    /// Confirm older provider work has stopped and clear records verified absent.
+    #[arg(long, requires = "residency_journal")]
+    acknowledge_residency_recovery: bool,
     /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,

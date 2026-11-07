@@ -58,6 +58,31 @@ the same name or detect changes between samples. Shared backends reached
 through multiple provider registrations may be counted more than once. Use a
 single registration per backend for meaningful aggregate memory.
 
+## Durable restart recovery
+
+`--residency-journal <PATH>` opts `run-agent` or `run-workflow` into a private
+SQLite journal and requires `--reconcile-residency`. Use one journal and
+stable provider IDs for a resource pool. An invocation holds an exclusive
+database connection, and another invocation using the same file fails
+before reaching the provider. The journal stores provider IDs, canonical
+model names and resident memory estimates.
+
+The scheduler commits a record before model activation and removes it after
+an acknowledged unload. Any surviving records fence those model names on
+reopen, even if the first probe reports no residency. A prior request could
+still finish after that probe. A recovered record with no matching provider
+observation keeps its estimated RAM and VRAM charged. A matching observation
+contributes the provider's reported memory. Recovery never takes ownership
+of a model reported by the provider.
+
+Once the provider operator has confirmed that earlier work has stopped,
+pass `--acknowledge-residency-recovery` on the next invocation. It clears
+only records for scoped providers whose current snapshot omits the recorded
+model. Resident and out-of-scope records stay fenced. The JSON field
+`recovered_reservations` counts retained records from earlier invocations.
+Use a private local filesystem path. Different journal files and independent
+provider clients have separate ownership boundaries.
+
 ## Current limits
 
 Both estimate dimensions must be known. CPU-only models use explicit zero VRAM.
