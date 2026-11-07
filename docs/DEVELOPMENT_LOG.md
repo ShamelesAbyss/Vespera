@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — External residency checks before admission
+
+Verified implementation checkpoint `7f75c0b14b56701aa608bedf800cd3e7ec957634` was pushed to `main`. The per-inference allowance checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42426014923).
+
+`--reconcile-residency` captures startup observations and refreshes external memory pressure before each admission. JSON keeps the baseline and latest complete admission observation separate. A two-step subprocess fixture introduced an external model after the first step started. With 10 reported external RAM bytes and a 100-byte local reservation under a 120-byte budget, both steps completed. With 90 external bytes the second step was rejected before inference. Only the local model received lifecycle requests. A scheduler test also verified that an unacknowledged load retains its charge and cannot be automatically unloaded in reconciliation mode.
+
+On Windows, a live two-step workflow against Ollama 0.40.13 and `hermes3:8b` completed with zero external models in both reports. Acknowledged unload left the provider residency list empty. Changing external pressure was exercised by the fixture. Formatting, strict workspace Clippy and the offline workspace suite passed. The probe cannot prove provider-wide ownership or observe changes during active inference. Durable lifecycle intent and restart recovery are the next scheduler gates.
+
 ## 2026-11-07 — Per-inference memory allowances
 
 Verified implementation checkpoint `ce1cf5c58847efbc454276b8d96e84d4bb8730b4` was pushed to `main`. The context-aware scheduler checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42425514575).
