@@ -303,7 +303,7 @@ With the access file and environment variables configured, supply a path in a pr
 cargo run --locked -p vespera-app -- serve --access-file data/worker-access.json --broker-db data/worker-broker.sqlite3
 ```
 
-Use the same database on each restart to recover queued tasks, terminal outcomes, generations and revocations. The broker creates the database when needed and uses it exclusively. A second server using the same database exits with a startup error. Protect the database and its SQLite journal with filesystem permissions because they contain prompts and results. If an authenticated action returns `storage_unavailable`, resolve the database error and restart with the same file, then inspect the task before retrying. The default without `--broker-db` uses process memory. [Recovery contract](PROTOCOL.md#durable-broker-recovery)
+Use the same database on each restart to recover queued tasks, terminal outcomes, generations, revocations and recent event feeds. An authorized client can resume with its saved event cursor. The broker creates the database when needed and uses it exclusively. A second server using the same database exits with a startup error. Protect the database and its SQLite journal with filesystem permissions because they contain prompts and results. If an authenticated action returns `storage_unavailable`, resolve the database error and restart with the same file, then inspect the task before retrying. The default without `--broker-db` uses process memory. [Recovery contract](PROTOCOL.md#durable-broker-recovery)
 
 ## Local task outcome journal
 

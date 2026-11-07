@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vespera_core::{
     AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, EventEnvelope, EventKind,
@@ -19,10 +20,14 @@ pub(super) struct Transition {
     pub(super) attempt: Option<ExternalAttempt>,
 }
 
-struct Feed {
-    stream_id: Uuid,
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Feed {
+    pub(super) stream_id: Uuid,
     latest: u64,
     events: VecDeque<BrokerEventEntry>,
+    #[serde(skip)]
+    pub(super) dirty: bool,
 }
 
 impl Default for Feed {
@@ -31,6 +36,7 @@ impl Default for Feed {
             stream_id: Uuid::new_v4(),
             latest: 0,
             events: VecDeque::new(),
+            dirty: true,
         }
     }
 }
@@ -44,6 +50,7 @@ impl Feed {
     }
 
     fn push(&mut self, event: EventEnvelope) {
+        self.dirty = true;
         self.latest += 1;
         if self.events.len() == RETENTION {
             self.events.pop_front();
@@ -52,6 +59,29 @@ impl Feed {
             cursor: self.cursor(self.latest),
             event,
         });
+    }
+
+    pub(super) fn valid_for(&self, worker: Option<AgentId>) -> bool {
+        if self.stream_id.is_nil()
+            || self.latest > i64::MAX as u64
+            || self.events.len() as u64 != self.latest.min(RETENTION as u64)
+        {
+            return false;
+        }
+        let discarded = self.latest - self.events.len() as u64;
+        self.events.iter().enumerate().all(|(index, entry)| {
+            let EventKind::ExternalTaskChanged {
+                task_id, attempt, ..
+            } = entry.event.kind
+            else {
+                return false;
+            };
+            entry.cursor == self.cursor(discarded + index as u64 + 1)
+                && entry.event.source == "worker_broker"
+                && entry.event.correlation_task_id == Some(task_id)
+                && worker
+                    .is_none_or(|worker| attempt.is_some_and(|attempt| attempt.worker_id == worker))
+        })
     }
 
     fn replay(
@@ -99,8 +129,8 @@ impl Feed {
 
 #[derive(Default)]
 pub(super) struct EventFeeds {
-    operator: Feed,
-    workers: BTreeMap<AgentId, Feed>,
+    pub(super) operator: Feed,
+    pub(super) workers: BTreeMap<AgentId, Feed>,
 }
 
 impl EventFeeds {

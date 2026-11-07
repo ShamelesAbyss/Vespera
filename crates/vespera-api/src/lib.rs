@@ -44,7 +44,7 @@ pub enum BrokerError {
     StaleLease,
     #[error("result conflicts with the accepted result")]
     ResultConflict,
-    #[error("event cursor belongs to a different feed or server process")]
+    #[error("event cursor belongs to a different feed")]
     ForeignCursor,
     #[error("event cursor is older than retained history")]
     ExpiredCursor,

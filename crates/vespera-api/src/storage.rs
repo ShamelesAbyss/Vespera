@@ -2,19 +2,22 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use vespera_core::{AgentId, Task, TaskState};
 
+use crate::events::{EventFeeds, Feed};
 use crate::{
     AcceptedResult, ActiveLease, Fence, LeaseBroker, MAX_CAPABILITIES, MAX_LIFETIME, MAX_TASKS,
     MAX_TEXT, MAX_WORKERS, Phase, Record,
 };
 
 const APPLICATION_ID: i64 = 0x56534252;
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const MAX_RECORD_BYTES: usize = 1024 * 1024;
 const MAX_REVOCATIONS: usize = 4096;
+const MAX_FEED_BYTES: i64 = 256 * 1024;
+const OPERATOR_FEED: &str = "operator";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -211,10 +214,19 @@ impl Store {
                 .map_err(db)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)
                 .map_err(db)?;
+        } else if id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
+            return Err(StoreError::Format);
+        }
+        if version < SCHEMA_VERSION {
+            tx.execute_batch(
+                "CREATE TABLE broker_feed (
+                    owner TEXT PRIMARY KEY NOT NULL CHECK(length(owner) <= 36),
+                    payload BLOB NOT NULL CHECK(length(payload) <= 262144)
+                 );",
+            )
+            .map_err(db)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)
                 .map_err(db)?;
-        } else if (id, version) != (APPLICATION_ID, SCHEMA_VERSION) {
-            return Err(StoreError::Format);
         }
         let watermark: i64 = tx
             .query_row(
@@ -248,6 +260,7 @@ impl Store {
                     .map_err(|_| StoreError::Format)?;
             }
         }
+        restore_feeds(&tx, &mut broker.events)?;
         {
             let mut statement = tx
                 .prepare(
@@ -282,7 +295,12 @@ impl Store {
         revoke: Option<AgentId>,
         startup: bool,
     ) -> Result<(), StoreError> {
-        if !startup && revoke.is_none() && !broker.tasks.iter().any(|task| task.dirty) {
+        if !startup
+            && revoke.is_none()
+            && !broker.tasks.iter().any(|task| task.dirty)
+            && !broker.events.operator.dirty
+            && !broker.events.workers.values().any(|feed| feed.dirty)
+        {
             return Ok(());
         }
         let tx = self
@@ -306,6 +324,11 @@ impl Store {
             if !exists {
                 return Err(StoreError::Database);
             }
+            tx.execute(
+                "DELETE FROM broker_feed WHERE owner = ?1",
+                [worker.to_string()],
+            )
+            .map_err(db)?;
         }
         {
             let mut upsert = tx
@@ -322,6 +345,7 @@ impl Store {
                     .map_err(db)?;
             }
         }
+        save_feeds(&tx, &broker.events)?;
         tx.execute(
             "UPDATE broker_meta SET wall_high_water = max(wall_high_water, ?1) WHERE singleton = 1",
             [unix_ms().ok_or(StoreError::Clock)?],
@@ -331,8 +355,89 @@ impl Store {
         for task in &mut broker.tasks {
             task.dirty = false;
         }
+        broker.events.operator.dirty = false;
+        for feed in broker.events.workers.values_mut() {
+            feed.dirty = false;
+        }
         Ok(())
     }
+}
+
+fn restore_feeds(tx: &Transaction<'_>, feeds: &mut EventFeeds) -> Result<(), StoreError> {
+    let mut retired = Vec::new();
+    let mut stream_ids = BTreeSet::new();
+    {
+        let mut statement = tx
+            .prepare(
+                "SELECT owner, CASE WHEN length(payload) <= ?1 THEN payload END
+             FROM broker_feed LIMIT ?2",
+            )
+            .map_err(db)?;
+        let mut rows = statement
+            .query(params![MAX_FEED_BYTES, MAX_WORKERS as i64 + 2])
+            .map_err(db)?;
+        let mut count = 0;
+        while let Some(row) = rows.next().map_err(db)? {
+            count += 1;
+            if count > MAX_WORKERS + 1 {
+                return Err(StoreError::Format);
+            }
+            let owner: String = row.get(0).map_err(db)?;
+            let worker = if owner == OPERATOR_FEED {
+                None
+            } else {
+                let id: AgentId = owner.parse().map_err(|_| StoreError::Format)?;
+                if owner != id.to_string() {
+                    return Err(StoreError::Format);
+                }
+                Some(id)
+            };
+            let target = match worker {
+                None => &mut feeds.operator,
+                Some(id) => match feeds.workers.get_mut(&id) {
+                    Some(feed) => feed,
+                    None => {
+                        retired.push(owner);
+                        continue;
+                    }
+                },
+            };
+            let bytes: Vec<u8> = row.get(1).map_err(|_| StoreError::Format)?;
+            let feed: Feed = serde_json::from_slice(&bytes).map_err(|_| StoreError::Format)?;
+            if !feed.valid_for(worker) || !stream_ids.insert(feed.stream_id) {
+                return Err(StoreError::Format);
+            }
+            *target = feed;
+        }
+    }
+    for owner in retired {
+        tx.execute("DELETE FROM broker_feed WHERE owner = ?1", [owner])
+            .map_err(db)?;
+    }
+    Ok(())
+}
+
+fn save_feeds(tx: &Transaction<'_>, feeds: &EventFeeds) -> Result<(), StoreError> {
+    let mut upsert = tx
+        .prepare(
+            "INSERT INTO broker_feed (owner, payload) VALUES (?1, ?2)
+         ON CONFLICT (owner) DO UPDATE SET payload = excluded.payload",
+        )
+        .map_err(db)?;
+    let mut save = |owner: &str, feed: &Feed| {
+        if feed.dirty {
+            let bytes = serde_json::to_vec(feed).map_err(|_| StoreError::Format)?;
+            upsert.execute(params![owner, bytes]).map_err(db)?;
+        }
+        Ok(())
+    };
+    save(OPERATOR_FEED, &feeds.operator)?;
+    for (worker, feed) in &feeds.workers {
+        if feed.dirty {
+            save(&worker.to_string(), feed)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -340,6 +445,23 @@ mod tests {
     use super::*;
     use uuid::Uuid;
     use vespera_core::TaskId;
+
+    struct DatabaseFixture(std::path::PathBuf);
+
+    impl DatabaseFixture {
+        fn new() -> Self {
+            Self(
+                std::env::temp_dir()
+                    .join(format!("vespera-broker-store-{}.sqlite3", Uuid::new_v4())),
+            )
+        }
+    }
+
+    impl Drop for DatabaseFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
 
     fn submit(broker: &mut LeaseBroker, worker: AgentId) -> TaskId {
         let id = TaskId::new();
@@ -375,30 +497,24 @@ mod tests {
 
     #[test]
     fn failed_batch_keeps_the_last_committed_state_and_revocations() {
-        let path =
-            std::env::temp_dir().join(format!("vespera-broker-store-{}.sqlite3", Uuid::new_v4()));
-        struct Cleanup(std::path::PathBuf);
-        impl Drop for Cleanup {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_file(&self.0);
-            }
-        }
-        let _cleanup = Cleanup(path.clone());
+        let database = DatabaseFixture::new();
         let mut broker = LeaseBroker::default();
         let worker = AgentId::new();
         broker.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (mut store, _) = Store::open(&path, &mut broker).unwrap();
+        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
         let original = submit(&mut broker, worker);
         store.flush(&mut broker, None, false).unwrap();
+        let previous = broker.replay(None, None, 8).unwrap();
+        let previous_worker = broker.replay(Some(worker), None, 8).unwrap().next_cursor;
         broker.cancel(original).unwrap();
         let next = submit(&mut broker, worker);
         broker.revoke_worker(worker).unwrap();
         store
             .0
-            .execute_batch(&format!(
-                "CREATE TRIGGER reject_fixture BEFORE INSERT ON broker_task
-             WHEN NEW.task_id = '{next}' BEGIN SELECT RAISE(ABORT, 'fixture'); END;"
-            ))
+            .execute_batch(
+                "CREATE TRIGGER reject_fixture BEFORE INSERT ON broker_feed
+                 WHEN NEW.owner = 'operator' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+            )
             .unwrap();
         assert!(matches!(
             store.flush(&mut broker, Some(worker), false),
@@ -408,9 +524,85 @@ mod tests {
         drop(store);
         let mut restored = LeaseBroker::default();
         restored.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (_store, revocations) = Store::open(&path, &mut restored).unwrap();
+        let (_store, revocations) = Store::open(&database.0, &mut restored).unwrap();
         assert!(revocations.is_empty());
         assert_eq!(restored.state(original).unwrap(), TaskState::Queued);
         assert_eq!(restored.state(next), Err(crate::BrokerError::Missing));
+        assert_eq!(
+            restored.replay(None, None, 8).unwrap().entries,
+            previous.entries
+        );
+        assert!(
+            restored
+                .replay(Some(worker), Some(previous_worker), 8)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn migrates_version_one_without_rewriting_tasks_or_revocations() {
+        let database = DatabaseFixture::new();
+        let worker = AgentId::new();
+        let revoked = AgentId::new();
+        let mut broker = LeaseBroker::default();
+        for id in [worker, revoked] {
+            broker.approve_worker(id, BTreeSet::new()).unwrap();
+        }
+        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
+        let task = submit(&mut broker, worker);
+        broker.revoke_worker(revoked).unwrap();
+        store.flush(&mut broker, Some(revoked), false).unwrap();
+        store
+            .0
+            .execute_batch("DROP TABLE broker_feed; PRAGMA user_version = 1;")
+            .unwrap();
+        drop(store);
+
+        let mut restored = LeaseBroker::default();
+        for id in [worker, revoked] {
+            restored.approve_worker(id, BTreeSet::new()).unwrap();
+        }
+        let (store, revocations) = Store::open(&database.0, &mut restored).unwrap();
+        let version: i64 = store
+            .0
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(restored.state(task).unwrap(), TaskState::Queued);
+        assert_eq!(revocations, [revoked]);
+        assert!(restored.replay(None, None, 8).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn removing_a_worker_from_policy_retires_its_saved_cursor() {
+        let database = DatabaseFixture::new();
+        let worker = AgentId::new();
+        let mut broker = LeaseBroker::default();
+        broker.approve_worker(worker, BTreeSet::new()).unwrap();
+        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
+        submit(&mut broker, worker);
+        broker.claim(worker).unwrap().unwrap();
+        store.flush(&mut broker, None, false).unwrap();
+        let previous = broker.replay(Some(worker), None, 8).unwrap().next_cursor;
+        drop(store);
+
+        let (store, _) = Store::open(&database.0, &mut LeaseBroker::default()).unwrap();
+        drop(store);
+        let mut restored = LeaseBroker::default();
+        restored.approve_worker(worker, BTreeSet::new()).unwrap();
+        let (_store, _) = Store::open(&database.0, &mut restored).unwrap();
+        assert!(matches!(
+            restored.replay(Some(worker), Some(previous), 8),
+            Err(crate::BrokerError::ForeignCursor)
+        ));
+        assert!(
+            restored
+                .replay(Some(worker), None, 8)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
     }
 }

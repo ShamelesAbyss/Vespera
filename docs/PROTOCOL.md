@@ -65,13 +65,15 @@ Treat loopback as a deployment boundary. Keep each signing key private and use a
 
 Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions and all observed transitions. Event data contains task and attempt metadata. Prompts, results and keys stay out of the feed. Change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.
 
-Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. An operator cursor or another worker's cursor yields 409. A cursor from a previous server process also yields 409. An older cursor beyond retention yields 410. A cursorless restart of replay reports how far retention has advanced in `discarded_through`.
+Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. A cursor from a different feed yields 409. A cursor older than retained history yields 410. A cursorless replay reports how far retention has advanced in `discarded_through`.
 
-Broker feeds and cursors last for the running process. Revocation removes the worker's feed and signing authority. Replay uses HTTP polling. Durable feeds and live streaming remain roadmap work.
+In memory-only mode, feeds reset when the process restarts. With `--broker-db`, retained events and cursors survive a restart with the same database and principal. Revocation removes the worker's feed and signing authority. Starting with a policy that omits a worker retires that worker's feed. Reintroducing the worker later starts a new stream. Replay uses HTTP polling. Live streaming remains roadmap work.
 
 ### Durable broker recovery
 
-With `--broker-db` the server commits task changes and revocations in SQLite transactions before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts and accepted results are stored in the database without encryption.
+With `--broker-db` the server commits task changes, revocations and bounded event feeds in the same SQLite transaction before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts and accepted results are stored in the database without encryption.
+
+Database schema 2 adds the feed table. Opening a schema 1 broker database upgrades it in place and preserves its tasks and revocations. Earlier in-memory feeds cannot be recovered by the migration.
 
 On restart, queued work and terminal outcomes keep their task IDs and ordering. Previously active leases are fenced immediately and produce `lease_expired` observations in the new process. An interrupted task returns to the queue only if its deadline and attempt budget allow another claim. That claim uses the next generation and a fresh attempt ID. The broker still recognizes an exact completion retry for an already accepted result when the worker remains authorized.
 
@@ -98,7 +100,7 @@ Build the Rust API reference with `cargo doc -p vespera-sdk --no-deps --locked`.
 
 ## Future interoperability draft
 
-The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover live subscriptions and reconnect behavior across server restarts.
+The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover live subscriptions.
 
 ## Authentication and registration — draft
 

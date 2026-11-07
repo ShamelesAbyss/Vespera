@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Durable broker event feeds
+
+The durable task recovery checkpoint `fa521556b4e62e38e7789c174ce50e053f249d7d` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42339348902). Schema 2 adds bounded per-principal feed snapshots to the broker database. Task changes, event pages and revocations commit in one transaction. The server restores each feed's sequence and identity before reconciling interrupted attempts. Revoked or removed workers lose their saved feed. Opening a schema 1 database preserves its tasks and revocations while creating empty feeds.
+
+Windows validation passed 210 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, the release workspace build and optimized broker and worker HTTP tests. Forced-exit recovery verified both operator and worker cursor continuity, stable event identities, restart fencing and cross-feed isolation. Storage fixtures covered migration, policy removal and rollback after a feed write failure.
+
+Feeds retain 256 events per principal. Clients still poll HTTP and must handle retention gaps. The original process-only mode remains available. Live subscriptions and protected remote transport remain open.
+
 ## 2026-11-06 — Durable broker recovery
 
 Verified implementation checkpoint `fa521556b4e62e38e7789c174ce50e053f249d7d` was pushed to the default branch, `main`.

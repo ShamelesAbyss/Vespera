@@ -129,9 +129,9 @@ remain explicit. The external worker service is an independent, explicitly
 started loopback listener. Its broker derives worker authority from credentials,
 serializes task state transitions and leaves execution to the worker process.
 Broker transitions publish metadata-only events into bounded per-principal
-feeds under the same lock. Feed cursors are specific to the principal and
-server process. The separate SQLite outcome journal serves local CLI execution.
-An optional broker database commits task transitions and revocations before
+feeds under the same lock. Feed cursors are specific to a principal's stream.
+The separate SQLite outcome journal serves local CLI execution.
+An optional broker database commits task transitions, feeds and revocations before
 replying. Startup reconciles persisted deadlines and fences active attempts.
 The database contains no authentication keys and the access policy is loaded
 separately on each start.

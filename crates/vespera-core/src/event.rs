@@ -29,7 +29,7 @@ pub struct ExternalAttempt {
     pub generation: u32,
 }
 
-/// Cursor scoped to one principal's broker event feed in one server process.
+/// Cursor scoped to one principal's broker event feed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrokerEventCursor {

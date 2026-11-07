@@ -206,6 +206,8 @@ async fn durable_service_recovers_work_and_fences_interrupted_attempts() {
         .await
         .unwrap();
     let previous_cursor = operator.replay(None, 64).await.unwrap().next_cursor;
+    let previous_worker = worker.replay(None, 64).await.unwrap();
+    assert_eq!(previous_worker.entries.len(), 3);
     drop(process); // Kill the service without graceful shutdown.
 
     let (_restarted, base) = launch_with_database(first, second, Some(&db.0));
@@ -245,13 +247,36 @@ async fn durable_service_recovers_work_and_fences_interrupted_attempts() {
         })
     ));
     assert!(matches!(
-        operator.replay(Some(previous_cursor), 1).await,
+        revoked.replay(Some(previous_worker.next_cursor), 1).await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+    assert!(matches!(
+        worker.replay(Some(previous_cursor), 1).await,
         Err(ClientError::Rejected {
             code: Some(ErrorCode::ForeignCursor),
             ..
         })
     ));
-    let recovery = worker.replay(None, 1).await.unwrap();
+    let operator_recovery = operator.replay(Some(previous_cursor), 1).await.unwrap();
+    let recovery = worker
+        .replay(Some(previous_worker.next_cursor), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        recovery.entries[0].event,
+        operator_recovery.entries[0].event
+    );
+    assert_eq!(
+        recovery.next_cursor.sequence,
+        previous_worker.next_cursor.sequence + 1
+    );
+    assert_eq!(
+        operator_recovery.next_cursor.sequence,
+        previous_cursor.sequence + 1
+    );
+    let retained = worker.replay(None, 64).await.unwrap();
+    assert_eq!(&retained.entries[..3], previous_worker.entries.as_slice());
+    assert_eq!(retained.entries.len(), 4);
     assert!(
         matches!(recovery.entries[0].event.kind, EventKind::ExternalTaskChanged {
         change: ExternalTaskChange::LeaseExpired, attempt: Some(attempt), ..
