@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Bounded priority admission and shutdown drain
+
+Previous verified checkpoint: `46b9e5c2f50bba844be410e05c5e51cad33b4fcd`, pushed to the recovery branch.
+
+Added a bounded admission queue whose granted permits follow owned inference leases. The default policy allows 64 waiters and a maximum of eight priority bypasses. Equal priorities are FIFO; after the bypass bound the oldest waiter takes precedence. Full/closed/invalid queue states are typed errors. Cancellation and future abort remove waiters synchronously; preparation failure and final lease drop return permits without detached cleanup tasks. Per-model gate metadata now uses weak handles and prunes expired entries rather than retaining every requested identifier.
+
+`queue_snapshot()` exposes waiting/granted counts independently of memory accounting. `shutdown(timeout)` closes new/queued admission and reports whether existing permits drained within the bound. It neither claims provider cancellation nor frees model reservations. Active leases remain visible after timeout and idle reservations can still be explicitly unloaded. There is no automatic restart/telemetry reconciliation yet.
+
+Validation passed: formatting, all-target workspace check, all 78 tests (including queue unit regressions and scheduler-integrated shutdown), strict Clippy, rustdoc, and optimized workspace build. The roadmap status table now reflects the actual seven-crate implementation while preserving all original acceptance gates and the required 3D destination.
+
+Next prerequisites: registry duplicate/update/removal and effective-health behavior; discover and run dormant provider fixtures; bounded real agent inference; per-inference resource overhead/telemetry; persistent memory/events and orchestration. Milestone 5 is materially hardened, not certified complete: hardware estimates, external provider activity, and restart recovery remain limitations.
+
 ## 2026-11-06 — Owned inference leases and exclusive agent execution
 
 Previous verified checkpoint: `60db6742343831be7d47f588b524c338205e3314`, pushed to the recovery branch.

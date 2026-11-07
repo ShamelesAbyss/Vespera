@@ -77,6 +77,7 @@ async fn unknown_estimates_are_rejected_without_changing_accounting() {
     let scheduler = ResourceScheduler::new(
         registry.clone(),
         SchedulingPolicy {
+            queue: vespera_scheduler::QueuePolicy::default(),
             budget: ResourceBudget::default(),
             default_keep_alive: Duration::from_secs(30),
             evict_idle_on_pressure: true,
@@ -292,6 +293,7 @@ async fn fixture() -> (
         Arc::new(ResourceScheduler::new(
             registry,
             SchedulingPolicy {
+                queue: vespera_scheduler::QueuePolicy::default(),
                 budget: ResourceBudget {
                     ram_bytes: 100,
                     vram_bytes: 0,
@@ -498,4 +500,48 @@ async fn lease_clones_release_exactly_once_and_last_drop_returns_slot() {
     drop(second);
     assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
     assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+}
+
+#[tokio::test]
+async fn scheduler_shutdown_closes_queued_work_and_preserves_charged_models() {
+    use std::time::Duration;
+    use vespera_scheduler::{QueueError, SchedulerError};
+    let (scheduler, _, a, _) = fixture().await;
+    let first = scheduler
+        .admit_and_prepare(a, None, CancellationToken::new())
+        .await
+        .unwrap();
+    let second = scheduler
+        .admit_and_prepare(a, None, CancellationToken::new())
+        .await
+        .unwrap();
+    let s = scheduler.clone();
+    let queued =
+        tokio::spawn(async move { s.admit_and_prepare(a, None, CancellationToken::new()).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while scheduler.queue_snapshot().waiting != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!scheduler.shutdown(Duration::ZERO).await);
+    assert!(matches!(
+        queued.await.unwrap(),
+        Err(SchedulerError::Queue(QueueError::Closed))
+    ));
+    assert_eq!(scheduler.queue_snapshot().active, 2);
+    first.release();
+    second.release();
+    assert!(scheduler.shutdown(Duration::from_secs(1)).await);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+    assert!(
+        scheduler
+            .evict_model(a, CancellationToken::new())
+            .await
+            .unwrap()
+    );
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 0);
 }

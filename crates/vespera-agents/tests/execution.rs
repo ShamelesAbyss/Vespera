@@ -251,6 +251,7 @@ async fn runtime_fixture() -> (
     let scheduler = Arc::new(ResourceScheduler::new(
         registry.clone(),
         SchedulingPolicy {
+            queue: vespera_scheduler::QueuePolicy::default(),
             budget: ResourceBudget {
                 ram_bytes: 100,
                 vram_bytes: 0,

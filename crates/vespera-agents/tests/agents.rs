@@ -15,6 +15,7 @@ use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
 fn build_runtime() -> AgentRuntime {
     let registry = Arc::new(ModelRegistry::new());
     let policy = SchedulingPolicy {
+        queue: vespera_scheduler::QueuePolicy::default(),
         budget: ResourceBudget {
             ram_bytes: 8 * 1024 * 1024 * 1024,
             vram_bytes: 8 * 1024 * 1024 * 1024,

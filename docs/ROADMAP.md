@@ -1,6 +1,20 @@
 # Roadmap
 
-The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt), narrowed by [INITIAL_PLAN.md](INITIAL_PLAN.md). **Only Milestones 0 and 1 are in this build.** Milestone 0 has an inspection record and initial plan; Milestone 1 is the implementation target, subject to actual build/test evidence. Milestones 2–14 are **not implemented**. These are acceptance gates, not claims that tests ran.
+The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner's full-platform directive. The historical [INITIAL_PLAN.md](INITIAL_PLAN.md) describes the initial foundation, not a reduction of the current product scope. Status was re-audited on 2026-11-06; source and checkpoint evidence in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) are authoritative. Gates below remain acceptance criteria, not blanket completion claims.
+
+| Milestone | Current status and remaining evidence |
+| --- | --- |
+| 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
+| 2: provider contract and Ollama | Adapter implemented. Existing protocol fixtures are not yet discovered by Cargo; live interoperability remains unverified. |
+| 3: additional providers | OpenAI-compatible adapter implemented but lacks verified fixture coverage. Bionic blocked on exact product/version and authoritative protocol. |
+| 4: registry | Partial: storage/capability matching present; duplicate protection, controlled updates/removal, effective health and recovery need work. |
+| 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |
+| 6: master orchestration | Pending; no bounded multi-step orchestrator yet. |
+| 7: agents | Partial: identities, permissions, in-memory records/messages, delegated task preparation, ownership and execution-state guards tested. Actual task inference, bounded histories and persistence remain. |
+| 8–10: memory/events/interoperability | Domain contracts and draft documents only; durable services/server/SDK pending. |
+| 11: simulation | Pending; independent deterministic world engine required. |
+| 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |
+| 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
 
 ## Milestone 0 — Repository inspection and architecture
 
@@ -98,9 +112,9 @@ Build a small deterministic world on a reusable contract.
 - Pause/stall inference while world state stays valid; reject or explicitly reconcile late results by world version.
 - Demonstrate a few independent residents, goals, relationships, and authorized memories under bounded resources.
 
-## Milestone 12 — Optional 3D visualization
+## Milestone 12 — 3D intelligence command center
 
-Evaluate a native Rust Bevy/wgpu client when rendering is needed; it is not the control plane.
+Implement the central native Rust 3D orchestration and world views, evaluating Bevy/wgpu. Rendering remains separate from the authoritative control plane and can be disabled for headless deployments; the 3D product destination is required.
 
 - Show a small observed graph and real task/resource state with useful selection and authorized controls.
 - Disable rendering on CPU-only/headless hosts; document native text/2D fallback and unsupported GPU features.

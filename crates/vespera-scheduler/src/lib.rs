@@ -3,9 +3,13 @@
 //! Accounting records are estimates reserved by this process, not measured residency.
 //! Uncertain lifecycle outcomes retain their memory reservation until acknowledged unload.
 
+mod queue;
+use queue::{AdmissionQueue, QueuePermit};
+pub use queue::{QueueError, QueuePolicy, QueueSnapshot};
+
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
@@ -20,6 +24,9 @@ use vespera_providers::{
 /// Typed admission and lifecycle failures.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
+    /// Bounded admission queue rejected or cancelled the request.
+    #[error("{0}")]
+    Queue(#[from] QueueError),
     /// Incomplete estimates cannot establish safe admission.
     #[error("model {model_id} has unknown resource estimates")]
     UnknownResources {
@@ -61,6 +68,8 @@ pub enum SchedulerError {
 /// Scheduling limits and idle eviction policy.
 #[derive(Debug, Clone)]
 pub struct SchedulingPolicy {
+    /// Waiting capacity and priority fairness bounds.
+    pub queue: QueuePolicy,
     /// Explicit operator limits, not measured hardware capacity.
     pub budget: ResourceBudget,
     /// Provider load keep-alive request.
@@ -138,6 +147,7 @@ impl ScheduledInference {
 struct InferenceLease {
     id: uuid::Uuid,
     state: Arc<Mutex<SchedulerState>>,
+    permit: QueuePermit,
 }
 impl InferenceLease {
     fn release(&self) -> bool {
@@ -149,6 +159,8 @@ impl InferenceLease {
             model.active_inferences -= 1;
             state.usage.active_inferences -= 1;
         }
+        drop(state);
+        self.permit.release();
         true
     }
 }
@@ -212,10 +224,11 @@ fn lock(state: &Mutex<SchedulerState>) -> MutexGuard<'_, SchedulerState> {
 /// the global accounting mutex is never held over provider I/O.
 #[derive(Clone)]
 pub struct ResourceScheduler {
+    queue: AdmissionQueue,
     registry: Arc<ModelRegistry>,
     policy: SchedulingPolicy,
     state: Arc<Mutex<SchedulerState>>,
-    gates: Arc<Mutex<BTreeMap<ModelId, Arc<AsyncMutex<()>>>>>,
+    gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
 }
 impl fmt::Debug for ResourceScheduler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -229,19 +242,38 @@ impl ResourceScheduler {
     #[must_use]
     pub fn new(registry: Arc<ModelRegistry>, policy: SchedulingPolicy) -> Self {
         Self {
+            queue: AdmissionQueue::new(policy.budget.max_concurrent_inferences, policy.queue),
             registry,
             policy,
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
+    /// Snapshot waiting and granted local admissions.
+    #[must_use]
+    pub fn queue_snapshot(&self) -> QueueSnapshot {
+        self.queue.snapshot()
+    }
+
+    /// Reject new/queued admissions and wait at most `timeout` for owned permits.
+    /// Existing inference is not forcibly stopped or falsely reported as unloaded.
+    /// A false return leaves active leases/reservations visible for operator recovery.
+    pub async fn shutdown(&self, timeout: Duration) -> bool {
+        self.queue.close();
+        self.queue.drain(timeout).await
+    }
     fn gate(&self, model_id: ModelId) -> Arc<AsyncMutex<()>> {
-        self.gates
+        let mut gates = self
+            .gates
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(model_id)
-            .or_default()
-            .clone()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = gates.get(&model_id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(AsyncMutex::new(()));
+        gates.insert(model_id, Arc::downgrade(&gate));
+        gate
     }
     /// Snapshot local reserved usage.
     pub async fn usage_snapshot(&self) -> ResourceUsage {
@@ -255,13 +287,34 @@ impl ResourceScheduler {
             .cloned()
             .collect()
     }
-    /// Admit immediately or return a typed error. No unbounded waiting queue is created.
+    /// Admit with default priority through the bounded queue.
     pub async fn admit_and_prepare(
         &self,
         model_id: ModelId,
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
+        self.admit_with_priority(model_id, requested_context_tokens, 0, cancel)
+            .await
+    }
+
+    /// Enqueue bounded admission. Larger priority values run first, subject to
+    /// the configured bypass bound; equal priorities preserve arrival order.
+    pub async fn admit_with_priority(
+        &self,
+        model_id: ModelId,
+        requested_context_tokens: Option<u32>,
+        priority: u8,
+        cancel: CancellationToken,
+    ) -> Result<ScheduledInference, SchedulerError> {
+        let permit = self
+            .queue
+            .acquire(priority, &cancel)
+            .await
+            .map_err(|error| match error {
+                QueueError::Cancelled => SchedulerError::Cancelled,
+                error => SchedulerError::Queue(error),
+            })?;
         let gate = self.gate(model_id);
         let _model_guard = tokio::select! {
             biased;
@@ -417,6 +470,7 @@ impl ResourceScheduler {
             lease: Arc::new(InferenceLease {
                 id,
                 state: self.state.clone(),
+                permit,
             }),
             model_id,
             provider_id: model.provider_id,

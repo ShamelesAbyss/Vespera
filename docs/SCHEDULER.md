@@ -39,7 +39,7 @@ assumes that dropping a request stopped remote work or freed provider memory.
 Both estimate dimensions must be known; CPU-only models use explicit zero VRAM.
 The caller must include overhead and headroom in supplied estimates. There is
 no automatic per-request KV-cache costing, hardware discovery, telemetry
-reconciliation, priority queue, or shutdown coordinator yet. See the development log for
+reconciliation, or automatic shutdown unloading yet. See the development log for
 checkpoint validation and the roadmap for the complete acceptance gates.
 
 ## Inference lease ownership
@@ -52,6 +52,31 @@ model. Model-ID-based release has been removed so a caller cannot accidentally
 release another admission for the same model. The runtime retains its own lease
 handle and validates task/model ownership before completing a task. A local slot
 release does not establish that provider-side computation stopped.
+
+## Bounded queue and shutdown
+
+`SchedulingPolicy.queue` defaults to 64 waiting requests and at most eight
+priority bypasses. Granted requests (including preparation) are independently
+bounded by `max_concurrent_inferences`. `admit_and_prepare` uses priority zero;
+`admit_with_priority` accepts a `u8`, with larger values preferred. Equal
+priorities are FIFO. After the configured number of bypasses, the oldest
+eligible waiter is selected before newer high-priority arrivals. Capacity zero
+allows immediate free-slot admission but rejects waiting.
+
+Cancelled or dropped waiting futures remove their tickets synchronously. Queue
+permits follow inference lease lifetime, so preparation errors and handle drop
+return capacity. Waiting on a per-model lifecycle gate also consumes a granted
+permit; this is conservative and can reduce throughput for same-model bursts.
+Memory/context admission errors remain typed failures after a queue permit is
+granted; the queue does not hide impossible model costs with endless retries.
+
+`queue_snapshot()` reports waiting/granted counts separately from inference and
+memory accounting. `shutdown(timeout)` closes new/queued admissions and waits a
+bounded time for granted permits to return. `false` means active local work
+remains. Shutdown does not forcibly cancel existing provider calls or unload
+models. Idle/uncertain reservations remain inspectable and can be explicitly
+evicted after shutdown. Reopening admission requires a new scheduler; persisted
+restart reconciliation is still future work.
 
 ## Tests
 
