@@ -17,6 +17,7 @@ http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["http1", "server"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 subtle = { version = "2.6", default-features = false }
+ring = { version = "0.17", default-features = false }
 
 [lints]
 workspace = true

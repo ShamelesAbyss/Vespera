@@ -237,7 +237,7 @@ Save this strict JSON as `data/worker-access.json`. The policy references enviro
 }
 ```
 
-This Windows PowerShell 7 example uses one shell to exercise both roles. In a deployment, give each worker process only its own credential. Generate a distinct token from 32 cryptographically random bytes for each principal.
+This Windows PowerShell 7.2 or later example uses one shell to exercise both roles. In a deployment, give each worker process only its own credential. Generate a distinct signing key from 32 cryptographically random bytes for each principal.
 
 ```powershell
 $env:VESPERA_OPERATOR_TOKEN = [Convert]::ToHexString(
@@ -253,10 +253,26 @@ With the service running, submit one task, claim it, post a result and inspect t
 ```powershell
 $worker = '73c7d9eb-eddf-418a-b604-ff0cc751ee67'
 $task = [guid]::NewGuid().ToString()
-$operatorHeaders = @{ Authorization = "Bearer $env:VESPERA_OPERATOR_TOKEN" }
-$workerHeaders = @{ Authorization = "Bearer $env:VESPERA_WORKER_TOKEN" }
-$operatorUrl = 'http://127.0.0.1:8765/v1/operator'
-$workerUrl = 'http://127.0.0.1:8765/v1/worker'
+$base = 'http://127.0.0.1:8765'
+function Invoke-VesperaAction($path, $principal, $key, $action) {
+    $session = Invoke-RestMethod "$base/v2/session"
+    $issued = $session.elapsed_ms.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $nonce = [guid]::NewGuid().ToString()
+    $scheme = 'Vespera-HMAC-SHA256'
+    $json = ConvertTo-Json -InputObject $action -Depth 4 -Compress
+    $prefix = @($scheme, 'POST', $path, $principal, $session.session_id, $issued, $nonce, '') -join [char]10
+    $mac = [Security.Cryptography.HMACSHA256]::HashData(
+        [Convert]::FromHexString($key), [Text.Encoding]::UTF8.GetBytes($prefix + $json))
+    $proof = @($principal, $session.session_id, $issued, $nonce, [Convert]::ToHexString($mac).ToLowerInvariant()) -join ':'
+    $request = @{
+        Uri = "$base$path"
+        Method = 'Post'
+        ContentType = 'application/json'
+        Headers = @{ Authorization = "$scheme $proof" }
+        Body = [Text.Encoding]::UTF8.GetBytes($json)
+    }
+    Invoke-RestMethod @request
+}
 $submit = @{
     action = 'submit'
     task_id = $task
@@ -266,11 +282,11 @@ $submit = @{
     lifetime_seconds = 60
     max_attempts = 2
 }
-Invoke-RestMethod $operatorUrl -Method Post -Headers $operatorHeaders -ContentType 'application/json' -Body ($submit | ConvertTo-Json)
-$lease = Invoke-RestMethod $workerUrl -Method Post -Headers $workerHeaders -ContentType 'application/json' -Body '{"action":"claim"}'
+Invoke-VesperaAction '/v2/operator' 'operator' $env:VESPERA_OPERATOR_TOKEN $submit
+$lease = Invoke-VesperaAction '/v2/worker' $worker $env:VESPERA_WORKER_TOKEN @{ action = 'claim' }
 $result = @{ action = 'complete'; fence = $lease.fence; content = 'Acknowledged.' }
-Invoke-RestMethod $workerUrl -Method Post -Headers $workerHeaders -ContentType 'application/json' -Body ($result | ConvertTo-Json -Depth 4)
-Invoke-RestMethod $operatorUrl -Method Post -Headers $operatorHeaders -ContentType 'application/json' -Body (@{ action = 'inspect'; task_id = $task } | ConvertTo-Json)
+Invoke-VesperaAction '/v2/worker' $worker $env:VESPERA_WORKER_TOKEN $result
+Invoke-VesperaAction '/v2/operator' 'operator' $env:VESPERA_OPERATOR_TOKEN @{ action = 'inspect'; task_id = $task }
 Stop-Process -InputObject $server
 Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 ```

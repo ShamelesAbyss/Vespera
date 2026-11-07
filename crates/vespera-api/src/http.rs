@@ -1,6 +1,8 @@
 //! Bounded HTTP/1 service for an explicitly approved set of local workers.
 
-use std::collections::{BTreeMap, BTreeSet};
+mod auth;
+
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fs::File;
 use std::io::{self, Read};
@@ -11,7 +13,7 @@ use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderMap};
+use hyper::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderMap};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -19,20 +21,17 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
 
 use crate::{BrokerError, Fence, LeaseBroker, MAX_WORKERS};
+use auth::{Authentication, Principal, Proof, SCHEME};
 
 const MAX_ACCESS_FILE: u64 = 128 * 1024;
 const MAX_BODY: usize = 512 * 1024;
 const MAX_CONNECTIONS: usize = 32;
-const TOKEN_LENGTH: usize = 64;
-
-type Token = [u8; TOKEN_LENGTH];
 type Reply = Response<Full<Bytes>>;
 
 #[derive(Debug, thiserror::Error)]
@@ -43,9 +42,9 @@ pub enum ServerError {
     AccessIo(io::Error),
     #[error("worker access file is invalid or exceeds 128 KiB")]
     AccessFormat,
-    #[error("worker credential reference is invalid, missing or contains an invalid token")]
+    #[error("credential reference is invalid, missing or contains an invalid signing key")]
     Credential,
-    #[error("each worker and the operator must have a distinct token")]
+    #[error("each worker and the operator must have a distinct signing key")]
     DuplicateCredential,
     #[error(transparent)]
     Broker(#[from] BrokerError),
@@ -69,8 +68,7 @@ struct WorkerAccess {
 }
 
 struct Service {
-    operator: Token,
-    workers: BTreeMap<AgentId, Token>,
+    auth: Authentication,
     broker: LeaseBroker,
 }
 
@@ -89,48 +87,22 @@ impl Service {
             return Err(ServerError::AccessFormat);
         }
         let mut service = Self {
-            operator: read_token(&policy.operator_token_env)?,
-            workers: BTreeMap::new(),
+            auth: Authentication::new(),
             broker: LeaseBroker::default(),
         };
+        service
+            .auth
+            .approve(Principal::Operator, &policy.operator_token_env)?;
         for worker in policy.workers {
-            let token = read_token(&worker.token_env)?;
-            if service.operator.ct_eq(&token).into()
-                || service
-                    .workers
-                    .values()
-                    .any(|other| other.ct_eq(&token).into())
-            {
-                return Err(ServerError::DuplicateCredential);
-            }
             service
                 .broker
                 .approve_worker(worker.id, worker.capabilities)?;
-            service.workers.insert(worker.id, token);
+            service
+                .auth
+                .approve(Principal::Worker(worker.id), &worker.token_env)?;
         }
         Ok(service)
     }
-}
-
-fn read_token(name: &str) -> Result<Token, ServerError> {
-    let mut chars = name.bytes();
-    if !chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
-        || !chars.all(|c| c.is_ascii_alphanumeric() || c == b'_')
-    {
-        return Err(ServerError::Credential);
-    }
-    let value = std::env::var(name).map_err(|_| ServerError::Credential)?;
-    token(value.as_bytes()).ok_or(ServerError::Credential)
-}
-
-fn token(bytes: &[u8]) -> Option<Token> {
-    let token: Token = bytes.try_into().ok()?;
-    token
-        .iter()
-        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
-        .then_some(token)
 }
 
 /// A bound loopback listener with an in-memory lease broker.
@@ -229,59 +201,45 @@ async fn dispatch(
 }
 
 async fn handle(state: &Mutex<Service>, request: Request<Incoming>) -> Result<Reply, HttpError> {
-    let operator = match request.uri().path() {
-        "/v1/operator" => true,
-        "/v1/worker" => false,
+    let (parts, body) = request.into_parts();
+    let path = parts.uri.path();
+    let expected_method = match path {
+        "/v2/session" => Method::GET,
+        "/v2/operator" | "/v2/worker" => Method::POST,
         _ => return Err(HttpError(StatusCode::NOT_FOUND, "unknown_route")),
     };
-    if request.method() != Method::POST {
+    if parts.method != expected_method {
         return Err(HttpError(
             StatusCode::METHOD_NOT_ALLOWED,
-            "method_not_allowed",
+            if expected_method == Method::GET {
+                "expected_get"
+            } else {
+                "expected_post"
+            },
         ));
     }
-    if request.uri().query().is_some() {
+    if parts.uri.query().is_some() {
         return Err(HttpError(StatusCode::BAD_REQUEST, "unexpected_query"));
     }
-    let supplied = bearer(request.headers()).ok_or(UNAUTHORIZED)?;
-    if operator {
-        if !bool::from(state.lock().await.operator.ct_eq(&supplied)) {
-            return Err(UNAUTHORIZED);
-        }
-        let operation = decode(request).await?;
-        operate(&mut *state.lock().await, operation)
-    } else {
-        let worker = state
-            .lock()
-            .await
-            .workers
-            .iter()
-            .fold(None, |matched, (id, token)| {
-                if token.ct_eq(&supplied).into() {
-                    Some(*id)
-                } else {
-                    matched
-                }
-            })
-            .ok_or(UNAUTHORIZED)?;
-        let operation = decode(request).await?;
-        work(&mut state.lock().await.broker, worker, operation)
+    if path == "/v2/session" {
+        return Ok(reply(StatusCode::OK, &state.lock().await.auth.session()));
+    }
+    let proof = Proof::parse(&parts.headers).ok_or(UNAUTHORIZED)?;
+    let principal = proof.principal;
+    if (path == "/v2/operator") != (principal == Principal::Operator) {
+        return Err(UNAUTHORIZED);
+    }
+    let bytes = read_body(&parts.headers, body).await?;
+    let mut service = state.lock().await;
+    service.auth.verify(proof, path, &bytes)?;
+    match principal {
+        Principal::Operator => operate(&mut service, decode(&bytes)?),
+        Principal::Worker(worker) => work(&mut service.broker, worker, decode(&bytes)?),
     }
 }
 
-fn bearer(headers: &HeaderMap) -> Option<Token> {
-    let mut values = headers.get_all(AUTHORIZATION).iter();
-    let value = values.next()?.as_bytes();
-    let separator = value.iter().position(|&c| c == b' ')?;
-    if values.next().is_some() || !value[..separator].eq_ignore_ascii_case(b"bearer") {
-        return None;
-    }
-    token(&value[separator + 1..])
-}
-
-async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, HttpError> {
-    if request
-        .headers()
+async fn read_body(headers: &HeaderMap, body: Incoming) -> Result<Bytes, HttpError> {
+    if headers
         .get(CONTENT_TYPE)
         .is_none_or(|value| value != "application/json")
     {
@@ -290,7 +248,7 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Ht
             "expected_json",
         ));
     }
-    let bytes = Limited::new(request.into_body(), MAX_BODY)
+    let bytes = Limited::new(body, MAX_BODY)
         .collect()
         .await
         .map_err(|error| {
@@ -301,7 +259,11 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Ht
             }
         })?
         .to_bytes();
-    serde_json::from_slice(&bytes).map_err(|_| HttpError(StatusCode::BAD_REQUEST, "invalid_json"))
+    Ok(bytes)
+}
+
+fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, HttpError> {
+    serde_json::from_slice(bytes).map_err(|_| HttpError(StatusCode::BAD_REQUEST, "invalid_json"))
 }
 
 fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, HttpError> {
@@ -345,7 +307,7 @@ fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, H
             broker
                 .revoke_worker(worker_id)
                 .map_err(|_| HttpError(StatusCode::NOT_FOUND, "unknown_worker"))?;
-            service.workers.remove(&worker_id);
+            service.auth.revoke(worker_id);
             reply(StatusCode::NO_CONTENT, &())
         }
     };
@@ -383,13 +345,17 @@ impl HttpError {
         if self.0 == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 hyper::header::WWW_AUTHENTICATE,
-                hyper::header::HeaderValue::from_static("Bearer"),
+                hyper::header::HeaderValue::from_static(SCHEME),
             );
         }
         if self.0 == StatusCode::METHOD_NOT_ALLOWED {
             response.headers_mut().insert(
                 hyper::header::ALLOW,
-                hyper::header::HeaderValue::from_static("POST"),
+                hyper::header::HeaderValue::from_static(if self.1 == "expected_get" {
+                    "GET"
+                } else {
+                    "POST"
+                }),
             );
         }
         response

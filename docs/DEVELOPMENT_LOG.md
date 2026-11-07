@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Replay-resistant worker HTTP authentication
+
+The loopback service checkpoint `58837796c27b7e59f013f4ffaaa6800629dc93e5` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42337036931). HTTP v2 replaces the original bearer endpoints with HMAC-SHA256 proofs bound to the method, route, principal, server session, monotonic issue time, nonce and exact body bytes. Each verified nonce is consumed before broker execution under the same lock. The 128-slot cache per principal preserves live nonce entries and applies backpressure. A new server session invalidates old proofs. Ring was already present in the lockfile.
+
+The 201-test offline Windows suite, formatting, strict Clippy and rustdoc, optimized workspace build and release auth/broker/CLI tests passed. Tests cover concurrent duplicate delivery, body tampering, key/identity mismatch, retired bearer routes, expiration, server sessions and saturated-cache behavior. The updated PowerShell guide completed submit, claim, complete and inspect using .NET HMAC.
+
+Existing policy file field names still work. Clients must move to v2 and use fresh keys if those keys were previously used as bearer credentials. The server still binds only to loopback and uses plaintext HTTP with unsigned responses. Keys and broker state are process-local. Next is the native client SDK, followed by authorized network events, durable reconciliation and protected remote transport.
+
 ## 2026-11-06 — Authenticated loopback worker HTTP service
 
 Verified implementation checkpoint `58837796c27b7e59f013f4ffaaa6800629dc93e5` is on `origin/main` and is the repository's default branch tip at publication. [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42337036931) was in progress when this checkpoint was recorded.

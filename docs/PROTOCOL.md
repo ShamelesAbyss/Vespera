@@ -2,17 +2,41 @@
 
 ## Implemented loopback worker API
 
-Launch the broker with `vespera serve --access-file <path>`. Clients send HTTP/1 POST requests to one of two versioned endpoints with `Content-Type: application/json` and `Authorization: Bearer <token>`. The access file approves worker UUIDs and their capability sets at startup. Workers derive their identity from their credential and cannot enroll or amend their grants over HTTP. Setup and a working PowerShell example are in the [CLI reference](CLI.md#external-worker-service).
+Launch the broker with `vespera serve --access-file <path>`. The access file approves worker UUIDs and their capability sets at startup. Workers authenticate with a key assigned to their identity. Setup and a working PowerShell example are in the [CLI reference](CLI.md#external-worker-service).
+
+### Request authentication
+
+1. Fetch `GET /v2/session` without credentials. The response has `session_id` (a UUID unique to the running process) and `elapsed_ms` (milliseconds on the server's monotonic clock).
+2. Set `principal` to `operator` or the approved worker UUID. Copy `session_id` and `elapsed_ms` into `session` and `issued_ms`. Generate a fresh random UUID for `nonce`. Use lowercase hyphenated UUIDs and a decimal integer without leading zeros for `issued_ms`.
+3. Compute HMAC-SHA256 with the 32-byte key decoded from its 64-character lowercase hexadecimal representation. The signed message is the following UTF-8 prefix, with a single LF after every line, followed immediately by the exact JSON body bytes. Use the full literal path, without a query string.
+
+```text
+Vespera-HMAC-SHA256
+POST
+<path>
+<principal>
+<session>
+<issued_ms>
+<nonce>
+```
+
+4. Send the signed body with `Content-Type: application/json` and `Authorization: Vespera-HMAC-SHA256 <principal>:<session>:<issued_ms>:<nonce>:<mac>`. Encode `mac` as 64 lowercase hex characters. Sign the serialized body once and send the same bytes, including any whitespace.
+
+The server accepts proofs issued in its current session with an age below 30 seconds. It consumes each verified nonce under the same lock that serializes task operations. Replays receive 401. Each principal has 128 slots for unexpired proofs. A full cache returns 429 without evicting a live nonce. Each application retry needs a fresh proof even when its task ID or completion fence stays the same.
+
+The original loopback bearer endpoints under `/v1` have been retired. Use fresh keys when migrating from the bearer checkpoint. The access file retains its original `operator_token_env` and `token_env` field names.
+
+### Operator and worker actions
 
 | Path | `action` | Additional JSON fields | Success |
 | --- | --- | --- | --- |
-| `/v1/operator` | `submit` | `task_id`, `prompt`, `required_capabilities`, `eligible_workers`, `lifetime_seconds`, `max_attempts` | 201 with `task_id` and `state` |
-| `/v1/operator` | `inspect` | `task_id` | 200 with `state` and `result` (nullable) |
-| `/v1/operator` | `cancel` | `task_id` | 200 with resulting `state` |
-| `/v1/operator` | `revoke` | `worker_id` | 204 |
-| `/v1/worker` | `claim` | None | 200 with `task`, `fence` and `expires_in_ms`, or 204 when no work is eligible |
-| `/v1/worker` | `renew` | `fence` | 200 with `expires_in_ms` |
-| `/v1/worker` | `complete` | `fence`, `content` | 200 with `worker`, `fence` and `content` |
+| `/v2/operator` | `submit` | `task_id`, `prompt`, `required_capabilities`, `eligible_workers`, `lifetime_seconds`, `max_attempts` | 201 with `task_id` and `state` |
+| `/v2/operator` | `inspect` | `task_id` | 200 with `state` and `result` (nullable) |
+| `/v2/operator` | `cancel` | `task_id` | 200 with resulting `state` |
+| `/v2/operator` | `revoke` | `worker_id` | 204 |
+| `/v2/worker` | `claim` | None | 200 with `task`, `fence` and `expires_in_ms`, or 204 when no work is eligible |
+| `/v2/worker` | `renew` | `fence` | 200 with `expires_in_ms` |
+| `/v2/worker` | `complete` | `fence`, `content` | 200 with `worker`, `fence` and `content` |
 
 IDs are UUID strings. Capabilities are strings and capability sets and worker allowlists are JSON arrays. The claimed `task` contains `id`, `prompt`, `required_capabilities` and `state`. Task states are `queued`, `running`, `completed`, `failed` and `cancelled`. A `fence` contains `task_id`, `attempt_id` and integer `generation`. Send the entire returned fence unchanged on renewal or completion. After an uncertain submit, inspect by task ID. After an uncertain completion, retry with the same fence and content while the credential remains valid. After an uncertain claim, the lease can expire and become eligible for reassignment.
 
@@ -23,15 +47,16 @@ Application errors carry `{"error":"code"}`.
 | 400 | `invalid_json`, `invalid_input`, `invalid_body`, `unexpected_query` |
 | 401 | `unauthorized` |
 | 404 | `unknown_route`, `unknown_task`, `unknown_worker` |
-| 405 | `method_not_allowed` |
+| 405 | `expected_get`, `expected_post` |
 | 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict` |
 | 413 | `body_limit` |
 | 415 | `expected_json` |
+| 429 | `nonce_capacity` |
 | 503 | `capacity` |
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each token private and use an isolated local account where appropriate. These are reusable bearer credentials and the service uses plaintext HTTP on loopback. Request signing, credential expiry, remote TLS deployment, network events, SDK and durable restart recovery remain open. Rotate credentials by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked.
+Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, network events, SDK and durable restart recovery remain open.
 
 The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
 
@@ -45,7 +70,7 @@ Registration is an authorized control-plane operation, not anonymous self-enroll
 
 Prefer scoped credentials delivered through an approved secret mechanism, with rotation and revocation. Never put credentials in URLs, event payloads, logs, or memory. Authenticate REST requests and WebSocket handshakes; authorize each operation and event subscription independently. Long-lived sessions must notice expiry/revocation and drop access. Loopback deployment still requires a considered authentication policy: local malicious processes are part of the threat model.
 
-Transport protection does not alone prevent application replay. Bind authority to principal, method/operation, scope, and an accepted time window; any future signed-request scheme must include a nonce/request ID and reject reused authentication material. The exact credential/signature scheme remains undecided; do not claim one exists. Task lease tokens are scoped authority for an attempt, not reusable general agent credentials.
+Any future remote transport needs application replay protection with authenticated principal, operation, scope and an accepted time window. The local HTTP protocol applies these checks using a session and request nonce. Task lease fences convey authority for an attempt when presented by its authenticated owner.
 
 ## REST operation groups — draft, not installed routes
 

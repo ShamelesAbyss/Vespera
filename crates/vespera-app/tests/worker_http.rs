@@ -4,7 +4,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use reqwest::{Client, Response, StatusCode};
+use ring::hmac;
 use serde_json::{Value, json};
+use uuid::Uuid;
 use vespera_core::{AgentId, TaskId};
 
 const OPERATOR: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -24,14 +26,67 @@ impl Drop for Process {
     }
 }
 
-async fn post(client: &Client, base: &str, role: &str, token: &str, body: Value) -> Response {
-    client
-        .post(format!("{base}/v1/{role}"))
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-        .unwrap()
+struct Wire {
+    client: Client,
+    base: String,
+    first: AgentId,
+    second: AgentId,
+}
+
+impl Wire {
+    async fn sign(&self, role: &str, principal: &str, token: &str, body: &str) -> String {
+        let session: Value = self
+            .client
+            .get(format!("{}/v2/session", self.base))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let session_id = session["session_id"].as_str().unwrap();
+        let elapsed = session["elapsed_ms"].as_u64().unwrap();
+        let nonce = Uuid::new_v4();
+        let key: Vec<_> = (0..token.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&token[i..i + 2], 16).unwrap())
+            .collect();
+        let bytes = format!(
+            "Vespera-HMAC-SHA256\nPOST\n/v2/{role}\n{principal}\n{session_id}\n{elapsed}\n{nonce}\n{body}"
+        );
+        let signature = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, &key), bytes.as_bytes());
+        let mac = signature
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        format!("Vespera-HMAC-SHA256 {principal}:{session_id}:{elapsed}:{nonce}:{mac}")
+    }
+
+    async fn send(&self, role: &str, auth: &str, body: String) -> Response {
+        self.client
+            .post(format!("{}/v2/{role}", self.base))
+            .header("authorization", auth)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn post(&self, role: &str, token: &str, body: Value) -> Response {
+        let principal = match token {
+            OPERATOR => "operator".into(),
+            FIRST => self.first.to_string(),
+            SECOND => self.second.to_string(),
+            _ => panic!("unknown fixture credential"),
+        };
+        let body = body.to_string();
+        let auth = self.sign(role, &principal, token, &body).await;
+        self.send(role, &auth, body).await
+    }
 }
 
 #[tokio::test]
@@ -76,65 +131,95 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
+    let wire = Wire {
+        client,
+        base,
+        first,
+        second,
+    };
     let submit = json!({
         "action": "submit", "task_id": task, "prompt": "Run one bounded task",
         "required_capabilities": ["text-generation"], "eligible_workers": [first, second],
         "lifetime_seconds": 60, "max_attempts": 2
     });
     let claim = json!({"action": "claim"});
+    let claim_body = claim.to_string();
+    let proof = wire
+        .sign("worker", &first.to_string(), FIRST, &claim_body)
+        .await;
+    let tampered = wire.send("worker", &proof, format!("{claim_body} ")).await;
+    assert_eq!(tampered.status(), StatusCode::UNAUTHORIZED);
+    let (a, b) = tokio::join!(
+        wire.send("worker", &proof, claim_body.clone()),
+        wire.send("worker", &proof, claim_body),
+    );
+    let mut statuses = [a.status().as_u16(), b.status().as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [204, 401]);
+    let impersonation = wire
+        .sign("worker", &second.to_string(), FIRST, &claim.to_string())
+        .await;
     assert_eq!(
-        post(&client, &base, "operator", FIRST, submit.clone())
+        wire.send("worker", &impersonation, claim.to_string())
             .await
             .status(),
         StatusCode::UNAUTHORIZED
     );
+    let old_client = wire
+        .client
+        .post(format!("{}/v1/worker", wire.base))
+        .bearer_auth(FIRST)
+        .json(&claim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_client.status(), StatusCode::NOT_FOUND);
+    let bearer = wire
+        .send("worker", &format!("Bearer {FIRST}"), claim.to_string())
+        .await;
+    assert_eq!(bearer.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
-        post(&client, &base, "worker", OPERATOR, claim.clone())
-            .await
-            .status(),
+        wire.post("operator", FIRST, submit.clone()).await.status(),
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
-        post(&client, &base, "worker", FIRST, claim.clone())
-            .await
-            .status(),
+        wire.post("worker", OPERATOR, claim.clone()).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        wire.post("worker", FIRST, claim.clone()).await.status(),
         StatusCode::NO_CONTENT
     );
-    let spoof = post(
-        &client,
-        &base,
-        "worker",
-        FIRST,
-        json!({"action": "claim", "worker_id": second}),
-    )
-    .await;
+    let spoof = wire
+        .post(
+            "worker",
+            FIRST,
+            json!({"action": "claim", "worker_id": second}),
+        )
+        .await;
     assert_eq!(spoof.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         spoof.json::<Value>().await.unwrap(),
         json!({"error": "invalid_json"})
     );
-    let oversized = client
-        .post(format!("{base}/v1/worker"))
-        .bearer_auth(FIRST)
-        .header("content-type", "application/json")
-        .body(" ".repeat(512 * 1024 + 1))
-        .send()
-        .await
-        .unwrap();
+    let oversized_body = " ".repeat(512 * 1024 + 1);
+    let auth = wire
+        .sign("worker", &first.to_string(), FIRST, &oversized_body)
+        .await;
+    let oversized = wire.send("worker", &auth, oversized_body).await;
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(
-        post(&client, &base, "operator", OPERATOR, submit.clone())
+        wire.post("operator", OPERATOR, submit.clone())
             .await
             .status(),
         StatusCode::CREATED
     );
     assert_eq!(
-        post(&client, &base, "operator", OPERATOR, submit)
-            .await
-            .status(),
+        wire.post("operator", OPERATOR, submit).await.status(),
         StatusCode::CONFLICT
     );
-    let lease = post(&client, &base, "worker", FIRST, claim.clone())
+    let lease = wire
+        .post("worker", FIRST, claim.clone())
         .await
         .error_for_status()
         .unwrap()
@@ -145,29 +230,24 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
     assert_eq!(lease["fence"]["generation"], 1);
     let renew = json!({"action": "renew", "fence": lease["fence"]});
     assert_eq!(
-        post(&client, &base, "worker", SECOND, renew.clone())
-            .await
-            .status(),
+        wire.post("worker", SECOND, renew.clone()).await.status(),
         StatusCode::CONFLICT
     );
     assert_eq!(
-        post(&client, &base, "worker", FIRST, renew).await.status(),
+        wire.post("worker", FIRST, renew).await.status(),
         StatusCode::OK
     );
     let revoke = json!({"action": "revoke", "worker_id": first});
     assert_eq!(
-        post(&client, &base, "operator", OPERATOR, revoke)
-            .await
-            .status(),
+        wire.post("operator", OPERATOR, revoke).await.status(),
         StatusCode::NO_CONTENT
     );
     assert_eq!(
-        post(&client, &base, "worker", FIRST, claim.clone())
-            .await
-            .status(),
+        wire.post("worker", FIRST, claim.clone()).await.status(),
         StatusCode::UNAUTHORIZED
     );
-    let reassigned = post(&client, &base, "worker", SECOND, claim)
+    let reassigned = wire
+        .post("worker", SECOND, claim)
         .await
         .error_for_status()
         .unwrap()
@@ -177,19 +257,21 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
     assert_eq!(reassigned["fence"]["generation"], 2);
     let stale = json!({"action": "complete", "fence": lease["fence"], "content": "stale"});
     assert_eq!(
-        post(&client, &base, "worker", SECOND, stale).await.status(),
+        wire.post("worker", SECOND, stale).await.status(),
         StatusCode::CONFLICT
     );
     let complete =
         json!({"action": "complete", "fence": reassigned["fence"], "content": "accepted"});
-    let accepted = post(&client, &base, "worker", SECOND, complete.clone())
+    let accepted = wire
+        .post("worker", SECOND, complete.clone())
         .await
         .error_for_status()
         .unwrap()
         .json::<Value>()
         .await
         .unwrap();
-    let retried = post(&client, &base, "worker", SECOND, complete)
+    let retried = wire
+        .post("worker", SECOND, complete)
         .await
         .error_for_status()
         .unwrap()
@@ -198,23 +280,21 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
         .unwrap();
     assert_eq!(accepted, retried);
     assert_eq!(accepted["worker"], json!(second));
-    let cancel = post(
-        &client,
-        &base,
-        "operator",
-        OPERATOR,
-        json!({"action": "cancel", "task_id": task}),
-    )
-    .await;
+    let cancel = wire
+        .post(
+            "operator",
+            OPERATOR,
+            json!({"action": "cancel", "task_id": task}),
+        )
+        .await;
     assert_eq!(cancel.json::<Value>().await.unwrap()["state"], "completed");
-    let inspected = post(
-        &client,
-        &base,
-        "operator",
-        OPERATOR,
-        json!({"action": "inspect", "task_id": task}),
-    )
-    .await;
+    let inspected = wire
+        .post(
+            "operator",
+            OPERATOR,
+            json!({"action": "inspect", "task_id": task}),
+        )
+        .await;
     assert_eq!(
         inspected.json::<Value>().await.unwrap(),
         json!({"state": "completed", "result": accepted})
