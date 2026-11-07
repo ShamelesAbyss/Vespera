@@ -18,14 +18,15 @@ use vespera_core::{
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
-    CancellationToken, InferenceProvider, LifecycleCapabilityState, ProviderError,
+    BoundedInferenceRequest, CancellationToken, InferenceProvider, LifecycleCapabilityState,
+    ProviderError,
 };
 
 /// Typed admission and lifecycle failures.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
-    /// Inventory was rebound while this scheduler still has a reservation.
-    #[error("model {model_id} binding changed while a reservation exists; evict before reuse")]
+    /// Inventory differs from a validated request or an existing reservation.
+    #[error("model {model_id} binding differs from the request or reservation")]
     RegistrationChanged {
         /// Target model.
         model_id: ModelId,
@@ -278,6 +279,29 @@ impl ResourceScheduler {
         self.queue.snapshot()
     }
 
+    /// Configured logical context ceiling, not a measured backend allocation.
+    pub fn max_context_tokens(&self) -> u32 {
+        self.policy.budget.max_context_tokens
+    }
+
+    /// Admit an already validated request, fencing its provider-native model binding
+    /// before any lifecycle operation. The admitted context remains exactly the request's.
+    pub async fn admit_request(
+        &self,
+        model_id: ModelId,
+        request: &BoundedInferenceRequest,
+        cancel: CancellationToken,
+    ) -> Result<ScheduledInference, SchedulerError> {
+        self.prepare(
+            model_id,
+            Some(request.context_window_limit()),
+            0,
+            Some(request.model_name()),
+            cancel,
+        )
+        .await
+    }
+
     /// Reject new/queued admissions and wait at most `timeout` for owned permits.
     /// Existing inference is not forcibly stopped or falsely reported as unloaded.
     /// A false return leaves active leases/reservations visible for operator recovery.
@@ -330,6 +354,18 @@ impl ResourceScheduler {
         priority: u8,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
+        self.prepare(model_id, requested_context_tokens, priority, None, cancel)
+            .await
+    }
+
+    async fn prepare(
+        &self,
+        model_id: ModelId,
+        requested_context_tokens: Option<u32>,
+        priority: u8,
+        expected_model_name: Option<&str>,
+        cancel: CancellationToken,
+    ) -> Result<ScheduledInference, SchedulerError> {
         let permit = self
             .queue
             .acquire(priority, &cancel)
@@ -348,6 +384,9 @@ impl ResourceScheduler {
             return Err(SchedulerError::Cancelled);
         }
         let model = self.registry.get_model(model_id).await?;
+        if expected_model_name.is_some_and(|name| name != model.provider_model_identifier) {
+            return Err(SchedulerError::RegistrationChanged { model_id });
+        }
         if !model.available {
             return Err(SchedulerError::ModelUnavailable { model_id });
         }

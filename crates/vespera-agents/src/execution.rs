@@ -186,9 +186,15 @@ impl AgentRuntime {
                     task.clone(),
                     options.context_tokens,
                     owned_cancel.clone(),
-                    Some(owned_cancel.clone()),
+                    Some((owned_cancel.clone(), &options)),
                 )
-                .await?;
+                .await
+                .map_err(|error| match error {
+                    AgentRuntimeError::Scheduler(vespera_scheduler::SchedulerError::Provider(
+                        error,
+                    )) => ExecutionError::Provider(error),
+                    error => ExecutionError::Runtime(error),
+                })?;
             let mut guard = RunGuard {
                 runtime: self.clone(),
                 task_id: task.id,

@@ -314,6 +314,38 @@ async fn fixture() -> (
 }
 
 #[tokio::test]
+async fn validated_request_binding_and_context_are_checked_before_load() {
+    use vespera_providers::{BoundedInferenceRequest, ChatMessage, ChatRole};
+    use vespera_scheduler::SchedulerError;
+    let (scheduler, provider, model, other) = fixture().await;
+    for (name, context) in [(other.to_string(), 512), (model.to_string(), 1024)] {
+        let request = BoundedInferenceRequest::new(
+            name,
+            vec![ChatMessage {
+                role: ChatRole::User,
+                content: "fixture".into(),
+            }],
+            8,
+            context,
+            None,
+            None,
+        )
+        .unwrap();
+        let result = scheduler
+            .admit_request(model, &request, CancellationToken::new())
+            .await;
+        assert!(matches!(
+            result,
+            Err(SchedulerError::RegistrationChanged { .. })
+                | Err(SchedulerError::BudgetExceeded(_))
+        ));
+        assert_eq!(provider.loads.load(Ordering::SeqCst), 0);
+        assert!(scheduler.resident_models().await.is_empty());
+        assert_eq!(scheduler.queue_snapshot().active, 0);
+    }
+}
+
+#[tokio::test]
 async fn failed_or_unsupported_unload_never_frees_memory() {
     use vespera_scheduler::ResidencyState;
     for mode in [0, 2, 3] {

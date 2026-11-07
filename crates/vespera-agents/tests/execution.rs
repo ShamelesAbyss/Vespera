@@ -686,7 +686,7 @@ async fn aborted_managed_execution_releases_owned_lease_and_records_cancellation
 }
 
 #[tokio::test]
-async fn invalid_execution_bounds_never_reach_inference() {
+async fn invalid_execution_bounds_never_load_or_infer() {
     use vespera_agents::{ExecutionError, ExecutionOptions};
     let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
     let id = TaskId::new();
@@ -722,6 +722,8 @@ async fn invalid_execution_bounds_never_reach_inference() {
     ));
     assert_eq!(runtime.get_task(id).await.unwrap().state, TaskState::Failed);
     assert!(provider.requests.lock().unwrap().is_empty());
+    assert_eq!(provider.loads.load(Ordering::SeqCst), 0);
+    assert!(scheduler.resident_models().await.is_empty());
     assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
     assert_eq!(scheduler.queue_snapshot().active, 0);
 }

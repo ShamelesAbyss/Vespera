@@ -123,3 +123,5 @@ completion fencing, queue/load/inference cancellation, absolute deadlines and
 future abort. CLI integration additionally verifies the executable-to-HTTP path
 against both adapter fixtures. This is not live inference evidence for a
 particular installed model/server. See [CLI.md](CLI.md) for actual operation.
+
+Managed execution validates the selected model name, input and output/context bounds before scheduler admission can load a model. Accepted invalid requests become failed history records with no load/reservation. Scheduler request admission fences the validated native name and pins context; current inventory and resource limits are rechecked before lifecycle I/O. Manual preparation remains a lower-level trusted API.

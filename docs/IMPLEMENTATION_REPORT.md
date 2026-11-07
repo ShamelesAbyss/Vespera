@@ -10,8 +10,8 @@ inference. The application library composes these services. The CLI implements
 the complete command contract is in [CLI.md](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-137-test offline suite (one live test ignored), strict Clippy, rustdoc, optimized
-workspace build, and all 21 optimized application/CLI tests. HTTP end-to-end
+140-test offline suite (one live test ignored), strict Clippy, rustdoc, optimized
+workspace build, and all 22 optimized application/CLI tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
 GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoints

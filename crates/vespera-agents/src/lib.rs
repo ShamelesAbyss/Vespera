@@ -695,7 +695,7 @@ impl AgentRuntime {
         mut task: Task,
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
-        managed: Option<CancellationToken>,
+        managed: Option<(CancellationToken, &ExecutionOptions)>,
     ) -> Result<ActiveTaskExecution, AgentRuntimeError> {
         task.validate()?;
         if task.state != TaskState::Queued {
@@ -734,8 +734,8 @@ impl AgentRuntime {
             task.state.transition(TaskState::Running)?;
             state.tasks.insert(task.id, task.clone());
             state.task_assignments.insert(task.id, agent_id);
-            if let Some(token) = managed {
-                state.managed_tasks.insert(task.id, token);
+            if let Some((token, _)) = &managed {
+                state.managed_tasks.insert(task.id, token.clone());
             }
             if let Some(agent) = state.agents.get_mut(&agent_id) {
                 agent.status = AgentStatus::Running;
@@ -761,11 +761,39 @@ impl AgentRuntime {
             }
         };
 
-        let inference = match self
-            .scheduler
-            .admit_and_prepare(resolved_model.model_id, requested_context_tokens, cancel)
-            .await
-        {
+        let admitted = if let Some((_, options)) = managed {
+            let context_tokens = requested_context_tokens.unwrap_or_else(|| {
+                resolved_model
+                    .context_window
+                    .unwrap_or(self.scheduler.max_context_tokens())
+                    .min(self.scheduler.max_context_tokens())
+            });
+            let request = match vespera_providers::BoundedInferenceRequest::new(
+                &resolved_model.provider_model_identifier,
+                vec![vespera_providers::ChatMessage {
+                    role: vespera_providers::ChatRole::User,
+                    content: task.prompt.clone(),
+                }],
+                options.max_output_tokens,
+                context_tokens,
+                options.temperature,
+                None,
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    preparation.failed = true;
+                    return Err(SchedulerError::Provider(error).into());
+                }
+            };
+            self.scheduler
+                .admit_request(resolved_model.model_id, &request, cancel)
+                .await
+        } else {
+            self.scheduler
+                .admit_and_prepare(resolved_model.model_id, requested_context_tokens, cancel)
+                .await
+        };
+        let inference = match admitted {
             Ok(inference) => inference,
             Err(error) => {
                 preparation.failed = !matches!(

@@ -425,6 +425,32 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
 }
 
 #[test]
+fn unusable_model_context_is_rejected_before_preload() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("context_window_tokens = 512", "context_window_tokens = 16");
+    let output = run_fixture_agent(&directory, &config, &["--resume"]);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["task_state"], "failed");
+    assert!(
+        report["cleanup"]["remaining_models"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        fixture
+            .captured()
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/api/version"]
+    );
+}
+
+#[test]
 fn compatible_cli_retains_honest_residency_and_rejects_unconfirmed_unload() {
     for unload in [false, true] {
         let fixture = HttpFixture::new(false);

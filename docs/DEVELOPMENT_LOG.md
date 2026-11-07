@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Validate managed requests before model loading
+
+Previous verified checkpoint: `31fb2eecf07e34c650947225805ac62970ca9522`, pushed. Ubuntu CI [42325403037](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325403037) succeeded; documentation checkpoint `fd6596e82b8cdb52d20038965addca2c622baac7` also passed [42325094343](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325094343).
+
+Managed task preparation now constructs and validates the bounded provider request after selecting the model but before scheduler admission/loading. Default context is derived from model and scheduler ceilings, then pinned explicitly for admission. Invalid output/context/input/model-name bounds record a failed accepted task without a load or retained reservation. Scheduler `admit_request` verifies the validated native name still matches inventory before lifecycle I/O and rechecks current context/budget limits. Existing manual admission remains available for trusted library users; this does not claim that they supplied a valid inference request.
+
+Regressions verify zero loads/reservations for output above context, executable rejection of unusable model context after health only, and pre-load rejection of changed request binding or excessive model context. All 140 offline tests pass (one opt-in live health test ignored), as do formatting, all-target check, strict Clippy, strict rustdoc, release workspace build and 22 optimized app/CLI tests. No extra live model run was needed for this preflight-only behavior. Remaining work includes richer selection, resource overhead/reconciliation, bounded master orchestration, durable memory/events, external agents, simulation, native 3D and experiments.
+
 ## 2026-11-06 — Context-aware native model preparation
 
 Previous verified checkpoint: `fd6596e` (current onboarding and live evidence), pushed. Added provider-port `load_model_with_context` with backward-compatible default behavior and an Ollama override validating the context before HTTP I/O. Scheduler-driven initial loads now transmit the admitted context as `options.num_ctx`; inference already transmitted that same value. Direct legacy preload and unload remain unchanged, and no allocation support is invented for compatible providers.
