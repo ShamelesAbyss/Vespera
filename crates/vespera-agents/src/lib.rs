@@ -22,10 +22,36 @@ use vespera_scheduler::{ResourceScheduler, ScheduledInference, SchedulerError};
 
 mod execution;
 pub use execution::{ExecutionError, ExecutionOptions, TaskExecutionResult};
+mod limits;
+pub use limits::{RuntimeLimits, RuntimeUsage};
 
 /// Error taxonomy for agent runtime operations.
 #[derive(Debug, Error)]
 pub enum AgentRuntimeError {
+    /// Invalid operator capacity policy.
+    #[error("invalid runtime limit: {field}")]
+    InvalidLimits {
+        /// Field name.
+        field: &'static str,
+    },
+    /// Retained record or content bound reached; no partial write was performed.
+    #[error("agent runtime capacity reached: {resource}")]
+    Capacity {
+        /// Bound name.
+        resource: &'static str,
+    },
+    /// Memory identities cannot overwrite previous records.
+    #[error("memory {memory_id} is already recorded")]
+    DuplicateMemory {
+        /// Conflicting memory identity.
+        memory_id: MemoryId,
+    },
+    /// A task reference does not belong to the claimed namespace/participants.
+    #[error("task {task_id} is not an authorized source reference")]
+    TaskReferenceDenied {
+        /// Requested source identity.
+        task_id: TaskId,
+    },
     /// Managed provider work must stop before its lease can be released.
     #[error("task {task_id} has managed inference in progress; request cancellation instead")]
     ExecutionInProgress {
@@ -150,6 +176,8 @@ impl fmt::Debug for ActiveTaskExecution {
 
 #[derive(Debug, Default)]
 struct RuntimeState {
+    retained_content_bytes: usize,
+    memory_ids: BTreeSet<MemoryId>,
     agents: BTreeMap<AgentId, AgentDefinition>,
     memories: BTreeMap<AgentId, Vec<AgentMemoryEntry>>,
     inbox: BTreeMap<AgentId, Vec<AgentMessage>>,
@@ -209,6 +237,7 @@ impl RuntimeState {
 /// Central agent runtime coordinating identity, permissions, memory, and scheduled execution.
 #[derive(Clone)]
 pub struct AgentRuntime {
+    limits: RuntimeLimits,
     registry: Arc<ModelRegistry>,
     scheduler: Arc<ResourceScheduler>,
     state: Arc<Mutex<RuntimeState>>,
@@ -228,9 +257,33 @@ impl AgentRuntime {
     #[must_use]
     pub fn new(registry: Arc<ModelRegistry>, scheduler: Arc<ResourceScheduler>) -> Self {
         Self {
+            limits: RuntimeLimits::default(),
             registry,
             scheduler,
             state: Arc::new(Mutex::new(RuntimeState::default())),
+        }
+    }
+
+    /// Create a runtime with explicit positive retained-data bounds.
+    pub fn with_limits(
+        registry: Arc<ModelRegistry>,
+        scheduler: Arc<ResourceScheduler>,
+        limits: RuntimeLimits,
+    ) -> Result<Self, AgentRuntimeError> {
+        limits.validate()?;
+        Ok(Self {
+            limits,
+            ..Self::new(registry, scheduler)
+        })
+    }
+
+    /// Inspect local record counts and logical retained text, not measured process memory.
+    pub async fn usage_snapshot(&self) -> RuntimeUsage {
+        let state = lock_state(&self.state);
+        RuntimeUsage {
+            agents: state.agents.len(),
+            tasks: state.tasks.len(),
+            retained_content_bytes: state.retained_content_bytes,
         }
     }
 
@@ -249,6 +302,12 @@ impl AgentRuntime {
         if state.agents.contains_key(&agent_id) {
             return Err(AgentRuntimeError::DuplicateAgent { agent_id });
         }
+
+        if state.agents.len() >= self.limits.max_agents {
+            return Err(limits::capacity("agents"));
+        }
+        self.limits
+            .reserve(&mut state, limits::agent_bytes(&agent)?)?;
 
         state.agents.insert(agent_id, agent);
         state.memories.entry(agent_id).or_default();
@@ -306,7 +365,7 @@ impl AgentRuntime {
         let mut state = lock_state(&self.state);
         let agent = state
             .agents
-            .get_mut(&agent_id)
+            .get(&agent_id)
             .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
         if agent.status == AgentStatus::Running {
             return Err(AgentRuntimeError::InvalidAgentState {
@@ -314,7 +373,21 @@ impl AgentRuntime {
                 status: agent.status,
             });
         }
-        agent.model_policy = new_policy;
+        let old_size = limits::agent_bytes(agent)?;
+        let mut updated = agent.clone();
+        updated.model_policy = new_policy;
+        let new_size = limits::agent_bytes(&updated)?;
+        self.limits.check_record(new_size)?;
+        let total = state
+            .retained_content_bytes
+            .checked_sub(old_size)
+            .and_then(|bytes| bytes.checked_add(new_size))
+            .ok_or_else(|| limits::capacity("retained_content_bytes"))?;
+        if total > self.limits.max_retained_content_bytes {
+            return Err(limits::capacity("retained_content_bytes"));
+        }
+        state.retained_content_bytes = total;
+        state.agents.insert(agent_id, updated);
         Ok(())
     }
 
@@ -345,6 +418,24 @@ impl AgentRuntime {
                 permission: Permission::MemoryWrite,
             });
         }
+
+        if state.memory_ids.contains(&memory_id) {
+            return Err(AgentRuntimeError::DuplicateMemory { memory_id });
+        }
+        if let Some(task_id) = source_task_id
+            && state.task_assignments.get(&task_id) != Some(&agent_id)
+        {
+            return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
+        }
+        if state
+            .memories
+            .get(&agent_id)
+            .is_some_and(|entries| entries.len() >= self.limits.max_memories_per_agent)
+        {
+            return Err(limits::capacity("agent_memories"));
+        }
+        self.limits.reserve(&mut state, content.len())?;
+        state.memory_ids.insert(memory_id);
 
         let tick = state.next_tick();
         let entry = AgentMemoryEntry {
@@ -431,6 +522,23 @@ impl AgentRuntime {
                 agent_id: to_agent_id,
             });
         }
+
+        if let Some(task_id) = task_id
+            && !state
+                .task_assignments
+                .get(&task_id)
+                .is_some_and(|owner| *owner == from_agent_id || *owner == to_agent_id)
+        {
+            return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
+        }
+        if state
+            .inbox
+            .get(&to_agent_id)
+            .is_some_and(|entries| entries.len() >= self.limits.max_messages_per_agent)
+        {
+            return Err(limits::capacity("agent_inbox"));
+        }
+        self.limits.reserve(&mut state, content.len())?;
 
         let tick = state.next_tick();
         let message = AgentMessage {
@@ -530,6 +638,11 @@ impl AgentRuntime {
         if state.tasks.contains_key(&task_id) {
             return Err(AgentRuntimeError::TaskConflict { task_id });
         }
+        if state.tasks.len() >= self.limits.max_tasks {
+            return Err(limits::capacity("tasks"));
+        }
+        self.limits
+            .reserve(&mut state, limits::task_bytes(&task)?)?;
         state.tasks.insert(task_id, task);
         state.task_assignments.insert(task_id, to_agent_id);
         Ok(task_id)
@@ -610,6 +723,13 @@ impl AgentRuntime {
                 && (existing != &task || state.task_assignments.get(&task.id) != Some(&agent_id))
             {
                 return Err(AgentRuntimeError::TaskConflict { task_id: task.id });
+            }
+            if !state.tasks.contains_key(&task.id) {
+                if state.tasks.len() >= self.limits.max_tasks {
+                    return Err(limits::capacity("tasks"));
+                }
+                self.limits
+                    .reserve(&mut state, limits::task_bytes(&task)?)?;
             }
             task.state.transition(TaskState::Running)?;
             state.tasks.insert(task.id, task.clone());

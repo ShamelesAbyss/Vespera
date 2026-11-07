@@ -1,8 +1,10 @@
 # Individual memory
 
-## Current: addressing and record types, no storage
+## Current: bounded in-process records, no durable storage
 
-Milestone 1 supplies `MemoryNamespace`, `MemoryLayer`, and `MemoryRecord`. The namespace derives solely from an agent UUID and exposes a logical relative address `agents/<agent-uuid>`; it does not create directories or access files. **There is no database, migration, retrieval engine, consolidation worker, or embedding service in this build.** Model/provider identifiers and display names never own a namespace.
+The core supplies `MemoryNamespace`, `MemoryLayer`, and `MemoryRecord`; the agent runtime supplies permission-gated per-agent in-process memory records and layer filtering. The namespace derives solely from an agent UUID and exposes a logical relative address `agents/<agent-uuid>`; it does not create directories or access files. **There is no database, migration, full-text retrieval engine, consolidation worker, or embedding service in this build.** Model/provider identifiers and display names never own a namespace.
+
+Runtime writes reject duplicate memory IDs and source-task references not assigned to the owner. Record/count/aggregate text quotas reject overflow before mutation; no records are silently pruned. Defaults and exact accounting are documented in [AGENTS.md](AGENTS.md). A valid task reference establishes a link to accepted runtime history, not the truth of content or proof that the task completed. Runtime records use a logical tick; the core `MemoryRecord` timestamp contract below is a separate data type, not a persisted schema.
 
 Current agent-writable categories are `long_term`, `episodic`, `working`, `relationship`, `goal`, and `observation`. Identity is intentionally absent: identity/configuration remain control-plane owned. A record carries a memory UUID, owner agent UUID, layer, nonempty content, caller-supplied Unix-millisecond creation time, and optional source task UUID. This records supplied data, not verified provenance or time.
 

@@ -10,7 +10,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 4: registry | In-process identity/update/removal and effective-health behavior implemented with deterministic expiry, recovery, timeout, cancellation and stale-result fencing tests. Live provider interoperability and continuous application polling remain unverified/unwired. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |
 | 6: master orchestration | Pending; no bounded multi-step orchestrator yet. |
-| 7: agents | Partial: identities, permission-gated records/messages, delegation, owned actual inference, response validation and queue/load/inference cancellation/abort tested. Application wiring, bounded histories and persistence remain. See [AGENTS.md](AGENTS.md). |
+| 7: agents | Partial: identities, bounded permission-gated records/messages/history, source ownership, delegation, owned actual inference, response validation and queue/load/inference cancellation/abort tested. Application wiring, retention and persistence remain. See [AGENTS.md](AGENTS.md). |
 | 8–10: memory/events/interoperability | Domain contracts and draft documents only; durable services/server/SDK pending. |
 | 11: simulation | Pending; independent deterministic world engine required. |
 | 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |

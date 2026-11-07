@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-06 — Bounded retained runtime data and source ownership
+
+Previous verified checkpoint: `566f6d715e0dfb23e9204e4d72acc7b63910f2bb`, pushed to the recovery branch.
+
+Added operator-configurable positive `RuntimeLimits` for registered agents, task history, per-agent memory/inboxes, record text and aggregate retained text. Defaults are 64 agents, 1,024 tasks, 256 memory/inbox records per agent, 64 KiB per textual record and 64 MiB of retained text. This is logical storage accounting, not measured RAM; allocation/provider/caller-clone overhead is explicitly separate. Inspection exposes counts and retained content. Rebinding replaces the correct text charge transactionally, and dispatch of an accepted delegated task does not charge a second history record.
+
+Writes validate all applicable ownership/duplicate/capacity checks before mutation. Memory UUIDs cannot be duplicated across namespaces; task provenance must reference accepted history assigned to the memory owner. Message correlations must reference a task assigned to the sender or recipient. Old tests used dangling advisory IDs only to exercise inbox permission checks; they now use uncorrelated messages, with dedicated new tests covering authorized and rejected task links. A validated reference is not a claim that content is true or the task completed.
+
+New regressions cover record/count limits, aggregate quota rollback, memory-ID preservation after rejected writes, logical ordering, policy-rebinding accounting, source ownership and dispatch at a full task-history bound. Validation passed: formatting, all-target workspace check, all 128 tests with one live test ignored, strict Clippy, rustdoc and optimized workspace build. No automatic deletion/pruning or restart durability is claimed. Next work: compose the validated provider/registry/scheduler/agent path into executable CLI operations, followed by orchestration and durable storage/events.
+
 ## 2026-11-06 — Actual bounded agent inference and managed execution ownership
 
 Previous verified checkpoint: `0eb16a7cd8c72f5698787e3bec71f7fba8534b2c`, pushed to the recovery branch.

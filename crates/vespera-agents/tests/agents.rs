@@ -13,6 +13,10 @@ use vespera_model_registry::ModelRegistry;
 use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
 
 fn build_runtime() -> AgentRuntime {
+    build_runtime_with_limits(vespera_agents::RuntimeLimits::default())
+}
+
+fn build_runtime_with_limits(limits: vespera_agents::RuntimeLimits) -> AgentRuntime {
     let registry = Arc::new(ModelRegistry::new());
     let policy = SchedulingPolicy {
         queue: vespera_scheduler::QueuePolicy::default(),
@@ -26,7 +30,7 @@ fn build_runtime() -> AgentRuntime {
         evict_idle_on_pressure: true,
     };
     let scheduler = Arc::new(ResourceScheduler::new(registry.clone(), policy));
-    AgentRuntime::new(registry, scheduler)
+    AgentRuntime::with_limits(registry, scheduler, limits).unwrap()
 }
 
 fn sample_agent(
@@ -231,12 +235,7 @@ async fn enforces_permissions_for_memory_messaging_delegation_and_simulation() {
         .expect("simulation action authorized");
 
     runtime
-        .send_message(
-            peer_id,
-            restricted_id,
-            "directive".to_string(),
-            Some(task_id),
-        )
+        .send_message(peer_id, restricted_id, "directive".to_string(), None)
         .await
         .expect("message sent");
 
@@ -248,7 +247,7 @@ async fn enforces_permissions_for_memory_messaging_delegation_and_simulation() {
         })
     ));
     runtime
-        .send_message(peer_id, peer_id, "directive".to_string(), Some(task_id))
+        .send_message(peer_id, peer_id, "directive".to_string(), None)
         .await
         .unwrap();
     let inbox = runtime.inbox_messages(peer_id).await.unwrap();
@@ -269,4 +268,373 @@ async fn enforces_permissions_for_memory_messaging_delegation_and_simulation() {
         .await
         .expect("delegation succeeds");
     assert_eq!(delegated_id, task_id);
+}
+
+#[tokio::test]
+async fn record_count_and_size_caps_reject_without_partial_mutation() {
+    use vespera_agents::RuntimeLimits;
+    let runtime = build_runtime_with_limits(RuntimeLimits {
+        max_agents: 2,
+        max_tasks: 1,
+        max_memories_per_agent: 1,
+        max_messages_per_agent: 1,
+        max_record_bytes: 512,
+        ..Default::default()
+    });
+    let a = AgentId::new();
+    let b = AgentId::new();
+    let model = ModelId::new();
+    let permissions = BTreeSet::from([
+        Permission::MemoryRead,
+        Permission::MemoryWrite,
+        Permission::Communicate,
+        Permission::Delegate,
+    ]);
+    for id in [a, b] {
+        runtime
+            .register_agent(sample_agent(
+                id,
+                "fixture",
+                model,
+                permissions.clone(),
+                AgentStatus::Idle,
+            ))
+            .await
+            .unwrap();
+    }
+    let before = runtime.usage_snapshot().await;
+    assert!(matches!(
+        runtime
+            .register_agent(sample_agent(
+                AgentId::new(),
+                "third",
+                model,
+                permissions,
+                AgentStatus::Idle
+            ))
+            .await,
+        Err(AgentRuntimeError::Capacity { resource: "agents" })
+    ));
+    assert_eq!(runtime.usage_snapshot().await, before);
+    let memory = MemoryId::new();
+    runtime
+        .write_memory(a, memory, MemoryLayer::Working, "first".into(), None)
+        .await
+        .unwrap();
+    let before = runtime.usage_snapshot().await;
+    assert!(matches!(
+        runtime
+            .write_memory(b, memory, MemoryLayer::Working, "duplicate".into(), None)
+            .await,
+        Err(AgentRuntimeError::DuplicateMemory { .. })
+    ));
+    assert!(matches!(
+        runtime
+            .write_memory(
+                a,
+                MemoryId::new(),
+                MemoryLayer::Working,
+                "second".into(),
+                None
+            )
+            .await,
+        Err(AgentRuntimeError::Capacity {
+            resource: "agent_memories"
+        })
+    ));
+    assert!(matches!(
+        runtime
+            .write_memory(
+                b,
+                MemoryId::new(),
+                MemoryLayer::Working,
+                "x".repeat(513),
+                None
+            )
+            .await,
+        Err(AgentRuntimeError::Capacity {
+            resource: "record_bytes"
+        })
+    ));
+    assert_eq!(runtime.usage_snapshot().await, before);
+    runtime
+        .send_message(a, b, "first".into(), None)
+        .await
+        .unwrap();
+    let before = runtime.usage_snapshot().await;
+    assert!(matches!(
+        runtime.send_message(a, b, "second".into(), None).await,
+        Err(AgentRuntimeError::Capacity {
+            resource: "agent_inbox"
+        })
+    ));
+    assert_eq!(runtime.inbox_messages(b).await.unwrap().len(), 1);
+    assert_eq!(runtime.usage_snapshot().await, before);
+    let task = Task {
+        id: TaskId::new(),
+        prompt: "p".into(),
+        required_capabilities: BTreeSet::new(),
+        state: TaskState::Queued,
+    };
+    runtime.delegate_task(a, b, task.clone()).await.unwrap();
+    let before = runtime.usage_snapshot().await;
+    assert!(matches!(
+        runtime
+            .delegate_task(
+                a,
+                b,
+                Task {
+                    id: TaskId::new(),
+                    ..task
+                }
+            )
+            .await,
+        Err(AgentRuntimeError::Capacity { resource: "tasks" })
+    ));
+    assert_eq!(runtime.usage_snapshot().await, before);
+}
+
+#[tokio::test]
+async fn aggregate_quota_failure_preserves_memory_identity_and_logical_order() {
+    use vespera_agents::RuntimeLimits;
+    let runtime = build_runtime_with_limits(RuntimeLimits {
+        max_retained_content_bytes: 256,
+        max_record_bytes: 512,
+        ..Default::default()
+    });
+    let a = AgentId::new();
+    runtime
+        .register_agent(sample_agent(
+            a,
+            "fixture",
+            ModelId::new(),
+            BTreeSet::from([Permission::MemoryRead, Permission::MemoryWrite]),
+            AgentStatus::Idle,
+        ))
+        .await
+        .unwrap();
+    let before = runtime.usage_snapshot().await;
+    let memory = MemoryId::new();
+    assert!(matches!(
+        runtime
+            .write_memory(a, memory, MemoryLayer::Observation, "x".repeat(256), None)
+            .await,
+        Err(AgentRuntimeError::Capacity {
+            resource: "retained_content_bytes"
+        })
+    ));
+    assert_eq!(runtime.usage_snapshot().await, before);
+    let entry = runtime
+        .write_memory(a, memory, MemoryLayer::Observation, "small".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(entry.logical_tick, 1);
+    assert_eq!(
+        runtime.usage_snapshot().await.retained_content_bytes,
+        before.retained_content_bytes + 5
+    );
+}
+
+#[tokio::test]
+async fn policy_rebinding_updates_content_quota_transactionally() {
+    use vespera_agents::RuntimeLimits;
+    let runtime = build_runtime_with_limits(RuntimeLimits {
+        max_retained_content_bytes: 5,
+        max_record_bytes: 128,
+        ..Default::default()
+    });
+    let a = AgentId::new();
+    let model = ModelId::new();
+    let mut agent = sample_agent(a, "a", model, BTreeSet::new(), AgentStatus::Idle);
+    agent.identity.role = "r".into();
+    agent.identity.description.clear();
+    agent.identity.personality.clear();
+    agent.identity.goals.clear();
+    runtime.register_agent(agent).await.unwrap();
+    assert_eq!(runtime.usage_snapshot().await.retained_content_bytes, 2);
+    assert!(matches!(
+        runtime
+            .rebind_model_policy(
+                a,
+                ModelSelectionPolicy::Capability {
+                    required: BTreeSet::from(["xxxx".parse().unwrap()])
+                }
+            )
+            .await,
+        Err(AgentRuntimeError::Capacity { .. })
+    ));
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().model_policy,
+        ModelSelectionPolicy::Fixed { model_id: model }
+    );
+    assert_eq!(runtime.usage_snapshot().await.retained_content_bytes, 2);
+    runtime
+        .rebind_model_policy(
+            a,
+            ModelSelectionPolicy::Capability {
+                required: BTreeSet::from(["x".parse().unwrap()]),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(runtime.usage_snapshot().await.retained_content_bytes, 3);
+    runtime
+        .rebind_model_policy(a, ModelSelectionPolicy::Fixed { model_id: model })
+        .await
+        .unwrap();
+    assert_eq!(runtime.usage_snapshot().await.retained_content_bytes, 2);
+}
+
+#[tokio::test]
+async fn memory_and_message_task_references_require_known_appropriate_owners() {
+    let runtime = build_runtime();
+    let a = AgentId::new();
+    let b = AgentId::new();
+    let c = AgentId::new();
+    let model = ModelId::new();
+    let permissions = BTreeSet::from([
+        Permission::MemoryRead,
+        Permission::MemoryWrite,
+        Permission::Communicate,
+        Permission::Delegate,
+    ]);
+    for id in [a, b, c] {
+        runtime
+            .register_agent(sample_agent(
+                id,
+                "fixture",
+                model,
+                permissions.clone(),
+                AgentStatus::Idle,
+            ))
+            .await
+            .unwrap();
+    }
+    let source = Task {
+        id: TaskId::new(),
+        prompt: "source task".into(),
+        required_capabilities: BTreeSet::new(),
+        state: TaskState::Queued,
+    };
+    runtime.delegate_task(a, b, source.clone()).await.unwrap();
+    let before = runtime.usage_snapshot().await;
+    assert!(matches!(
+        runtime
+            .write_memory(
+                a,
+                MemoryId::new(),
+                MemoryLayer::Working,
+                "foreign source".into(),
+                Some(source.id)
+            )
+            .await,
+        Err(AgentRuntimeError::TaskReferenceDenied { .. })
+    ));
+    assert!(matches!(
+        runtime
+            .write_memory(
+                b,
+                MemoryId::new(),
+                MemoryLayer::Working,
+                "missing source".into(),
+                Some(TaskId::new())
+            )
+            .await,
+        Err(AgentRuntimeError::TaskReferenceDenied { .. })
+    ));
+    assert!(matches!(
+        runtime
+            .send_message(a, c, "foreign correlation".into(), Some(source.id))
+            .await,
+        Err(AgentRuntimeError::TaskReferenceDenied { .. })
+    ));
+    assert_eq!(runtime.usage_snapshot().await, before);
+    let entry = runtime
+        .write_memory(
+            b,
+            MemoryId::new(),
+            MemoryLayer::Goal,
+            "authorized reference".into(),
+            Some(source.id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entry.agent_id, b);
+    assert_eq!(entry.source_task_id, Some(source.id));
+    runtime
+        .send_message(a, b, "recipient task".into(), Some(source.id))
+        .await
+        .unwrap();
+    runtime
+        .send_message(b, c, "sender task".into(), Some(source.id))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn delegated_dispatch_reuses_history_capacity_and_failure_keeps_one_charge() {
+    use vespera_agents::RuntimeLimits;
+    let runtime = build_runtime_with_limits(RuntimeLimits {
+        max_tasks: 1,
+        ..Default::default()
+    });
+    let a = AgentId::new();
+    runtime
+        .register_agent(sample_agent(
+            a,
+            "fixture",
+            ModelId::new(),
+            BTreeSet::from([Permission::Delegate]),
+            AgentStatus::Idle,
+        ))
+        .await
+        .unwrap();
+    let task = Task {
+        id: TaskId::new(),
+        prompt: "retained task".into(),
+        required_capabilities: BTreeSet::new(),
+        state: TaskState::Queued,
+    };
+    runtime.delegate_task(a, a, task.clone()).await.unwrap();
+    let before = runtime.usage_snapshot().await;
+    // No provider/model is registered: accepted dispatch fails resolution, retaining its history.
+    assert!(
+        runtime
+            .start_task_execution(
+                a,
+                task.clone(),
+                None,
+                vespera_providers::CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        runtime.get_task(task.id).await.unwrap().state,
+        TaskState::Failed
+    );
+    assert_eq!(runtime.usage_snapshot().await, before);
+    runtime
+        .set_agent_status(a, AgentStatus::Idle)
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtime
+            .start_task_execution(
+                a,
+                Task {
+                    id: TaskId::new(),
+                    ..task
+                },
+                None,
+                vespera_providers::CancellationToken::new()
+            )
+            .await,
+        Err(AgentRuntimeError::Capacity { resource: "tasks" })
+    ));
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().status,
+        AgentStatus::Idle
+    );
+    assert_eq!(runtime.usage_snapshot().await, before);
 }

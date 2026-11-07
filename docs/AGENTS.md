@@ -91,10 +91,23 @@ is operator configuration, not authority conferred by model text.
 
 ## Memory and communication limits
 
-Memory and inbox records currently live in per-agent in-process maps. They do
-not survive restart, do not implement full-text search/consolidation, and do not
-yet have complete capacity/retention enforcement. Durable isolated storage,
-provenance validation and bounded histories remain required work. See
+Memory and inbox records live in per-agent in-process maps. They do not survive
+restart and do not implement full-text search/consolidation. `RuntimeLimits`
+defaults to 64 agents, 1,024 accepted task records (including terminal history),
+256 memories per agent, 256 messages per inbox, 64 KiB of text per record and
+64 MiB of aggregate retained textual content. `with_limits` accepts positive
+operator bounds; `usage_snapshot` exposes counts and logical content accounting.
+These are storage-policy bounds, not measured host RAM: allocations, IDs,
+provider state and caller-owned snapshot clones are separate overhead.
+
+Writes and policy replacement check capacity before changing state. Full stores
+reject new records rather than silently deleting provenance. Accepted delegated
+tasks are charged once when later dispatched. Memory IDs cannot be reused across
+namespaces. A memory task source must be a known task assigned to that owner;
+a message task correlation must belong to its sender or recipient. A valid
+reference does not certify the generated content or imply task completion.
+No pruning/retention worker is implemented yet. Durable isolated storage remains
+required work. See
 [MEMORY.md](MEMORY.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Verification
