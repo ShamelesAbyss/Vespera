@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Revision-fenced model decisions in Living World
 
+Verified implementation checkpoint `c034dd7c33f54ba7bdbd3836968379f9ba62bc75` was pushed to `main`.
+
 The in-flight Swarm checkpoint `8834c8ad0662414359f5977eefd24e60a4b3d734` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42347919796). Added `world decide` with explicit resident identity, `simulation_act` authorization and bounded scheduler inference. The world offers a legal action menu and accepts a strict choice index. Preview is read-only. An applied choice commits against the original world revision, records provenance and refreshes the 3D inspector. Deterministic ticks still operate independently.
 
 Windows validation passed 221 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. Tests covered role and resource accounting, missing permissions before provider calls, preview, malformed output, committed provenance and a concurrent tick that rejected stale inference. A real Ollama 0.40.13 / hermes3:8b run moved Aster from (4, 5) to (5, 5) at revision 1, tick 0. The open read-only Windows view displayed the move and model ID. Native unload was acknowledged, and the backend reported zero resident models afterward.
