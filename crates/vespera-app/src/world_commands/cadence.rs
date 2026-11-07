@@ -8,9 +8,11 @@ use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
 use vespera_config::AppConfig;
 use vespera_core::{AgentId, AgentStatus, Task, TaskId};
 use vespera_providers::CancellationToken;
-use vespera_world::{ReasoningPhase, ReasoningStatus, World, WorldError, WorldStore};
+use vespera_world::{
+    ReasoningPhase, ReasoningStatus, World, WorldChange, WorldError, WorldFence, WorldStore,
+};
 
-use super::{DecisionAttempt, execution_options, plan, update_current};
+use super::{DecisionAttempt, execution_options, plan};
 use crate::AppError;
 
 #[derive(Debug, Args)]
@@ -146,7 +148,11 @@ async fn advance(
     let timeout = Duration::from_secs(args.timeout_seconds);
     for tick in 1..=args.ticks {
         tokio::time::sleep(Duration::from_millis(args.tick_ms)).await;
-        world = update_current(database, &world, World::advance)?;
+        world = WorldStore::commit(
+            database,
+            WorldFence::Snapshot(&world),
+            WorldChange::Advance { ticks: 1 },
+        )?;
         progress.committed_ticks = tick;
         progress.last_committed_revision = world.snapshot().revision;
         if tick % args.reason_every != 0 {

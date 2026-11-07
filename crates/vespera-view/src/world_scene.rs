@@ -8,7 +8,8 @@ use bevy::prelude::*;
 use tokio::sync::watch;
 use vespera_core::AgentId;
 use vespera_world::{
-    Position, ReasoningPhase, ReasoningStatus, Role, Snapshot, World, WorldError, WorldStore,
+    Position, ReasoningPhase, ReasoningStatus, Role, Snapshot, World, WorldChange, WorldError,
+    WorldFence, WorldStore,
 };
 
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
@@ -22,15 +23,9 @@ struct Observation {
     completed_controls: u64,
 }
 
-enum Action {
-    Tick,
-    SetActive(AgentId, bool),
-    Move(AgentId, Position),
-}
-
 struct Command {
     revision: u64,
-    action: Action,
+    change: WorldChange,
 }
 
 #[derive(Resource)]
@@ -38,6 +33,7 @@ struct View {
     updates: watch::Receiver<Observation>,
     commands: SyncSender<Command>,
     allow_control: bool,
+    historical: bool,
     world: World,
     status: &'static str,
     reasoning: Option<ReasoningStatus>,
@@ -72,29 +68,42 @@ struct Details;
 
 pub(super) fn run(
     path: PathBuf,
+    revision: Option<u64>,
     allow_control: bool,
     reduced_motion: bool,
 ) -> Result<(), WorldError> {
-    let (world, reasoning) = read_observed(&path)?;
+    let (world, reasoning, status) = if let Some(revision) = revision {
+        (
+            WorldStore::replay(&path, Some(revision))?.world,
+            None,
+            "Historical revision",
+        )
+    } else {
+        let (world, reasoning) = read_observed(&path)?;
+        (world, reasoning, "Database connected")
+    };
     let state = world.snapshot();
     let home_distance = f32::from(state.width.max(state.depth))
         .mul_add(1.35, 4.0)
         .clamp(9.0, 85.0);
     let (observations, updates) = watch::channel(Observation {
         world: world.clone(),
-        status: "Database connected",
+        status,
         reasoning,
         completed_controls: 0,
     });
     let (commands, actions) = mpsc::sync_channel(1);
-    std::thread::spawn(move || observe(path, observations, actions));
+    if revision.is_none() {
+        std::thread::spawn(move || observe(path, observations, actions));
+    }
     desktop("Vespera | World Simulation", Color::srgb(0.04, 0.065, 0.06))
         .insert_resource(View {
             updates,
             commands,
             allow_control,
+            historical: revision.is_some(),
             world,
-            status: "Database connected",
+            status,
             reasoning,
             completed_controls: 0,
             pending: false,
@@ -131,10 +140,7 @@ fn read_observed(path: &std::path::Path) -> Result<(World, Option<ReasoningStatu
 fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Receiver<Command>) {
     while !updates.is_closed() {
         let (result, is_control) = match actions.recv_timeout(POLL_INTERVAL) {
-            Ok(command) => (
-                WorldStore::update(&path, |world| apply(world, command)).map(|world| (world, None)),
-                true,
-            ),
+            Ok(command) => (commit(&path, command).map(|world| (world, None)), true),
             Err(RecvTimeoutError::Timeout) => (read_observed(&path), false),
             Err(RecvTimeoutError::Disconnected) => return,
         };
@@ -185,17 +191,8 @@ fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Re
     }
 }
 
-fn apply(world: &mut World, command: Command) -> Result<(), WorldError> {
-    match command.action {
-        Action::Tick => {
-            if world.snapshot().revision != command.revision {
-                return Err(WorldError::StaleRevision);
-            }
-            world.advance()
-        }
-        Action::SetActive(id, active) => world.set_active(id, active, command.revision),
-        Action::Move(id, position) => world.move_resident(id, position, command.revision),
-    }
+fn commit(path: &std::path::Path, command: Command) -> Result<World, WorldError> {
+    WorldStore::commit(path, WorldFence::Revision(command.revision), command.change)
 }
 
 fn setup(
@@ -319,7 +316,7 @@ fn controls(
     }
     let snapshot = view.world.snapshot();
     let action = if step_key {
-        Some(Action::Tick)
+        Some(WorldChange::Advance { ticks: 1 })
     } else if let Some(Object::Resident(id)) = selected.0 {
         snapshot
             .residents
@@ -327,26 +324,29 @@ fn controls(
             .find(|resident| resident.id == id)
             .and_then(|resident| {
                 if toggle_key {
-                    return Some(Action::SetActive(id, !resident.active));
+                    return Some(WorldChange::SetActive {
+                        resident: id,
+                        active: !resident.active,
+                    });
                 }
                 let (x, z) = shift?;
-                Some(Action::Move(
-                    id,
-                    Position {
+                Some(WorldChange::Move {
+                    resident: id,
+                    to: Position {
                         x: resident.position.x.checked_add_signed(x)?,
                         z: resident.position.z.checked_add_signed(z)?,
                     },
-                ))
+                })
             })
     } else {
         None
     };
-    if let Some(action) = action.or_else(|| step.then_some(Action::Tick))
+    if let Some(change) = action.or_else(|| step.then_some(WorldChange::Advance { ticks: 1 }))
         && view
             .commands
             .try_send(Command {
                 revision: snapshot.revision,
-                action,
+                change,
             })
             .is_ok()
     {
@@ -573,7 +573,9 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
         Some(Object::Depot) => format!("DEPOT\nCell {}, {}\n{} stock | {} shelters", state.depot.x, state.depot.z, state.shared_stock, state.shelters),
         None => "Select a resident, resource site, or depot.".into(),
     };
-    let controls = if view.allow_control {
+    let controls = if view.historical {
+        "Read-only historical inspection."
+    } else if view.allow_control {
         "Space - step   P - play/pause\nEnter - activate/suspend\nArrows or IJKL - move"
     } else {
         "Read-only. Restart with\n--allow-world-control to edit."
@@ -583,7 +585,9 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
         view.status,
         state.tick,
         state.revision,
-        if !view.allow_control {
+        if view.historical {
+            "Replay"
+        } else if !view.allow_control {
             "Observing"
         } else if view.playing {
             "Playing"
@@ -618,32 +622,40 @@ mod tests {
             sites: vec![],
         };
         let id = spec.residents[0].id;
-        let mut world = World::new(spec).unwrap();
+        let world = World::new(spec).unwrap();
+        let database = std::env::temp_dir().join(format!(
+            "vespera-view-{}.sqlite3",
+            vespera_core::TaskId::new()
+        ));
+        WorldStore::initialize(&database, &world).unwrap();
         for key in [KeyCode::KeyL, KeyCode::ArrowRight] {
             let mut keys = ButtonInput::default();
             keys.press(key);
             assert_eq!(movement(&keys), Some((1, 0)));
         }
         let to = Position { x: 2, z: 1 };
-        apply(
-            &mut world,
+        let moved = commit(
+            &database,
             Command {
                 revision: 0,
-                action: Action::Move(id, to),
+                change: WorldChange::Move { resident: id, to },
             },
         )
         .unwrap();
-        assert_eq!(world.snapshot().residents[0].position, to);
+        assert_eq!(moved.snapshot().residents[0].position, to);
         assert!(matches!(
-            apply(
-                &mut world,
+            commit(
+                &database,
                 Command {
                     revision: 0,
-                    action: Action::Tick
+                    change: WorldChange::Advance { ticks: 1 }
                 }
             ),
             Err(WorldError::StaleRevision)
         ));
-        assert_eq!(world.snapshot().tick, 0);
+        assert_eq!(WorldStore::replay(&database, Some(0)).unwrap().world, world);
+        assert_eq!(WorldStore::replay(&database, Some(1)).unwrap().world, moved);
+        assert_eq!(moved.snapshot().tick, 0);
+        std::fs::remove_file(database).unwrap();
     }
 }

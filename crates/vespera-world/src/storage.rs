@@ -6,12 +6,22 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use crate::{ReasoningStatus, World, WorldError};
 use vespera_core::TaskId;
 
+mod history;
+use crate::WorldChange;
+pub use history::Replay;
+
 const APPLICATION_ID: i64 = 0x5653574c;
 const VERSION: i64 = 1;
 const MAX_BYTES: i64 = 512 * 1024;
 
 /// Single-world SQLite storage. Each update loads and commits one validated state.
 pub struct WorldStore;
+
+pub enum WorldFence<'a> {
+    Current,
+    Revision(u64),
+    Snapshot(&'a World),
+}
 
 impl WorldStore {
     pub fn initialize(path: &Path, world: &World) -> Result<(), WorldError> {
@@ -145,13 +155,55 @@ impl WorldStore {
         path: &Path,
         operation: impl FnOnce(&mut World) -> Result<(), WorldError>,
     ) -> Result<World, WorldError> {
+        Self::write(path, |world| {
+            operation(world)?;
+            Ok(None)
+        })
+    }
+
+    /// Apply and record a typed transition in the same transaction as the world state.
+    pub fn commit(
+        path: &Path,
+        fence: WorldFence<'_>,
+        change: WorldChange,
+    ) -> Result<World, WorldError> {
+        Self::write(path, |world| {
+            if match fence {
+                WorldFence::Current => false,
+                WorldFence::Revision(revision) => revision != world.revision,
+                WorldFence::Snapshot(observed) => observed != world,
+            } {
+                return Err(WorldError::StaleRevision);
+            }
+            change.apply(world)?;
+            Ok(Some(change))
+        })
+    }
+
+    pub fn replay(path: &Path, revision: Option<u64>) -> Result<Replay, WorldError> {
+        let mut connection = open(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let tx = connection.transaction().map_err(db)?;
+        let world = read_state(&tx)?;
+        let replay = history::replay(&tx, world, revision)?;
+        tx.commit().map_err(db)?;
+        Ok(replay)
+    }
+
+    fn write(
+        path: &Path,
+        operation: impl FnOnce(&mut World) -> Result<Option<WorldChange>, WorldError>,
+    ) -> Result<World, WorldError> {
         let mut connection = open(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db)?;
-        let mut world = read_state(&tx)?;
-        operation(&mut world)?;
+        let before = read_state(&tx)?;
+        let mut world = before.clone();
+        let change = operation(&mut world)?;
         let bytes = encode(&world)?;
+        if world != before {
+            history::append(&tx, &before, &world, change)?;
+        }
         tx.execute(
             "UPDATE world_state SET payload = ?1 WHERE singleton = 1",
             [bytes],

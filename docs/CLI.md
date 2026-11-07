@@ -279,6 +279,19 @@ This command commits ticks and legal choices. At each reasoning boundary it wait
 
 In World Mode, an amber outline marks a resident preparing a model request, which can include health checks, queueing and loading. A cyan outline marks an observed active local inference lease. Select the resident to inspect the phase and task. This is runtime evidence alongside simulated state. It describes local activity, and provider-side progress is unavailable. Short phases can fall between samples. The status leaves the view after completion, a revision change or two seconds without a heartbeat. The last committed choice stays in the resident inspector. This live display applies to scheduled runs.
 
+### Replay a committed world revision
+
+```powershell
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 replay --revision 3
+cargo run --locked -p vespera-view --features graphics -- --world data/world.sqlite3 --world-revision 3
+```
+
+Replace 3 with a revision committed in your world. Omit `--revision` on the CLI to replay the latest revision. The response includes the reconstructed world, its basis revision and the earliest and latest known revisions. The 3D window stays on the requested revision and labels it historical. Inspection and camera controls are available, and world controls are disabled.
+
+Tick batches, resident activity and movement controls, and committed model choices are recorded in the same SQLite transaction as the world update. Replay applies those recorded changes to a retained checkpoint without inference or network access. It can select a tick batch's final revision. Intermediate revisions inside that batch were never committed separately. Failed changes and transient reasoning heartbeats do not enter replay.
+
+History keeps a rolling checkpoint and up to 512 commits within a span of 4,096 revisions. An older database starts with its current revision as the first available checkpoint. A writer that predates recording can also leave gaps. An unavailable revision returns an explicit error.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

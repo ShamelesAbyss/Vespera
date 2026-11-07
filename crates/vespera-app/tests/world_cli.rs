@@ -37,6 +37,42 @@ fn json(output: Output) -> Value {
 }
 
 #[test]
+fn replay_retention_keeps_a_deterministic_checkpoint_and_labels_older_gaps() {
+    use vespera_world::{World, WorldStore};
+
+    let database = Database::new();
+    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/world.example.json");
+    let spec = serde_json::from_slice(&std::fs::read(spec).unwrap()).unwrap();
+    let mut existing = World::new(spec).unwrap();
+    existing.advance().unwrap();
+    WorldStore::initialize(&database.0, &existing).unwrap();
+    assert!(
+        !world(&database, &["replay", "--revision", "0"])
+            .status
+            .success()
+    );
+    let mut earliest = Value::Null;
+    for index in 0..5 {
+        let state = json(world(&database, &["advance", "--ticks", "1000"]));
+        if index == 0 {
+            earliest = state;
+        }
+    }
+    let boundary = json(world(&database, &["replay", "--revision", "1001"]));
+    assert_eq!(boundary["earliest_revision"], 1001);
+    assert_eq!(boundary["basis_revision"], 1001);
+    assert_eq!(boundary["latest_revision"], 5001);
+    assert_eq!(boundary["world"], earliest);
+    assert!(
+        !world(&database, &["replay", "--revision", "1"])
+            .status
+            .success()
+    );
+    let current = json(world(&database, &["inspect"]));
+    assert_eq!(json(world(&database, &["replay"]))["world"], current);
+}
+
+#[test]
 fn persists_deterministic_world_and_fences_stale_resident_controls() {
     let first = Database::new();
     let second = Database::new();
@@ -47,6 +83,13 @@ fn persists_deterministic_world_and_fences_stale_resident_controls() {
     assert!(!world(&first, &init).status.success());
 
     let first_snapshot = json(world(&first, &["advance", "--ticks", "60"]));
+    assert_eq!(
+        json(world(&first, &["replay", "--revision", "60"]))["world"],
+        first_snapshot
+    );
+    let between = world(&first, &["replay", "--revision", "20"]);
+    assert!(!between.status.success());
+    assert!(String::from_utf8_lossy(&between.stderr).contains("not a retained commit"));
     for _ in 0..3 {
         json(world(&second, &["advance", "--ticks", "20"]));
     }

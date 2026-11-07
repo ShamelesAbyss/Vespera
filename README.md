@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 223 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, decision replay and experiments remain roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 224 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, unified Atlas navigation and experiments remain roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -33,6 +33,8 @@ cargo run --locked -p vespera-view --features graphics -- --world data/world.sql
 ```
 
 Pick residents, the depot or resource sites to inspect their committed state. World Mode is read-only by default. Add `--allow-world-control` to enable Space for a tick, P for playback, Enter for resident activity and IJKL for one-cell movement. The view labels its state as simulated and uses the same camera controls. It requires no broker or provider. [World setup](docs/CLI.md#persistent-world-simulation)
+
+Add `--world-revision <REVISION>` to inspect a retained world commit in 3D. Recorded choices are replayed through deterministic world rules without running the model again. [World replay](docs/CLI.md#replay-a-committed-world-revision)
 
 ## Architecture and workspace
 

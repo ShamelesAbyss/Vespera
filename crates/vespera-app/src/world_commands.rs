@@ -10,7 +10,9 @@ use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
 use vespera_config::AppConfig;
 use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
 use vespera_providers::CancellationToken;
-use vespera_world::{Decision, DecisionSource, Position, World, WorldError, WorldStore};
+use vespera_world::{
+    Decision, DecisionSource, Position, World, WorldChange, WorldError, WorldFence, WorldStore,
+};
 
 use crate::AppError;
 
@@ -34,6 +36,12 @@ enum WorldCommand {
     },
     /// Read the current public state as JSON.
     Inspect,
+    /// Reconstruct a retained committed revision without contacting a provider.
+    Replay {
+        /// Defaults to the latest committed revision.
+        #[arg(long)]
+        revision: Option<u64>,
+    },
     /// Advance deterministic ticks and commit them together.
     Advance {
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=1000))]
@@ -101,27 +109,46 @@ pub(super) async fn run(args: WorldArgs) -> Result<(), AppError> {
             world
         }
         WorldCommand::Inspect => WorldStore::read(database)?,
-        WorldCommand::Advance { ticks } => WorldStore::update(database, |world| {
-            for _ in 0..ticks {
-                world.advance()?;
-            }
-            Ok(())
-        })?,
+        WorldCommand::Replay { revision } => {
+            let replay = WorldStore::replay(database, revision)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "earliest_revision": replay.earliest_revision,
+                    "latest_revision": replay.latest_revision,
+                    "basis_revision": replay.basis_revision,
+                    "world": replay.world.snapshot(),
+                }))?
+            );
+            return Ok(());
+        }
+        WorldCommand::Advance { ticks } => WorldStore::commit(
+            database,
+            WorldFence::Current,
+            WorldChange::Advance { ticks },
+        )?,
         WorldCommand::SetActive {
             resident,
             active,
             revision,
-        } => WorldStore::update(database, |world| {
-            world.set_active(resident, active, revision)
-        })?,
+        } => WorldStore::commit(
+            database,
+            WorldFence::Revision(revision),
+            WorldChange::SetActive { resident, active },
+        )?,
         WorldCommand::Move {
             resident,
             x,
             z,
             revision,
-        } => WorldStore::update(database, |world| {
-            world.move_resident(resident, Position { x, z }, revision)
-        })?,
+        } => WorldStore::commit(
+            database,
+            WorldFence::Revision(revision),
+            WorldChange::Move {
+                resident,
+                to: Position { x, z },
+            },
+        )?,
         WorldCommand::Memory { resident } => {
             let world = WorldStore::read(database)?;
             println!("{}", serde_json::to_string_pretty(world.memory(resident)?)?);
@@ -211,19 +238,6 @@ fn execution_options(timeout: Duration) -> ExecutionOptions {
     }
 }
 
-fn update_current(
-    database: &Path,
-    observed: &World,
-    operation: impl FnOnce(&mut World) -> Result<(), WorldError>,
-) -> Result<World, WorldError> {
-    WorldStore::update(database, |current| {
-        if current != observed {
-            return Err(WorldError::StaleRevision);
-        }
-        operation(current)
-    })
-}
-
 impl DecisionAttempt {
     fn new(resident: AgentId, observed_revision: u64) -> Self {
         Self {
@@ -262,15 +276,15 @@ impl DecisionAttempt {
         world: &World,
         (decision, source): (Decision, DecisionSource),
     ) -> Result<World, WorldError> {
-        let updated = update_current(database, world, |current| {
-            current.apply_model_decision(
-                self.resident,
-                self.observed_revision,
+        let updated = WorldStore::commit(
+            database,
+            WorldFence::Snapshot(world),
+            WorldChange::ModelChoice {
+                resident: self.resident,
                 decision,
                 source,
-            )?;
-            Ok(())
-        })?;
+            },
+        )?;
         self.committed_revision = Some(updated.snapshot().revision);
         Ok(updated)
     }

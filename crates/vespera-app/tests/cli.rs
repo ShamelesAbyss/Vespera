@@ -549,11 +549,31 @@ fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
         let snapshot = persisted.snapshot();
         assert_eq!(snapshot.tick, 5);
         assert_eq!(snapshot.revision, expected_revision);
+        let replay = execute(&["world", "--database", database.to_str().unwrap(), "replay"]);
+        assert!(
+            replay.status.success(),
+            "{}",
+            String::from_utf8_lossy(&replay.stderr)
+        );
+        let replay: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+        assert_eq!(replay["world"], serde_json::to_value(&snapshot).unwrap());
+        assert_eq!(replay["basis_revision"], 0);
+        assert_eq!(
+            WorldStore::replay(&database, None).unwrap().world,
+            persisted
+        );
         if name == "good" {
             assert_eq!(attempts[0]["committed_revision"], 3);
             assert_eq!(attempts[1]["committed_revision"], 6);
             assert_eq!(snapshot.residents[0].last_model_decision.unwrap().tick, 2);
             assert_eq!(snapshot.residents[1].last_model_decision.unwrap().tick, 4);
+            let before = WorldStore::replay(&database, Some(2)).unwrap().world;
+            assert!(before.snapshot().residents[0].last_model_decision.is_none());
+            let after = WorldStore::replay(&database, Some(3)).unwrap().world;
+            assert_eq!(
+                after.snapshot().residents[0].last_model_decision.unwrap(),
+                snapshot.residents[0].last_model_decision.unwrap()
+            );
         } else {
             assert!(
                 attempts.iter().all(|attempt| attempt["error"].is_string()

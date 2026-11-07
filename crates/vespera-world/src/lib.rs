@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use vespera_core::{AgentId, ModelId, ProviderId, TaskId};
 
-pub use storage::WorldStore;
+pub use storage::{Replay, WorldFence, WorldStore};
 
 const MAX_RESIDENTS: usize = 32;
 const MAX_SITES: usize = 64;
@@ -34,6 +34,14 @@ pub enum WorldError {
     Format,
     #[error("world database already exists")]
     AlreadyExists,
+    #[error(
+        "world revision {revision} is not a retained commit (available range {earliest}–{latest})"
+    )]
+    ReplayUnavailable {
+        revision: u64,
+        earliest: u64,
+        latest: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -153,6 +161,54 @@ pub struct ModelDecision {
     pub source: DecisionSource,
     pub tick: u64,
     pub revision: u64,
+}
+
+/// One replayable world transaction. A tick batch has one committed boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorldChange {
+    Advance {
+        ticks: u32,
+    },
+    SetActive {
+        resident: AgentId,
+        active: bool,
+    },
+    Move {
+        resident: AgentId,
+        to: Position,
+    },
+    ModelChoice {
+        resident: AgentId,
+        decision: Decision,
+        source: DecisionSource,
+    },
+}
+
+impl WorldChange {
+    fn apply(self, world: &mut World) -> Result<(), WorldError> {
+        let revision = world.revision;
+        match self {
+            Self::Advance { ticks } => {
+                if !(1..=1000).contains(&ticks) {
+                    return Err(WorldError::Invalid("tick batch size"));
+                }
+                for _ in 0..ticks {
+                    world.advance()?;
+                }
+                Ok(())
+            }
+            Self::SetActive { resident, active } => world.set_active(resident, active, revision),
+            Self::Move { resident, to } => world.move_resident(resident, to, revision),
+            Self::ModelChoice {
+                resident,
+                decision,
+                source,
+            } => world
+                .apply_model_decision(resident, revision, decision, source)
+                .map(|_| ()),
+        }
+    }
 }
 
 /// Runtime observations stored separately from deterministic simulation state.

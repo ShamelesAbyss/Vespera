@@ -34,6 +34,9 @@ struct Options {
     /// Open a persistent simulation world instead of the broker view.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
     world: Option<PathBuf>,
+    /// Inspect a retained world revision in a read-only 3D window.
+    #[arg(long, requires = "world", conflicts_with = "allow_world_control")]
+    world_revision: Option<u64>,
     /// Inspect observed agent relationships from an existing local event journal.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world", "machine"])]
     swarm: Option<PathBuf>,
@@ -70,7 +73,12 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if let Some(path) = options.world {
-        return match world_scene::run(path, options.allow_world_control, options.reduced_motion) {
+        return match world_scene::run(
+            path,
+            options.world_revision,
+            options.allow_world_control,
+            options.reduced_motion,
+        ) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");
