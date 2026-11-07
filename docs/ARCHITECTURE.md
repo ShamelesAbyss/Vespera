@@ -1,11 +1,12 @@
 # Architecture
 
 Vespera is a local-first Rust orchestration and simulation platform under active
-implementation. The current eleven-crate workspace connects configuration,
+implementation. The current twelve-crate workspace connects configuration,
 provider HTTP adapters, a model registry, resource scheduling and independent
-agent execution through a native CLI, plus bounded sequential workflow execution. It is not yet the complete autonomous
-orchestrator, durable memory/event system, external-agent API, simulation engine,
-3D command center or experimentation platform. Those remain required milestones.
+agent execution through a native CLI. It also provides bounded sequential
+workflows, SQLite memory and task events, and a loopback worker service with a
+Rust SDK. Automatic orchestration, protected remote interoperability, simulation,
+native 3D and experimentation remain required milestones.
 
 ## Current workspace
 
@@ -15,12 +16,17 @@ Arrows mean compile-time dependencies; the graph is acyclic.
 flowchart TD
     App[vespera-app: CLI and composition] --> Config[vespera-config]
     App --> Memory
+    App --> API[vespera-api]
+    App --> Events[vespera-events]
     App --> Orchestrator
     App --> Agents[vespera-agents]
     App --> Scheduler[vespera-scheduler]
     App --> Registry[vespera-model-registry]
     App --> Providers[vespera-providers]
     App --> Core[vespera-core]
+    API --> Core
+    Events --> Core
+    SDK[vespera-sdk] --> Core
     Orchestrator[vespera-orchestrator] --> Agents
     Orchestrator --> Providers
     Orchestrator --> Core
@@ -49,6 +55,7 @@ flowchart TD
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-api` | Bounded loopback HTTP service with role-separated credentials and fenced task attempts |
+| `vespera-sdk` | Async HTTP client for v2 operator and worker actions, depending on shared core types |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |

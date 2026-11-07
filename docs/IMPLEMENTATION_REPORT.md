@@ -2,7 +2,7 @@
 
 ## Current recovery implementation — 2026-11-06
 
-The eleven-crate workspace now integrates real provider adapters, effective-health
+The twelve-crate workspace now integrates real provider adapters, effective-health
 registry operations, conservative model reservations/lifecycle, bounded priority
 admission, owned inference leases, bounded independent agents and actual task
 inference. The application library composes these services. The CLI implements
@@ -10,13 +10,15 @@ inference. The application library composes these services. The CLI implements
 `run-workflow`, `memory`, `events` and `serve`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-201-test offline suite (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+204-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
 workspace build, and optimized worker HTTP subprocess tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
 GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoints
 were independently checked and succeeded. Current-checkpoint remote CI is tracked
 in the development log after pushing; it is not inferred from local validation.
+
+The standalone Rust SDK executes the complete operator and worker lifecycle against the CLI service. Its transport tests cover rejected redirects and oversized chunked responses. The SDK requires a numeric loopback endpoint and keeps each request's proof and signing key out of errors.
 
 The SQLite memory library supports FTS, lineage and process-exit recovery. The offline CLI manages records, and single-agent inference supports opt-in retrieval and result persistence. Native workflow submission supports bounded delegation and selected per-attempt health refresh. See [workflow orchestration](ORCHESTRATION.md).
 

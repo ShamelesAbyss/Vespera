@@ -8,6 +8,9 @@ use ring::hmac;
 use serde_json::{Value, json};
 use uuid::Uuid;
 use vespera_core::{AgentId, TaskId};
+use vespera_sdk::{
+    ClientError, ErrorCode, OperatorClient, SigningKey, Submission, TaskState, WorkerClient,
+};
 
 const OPERATOR: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const FIRST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -89,12 +92,8 @@ impl Wire {
     }
 }
 
-#[tokio::test]
-async fn serves_fenced_work_to_authenticated_workers_only() {
-    let first = AgentId::new();
-    let second = AgentId::new();
-    let task = TaskId::new();
-    let policy = std::env::temp_dir().join(format!("vespera-worker-{task}.json"));
+fn launch(first: AgentId, second: AgentId) -> (Process, String) {
+    let policy = std::env::temp_dir().join(format!("vespera-worker-{}.json", Uuid::new_v4()));
     std::fs::write(
         &policy,
         serde_json::to_vec(&json!({
@@ -126,6 +125,15 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
         .unwrap()
         .unwrap();
     assert!(base.starts_with("http://127.0.0.1:"));
+    (process, base)
+}
+
+#[tokio::test]
+async fn serves_fenced_work_to_authenticated_workers_only() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let task = TaskId::new();
+    let (_process, base) = launch(first, second);
     let client = Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(5))
@@ -299,6 +307,69 @@ async fn serves_fenced_work_to_authenticated_workers_only() {
         inspected.json::<Value>().await.unwrap(),
         json!({"state": "completed", "result": accepted})
     );
+}
+
+#[tokio::test]
+async fn sdk_executes_and_reconciles_a_task_against_the_cli_service() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let (_process, base) = launch(first, second);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let other = WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    assert!(worker.claim().await.unwrap().is_none());
+    let task = TaskId::new();
+    let submission = Submission {
+        task_id: task,
+        prompt: "Summarize: λ".into(),
+        required_capabilities: ["text-generation".parse().unwrap()].into(),
+        eligible_workers: [first].into(),
+        lifetime_seconds: 30,
+        max_attempts: 2,
+    };
+    let queued = operator.submit(&submission).await.unwrap();
+    assert_eq!((queued.task_id, queued.state), (task, TaskState::Queued));
+    assert!(other.claim().await.unwrap().is_none());
+    let lease = worker.claim().await.unwrap().unwrap();
+    assert_eq!(lease.task.prompt, submission.prompt);
+    assert_eq!(lease.task.id, task);
+    assert!(worker.renew(lease.fence).await.unwrap() > 0);
+    assert!(matches!(
+        other.renew(lease.fence).await,
+        Err(ClientError::Rejected {
+            status: 409,
+            code: Some(ErrorCode::StaleLease)
+        })
+    ));
+    let result = worker.complete(lease.fence, "Result: λ").await.unwrap();
+    assert_eq!(
+        worker.complete(lease.fence, "Result: λ").await.unwrap(),
+        result
+    );
+    let inspected = operator.inspect(task).await.unwrap();
+    assert_eq!(inspected.state, TaskState::Completed);
+    assert_eq!(inspected.result.unwrap(), result);
+    let pending = TaskId::new();
+    operator
+        .submit(&Submission {
+            task_id: pending,
+            ..submission
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        operator.cancel(pending).await.unwrap(),
+        TaskState::Cancelled
+    );
+    operator.revoke(first).await.unwrap();
+    assert!(matches!(
+        worker.claim().await,
+        Err(ClientError::Rejected {
+            status: 401,
+            code: Some(ErrorCode::Unauthorized)
+        })
+    ));
 }
 
 #[test]

@@ -56,13 +56,28 @@ Application errors carry `{"error":"code"}`.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, network events, SDK and durable restart recovery remain open.
+Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, network events and durable restart recovery remain open.
 
 The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
 
+## Rust SDK
+
+Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`. Worker clients also take an approved `AgentId`.
+
+| Client | Methods |
+| --- | --- |
+| `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)` |
+| `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)` |
+
+Every call fetches the server's session and signs the request with a fresh nonce. The client permits 15 seconds for each HTTP exchange, caps JSON responses at 512 KiB, and disables proxies, redirects and automatic retries. `claim()` returns `Ok(None)` for 204. `ClientError::Rejected` carries the HTTP status and a typed `ErrorCode` when the server sends a known code.
+
+After an uncertain submit, inspect the original task ID. For an uncertain completion, retry with the same fence and content. If a claim's response was lost, allow the lease to expire before expecting another claim. The caller owns worker polling, execution deadlines and retry timing.
+
+Build the Rust API reference with `cargo doc -p vespera-sdk --no-deps --locked`. The crate documentation includes a worker example and `cargo test -p vespera-sdk --locked` compile-checks it. [SDK source and example](../crates/vespera-sdk/src/lib.rs)
+
 ## Future interoperability draft
 
-The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. A future native Rust SDK should wrap authentication, typed requests/results, retries, leases, cancellation, and replay without depending on server implementation crates.
+The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover authorized event replay and reconnect behavior.
 
 ## Authentication and registration — draft
 

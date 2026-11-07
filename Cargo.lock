@@ -1312,6 +1312,7 @@ dependencies = [
  "vespera-orchestrator",
  "vespera-providers",
  "vespera-scheduler",
+ "vespera-sdk",
 ]
 
 [[package]]
@@ -1414,6 +1415,20 @@ dependencies = [
  "vespera-core",
  "vespera-model-registry",
  "vespera-providers",
+]
+
+[[package]]
+name = "vespera-sdk"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "vespera-core",
 ]
 
 [[package]]

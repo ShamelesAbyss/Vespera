@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Standalone Rust worker SDK
+
+The signed HTTP checkpoint `7f2eea23dcb8e3d3d6be0b7de6dd8e99ef89fd37` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42337663813). Added `vespera-sdk` with separate typed operator and worker clients for every v2 task operation. The client fetches the session for each action, signs the exact bytes and maps known server errors to typed codes. It uses numeric loopback HTTP/1 with no proxy, redirects or automatic retries. Requests and JSON responses have byte limits and each HTTP exchange has a deadline. Its normal dependency graph contains `vespera-core` and existing third-party packages, independent of `vespera-api` and the CLI.
+
+Windows validation passed 204 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, and the release workspace build. The SDK subprocess test exercised submit, inspect, cancel, revoke, claim, renew, stale fencing and exact completion retries through the real CLI. Transport fixtures rejected a redirect and an oversized chunked response. The SDK and worker subprocess tests passed in optimized builds.
+
+The SDK leaves polling, authorized task execution and retry timing to callers. The transport remains plaintext loopback and responses are unsigned. Network event replay, durable broker recovery and protected remote transport remain open.
+
 ## 2026-11-06 — Replay-resistant worker HTTP authentication
 
 Verified implementation checkpoint `7f2eea23dcb8e3d3d6be0b7de6dd8e99ef89fd37` was pushed to the default branch, `main`.
