@@ -1,18 +1,14 @@
-//! Resource-aware model scheduling and lifecycle management for VESPERA.
+//! Conservative resource admission and coordinated provider lifecycle operations.
 //!
-//! Implements Milestone 5:
-//! - Checked RAM, VRAM, concurrency, and context admission via `vespera_core::ResourceBudget`.
-//! - Model residency tracking so resident models are reused without double-counting memory.
-//! - Automatic least-recently-used (LRU) eviction of idle models under memory pressure.
-//! - Rollback of resource reservations if provider model loading fails.
+//! Accounting records are estimates reserved by this process, not measured residency.
+//! Uncertain lifecycle outcomes retain their memory reservation until acknowledged unload.
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::sync::Mutex;
-
 use thiserror::Error;
+use tokio::sync::Mutex as AsyncMutex;
 use vespera_core::{
     DomainError, ModelId, ProviderId, ResourceBudget, ResourceKind, ResourceRequest, ResourceUsage,
 };
@@ -21,80 +17,108 @@ use vespera_providers::{
     CancellationToken, InferenceProvider, LifecycleCapabilityState, ProviderError,
 };
 
-/// Error taxonomy for resource-aware scheduling operations.
+/// Typed admission and lifecycle failures.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
-    /// Admission requires explicit RAM and VRAM estimates, including explicit CPU-only zero VRAM.
+    /// Incomplete estimates cannot establish safe admission.
     #[error("model {model_id} has unknown resource estimates")]
     UnknownResources {
-        /// Model whose estimates are incomplete.
+        /// Target model.
         model_id: ModelId,
     },
-    /// Registry lookup error for model or provider.
+    /// Registry lookup failed.
     #[error("registry error during scheduling: {0}")]
     Registry(#[from] RegistryError),
-    /// Target model is marked unavailable for routing.
+    /// Model is unavailable.
     #[error("model {model_id} is currently marked unavailable")]
     ModelUnavailable {
-        /// Unavailable model identifier.
+        /// Target model.
         model_id: ModelId,
     },
-    /// Resource budget admission failed even after idle eviction attempts.
+    /// Provider state is uncertain and must be reconciled before reuse.
+    #[error("model {model_id} residency is uncertain; unload before reuse")]
+    UncertainResidency {
+        /// Target model.
+        model_id: ModelId,
+    },
+    /// The provider did not acknowledge the expected lifecycle target.
+    #[error("provider did not acknowledge lifecycle operation for model {model_id}")]
+    UnacknowledgedLifecycle {
+        /// Target model.
+        model_id: ModelId,
+    },
+    /// Resource admission failed.
     #[error("resource budget exceeded: {0}")]
     BudgetExceeded(#[from] DomainError),
-    /// Provider failed during explicit model load or unload.
+    /// Provider lifecycle failed.
     #[error("provider lifecycle operation failed: {0}")]
     Provider(#[from] ProviderError),
-    /// Operation was cancelled via cancellation token.
+    /// Cooperative cancellation.
     #[error("scheduling operation cancelled")]
     Cancelled,
 }
 
-/// Configuration policy for resource-aware scheduling.
+/// Scheduling limits and idle eviction policy.
 #[derive(Debug, Clone)]
 pub struct SchedulingPolicy {
-    /// Hardware resource budget limits.
+    /// Explicit operator limits, not measured hardware capacity.
     pub budget: ResourceBudget,
-    /// Default keep-alive duration passed to providers supporting explicit model load.
+    /// Provider load keep-alive request.
     pub default_keep_alive: Duration,
-    /// Whether to automatically evict idle resident models when RAM or VRAM is full.
+    /// Attempt acknowledged idle eviction when memory admission fails.
     pub evict_idle_on_pressure: bool,
 }
 
-/// Residency record for a model currently loaded in memory.
+/// Scheduler knowledge of a model's provider lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResidencyState {
+    /// Load in flight; no usable inference lease has been issued.
+    Loading,
+    /// Provider acknowledged explicit load; memory amounts remain estimates.
+    Loaded,
+    /// Provider controls loading; physical residency is unverified.
+    ProviderManaged,
+    /// Unload in flight; memory remains charged.
+    Unloading,
+    /// Error, cancellation or dropped operation left provider state uncertain.
+    Unknown,
+}
+
+/// Accounted model reservation (not physical telemetry).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentModel {
-    /// Unique model identifier.
+    /// Model identity.
     pub model_id: ModelId,
-    /// Associated provider identifier.
+    /// Provider identity.
     pub provider_id: ProviderId,
-    /// Provider-specific model name.
+    /// Provider model name.
     pub provider_model_identifier: String,
-    /// Accounted system RAM in bytes.
+    /// Reserved estimated RAM.
     pub ram_bytes: u64,
-    /// Accounted GPU VRAM in bytes.
+    /// Reserved estimated VRAM.
     pub vram_bytes: u64,
-    /// Number of currently running inferences using this model.
+    /// Active local inference slots.
     pub active_inferences: u32,
-    /// Monotonic logical tick of last admission for LRU ordering.
+    /// LRU logical ordering.
     pub last_used_tick: u64,
+    /// Knowledge state, distinct from actual measured residency.
+    pub residency: ResidencyState,
 }
 
-/// Admitted inference lease returned by the scheduler.
+/// Admitted provider access. Lease ownership is hardened in the next checkpoint.
 #[derive(Clone)]
 pub struct ScheduledInference {
-    /// Admitted model identifier.
+    /// Model identity.
     pub model_id: ModelId,
-    /// Provider identifier hosting the model.
+    /// Provider identity.
     pub provider_id: ProviderId,
-    /// Provider handle ready for inference execution.
+    /// Provider handle.
     pub provider: Arc<dyn InferenceProvider>,
-    /// Admitted context window tokens for the request.
+    /// Admitted context ceiling.
     pub context_tokens: u32,
-    /// Whether the model was freshly loaded on demand for this request.
+    /// Whether explicit load was acknowledged by this admission.
     pub loaded_on_demand: bool,
 }
-
 impl fmt::Debug for ScheduledInference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ScheduledInference")
@@ -106,40 +130,54 @@ impl fmt::Debug for ScheduledInference {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct SchedulerState {
     usage: ResourceUsage,
     resident_models: BTreeMap<ModelId, ResidentModel>,
     logical_tick: u64,
 }
 
-impl SchedulerState {
-    fn new() -> Self {
-        Self {
-            usage: ResourceUsage {
-                ram_bytes: 0,
-                vram_bytes: 0,
-                active_inferences: 0,
-            },
-            resident_models: BTreeMap::new(),
-            logical_tick: 0,
+/// Marks an interrupted transition unknown synchronously, including future/task abort.
+/// A load slot is released, but uncertain provider memory is deliberately retained.
+struct TransitionGuard {
+    state: Arc<Mutex<SchedulerState>>,
+    model_id: ModelId,
+    loading: bool,
+    armed: bool,
+}
+impl Drop for TransitionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
         }
-    }
-
-    fn next_tick(&mut self) -> u64 {
-        self.logical_tick = self.logical_tick.saturating_add(1);
-        self.logical_tick
+        let mut state = lock(&self.state);
+        if let Some(model) = state.resident_models.get_mut(&self.model_id) {
+            model.residency = ResidencyState::Unknown;
+            if self.loading {
+                model.active_inferences -= 1;
+                state.usage.active_inferences -= 1;
+            }
+        }
     }
 }
 
-/// Resource-aware scheduler and model lifecycle coordinator.
+// No user code or network I/O executes while holding this lock. Poison recovery keeps
+// conservative reservations visible if an unrelated task panics.
+fn lock(state: &Mutex<SchedulerState>) -> MutexGuard<'_, SchedulerState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Thread-safe resource scheduler. Per-model gates serialize lifecycle operations;
+/// the global accounting mutex is never held over provider I/O.
 #[derive(Clone)]
 pub struct ResourceScheduler {
     registry: Arc<ModelRegistry>,
     policy: SchedulingPolicy,
     state: Arc<Mutex<SchedulerState>>,
+    gates: Arc<Mutex<BTreeMap<ModelId, Arc<AsyncMutex<()>>>>>,
 }
-
 impl fmt::Debug for ResourceScheduler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResourceScheduler")
@@ -147,227 +185,274 @@ impl fmt::Debug for ResourceScheduler {
             .finish()
     }
 }
-
 impl ResourceScheduler {
-    /// Creates a new resource scheduler bound to the central model registry and policy.
+    /// Create an empty scheduler without activating models.
     #[must_use]
     pub fn new(registry: Arc<ModelRegistry>, policy: SchedulingPolicy) -> Self {
         Self {
             registry,
             policy,
-            state: Arc::new(Mutex::new(SchedulerState::new())),
+            state: Arc::new(Mutex::new(SchedulerState::default())),
+            gates: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
-
-    /// Returns a snapshot of current aggregate resource usage.
+    fn gate(&self, model_id: ModelId) -> Arc<AsyncMutex<()>> {
+        self.gates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(model_id)
+            .or_default()
+            .clone()
+    }
+    /// Snapshot local reserved usage.
     pub async fn usage_snapshot(&self) -> ResourceUsage {
-        let state = self.state.lock().await;
-        state.usage
+        lock(&self.state).usage
     }
-
-    /// Returns a list of all currently resident models.
+    /// Snapshot all charged reservations, including unknown/in-flight states.
     pub async fn resident_models(&self) -> Vec<ResidentModel> {
-        let state = self.state.lock().await;
-        state.resident_models.values().cloned().collect()
+        lock(&self.state)
+            .resident_models
+            .values()
+            .cloned()
+            .collect()
     }
-
-    /// Admits an inference request against the resource budget, evicting idle models if needed,
-    /// and prepares the model on the target provider.
+    /// Admit immediately or return a typed error. No unbounded waiting queue is created.
     pub async fn admit_and_prepare(
         &self,
         model_id: ModelId,
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
+        let gate = self.gate(model_id);
+        let _model_guard = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(SchedulerError::Cancelled),
+            guard = gate.lock() => guard,
+        };
         if cancel.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
-
-        let model_reg = self.registry.get_model(model_id).await?;
-        if !model_reg.available {
+        let model = self.registry.get_model(model_id).await?;
+        if !model.available {
             return Err(SchedulerError::ModelUnavailable { model_id });
         }
-
-        let provider = self.registry.get_provider(model_reg.provider_id).await?;
+        let provider = self.registry.get_provider(model.provider_id).await?;
         let context_tokens = requested_context_tokens
-            .or(model_reg.context_window)
+            .or(model.context_window)
             .unwrap_or(self.policy.budget.max_context_tokens);
-
-        let mut evicted_to_unload: Vec<ResidentModel> = Vec::new();
-        let loaded_on_demand: bool;
-
-        {
-            let mut state = self.state.lock().await;
-
-            if state.resident_models.contains_key(&model_id) {
-                let request = ResourceRequest {
-                    ram_bytes: 0,
-                    vram_bytes: 0,
-                    context_tokens,
-                };
-                let new_usage = self.policy.budget.admit(&state.usage, &request)?;
-                state.usage = new_usage;
-                let tick = state.next_tick();
-                if let Some(entry) = state.resident_models.get_mut(&model_id) {
-                    entry.active_inferences = entry.active_inferences.saturating_add(1);
-                    entry.last_used_tick = tick;
+        let (Some(ram_bytes), Some(vram_bytes)) = (
+            model.estimated_resources.ram_bytes,
+            model.estimated_resources.vram_bytes,
+        ) else {
+            return Err(SchedulerError::UnknownResources { model_id });
+        };
+        let mut attempted = std::collections::BTreeSet::new();
+        let needs_load = loop {
+            if cancel.is_cancelled() {
+                return Err(SchedulerError::Cancelled);
+            }
+            let decision = {
+                let mut state = lock(&self.state);
+                let existing = state.resident_models.get(&model_id);
+                if existing.is_some_and(|entry| {
+                    !matches!(
+                        entry.residency,
+                        ResidencyState::Loaded | ResidencyState::ProviderManaged
+                    )
+                }) {
+                    return Err(SchedulerError::UncertainResidency { model_id });
                 }
-                loaded_on_demand = false;
-            } else {
-                let (Some(model_ram), Some(model_vram)) = (
-                    model_reg.estimated_resources.ram_bytes,
-                    model_reg.estimated_resources.vram_bytes,
-                ) else {
-                    return Err(SchedulerError::UnknownResources { model_id });
-                };
+                let reuse = existing.is_some();
                 let request = ResourceRequest {
-                    ram_bytes: model_ram,
-                    vram_bytes: model_vram,
+                    ram_bytes: if reuse { 0 } else { ram_bytes },
+                    vram_bytes: if reuse { 0 } else { vram_bytes },
                     context_tokens,
                 };
-
-                while let Err(err) = self.policy.budget.admit(&state.usage, &request) {
-                    let is_memory_pressure = matches!(
-                        err,
-                        DomainError::ResourceLimitExceeded {
-                            resource: ResourceKind::Ram | ResourceKind::Vram,
-                            ..
+                match self.policy.budget.admit(&state.usage, &request) {
+                    Ok(usage) => {
+                        state.usage = usage;
+                        state.logical_tick = state.logical_tick.saturating_add(1);
+                        let tick = state.logical_tick;
+                        if let Some(entry) = state.resident_models.get_mut(&model_id) {
+                            entry.active_inferences += 1;
+                            entry.last_used_tick = tick;
+                        } else {
+                            state.resident_models.insert(
+                                model_id,
+                                ResidentModel {
+                                    model_id,
+                                    provider_id: model.provider_id,
+                                    provider_model_identifier: model
+                                        .provider_model_identifier
+                                        .clone(),
+                                    ram_bytes,
+                                    vram_bytes,
+                                    active_inferences: 1,
+                                    last_used_tick: tick,
+                                    residency: ResidencyState::Loading,
+                                },
+                            );
                         }
-                    );
-
-                    if !self.policy.evict_idle_on_pressure || !is_memory_pressure {
-                        return Err(SchedulerError::BudgetExceeded(err));
+                        Ok(!reuse)
                     }
-
-                    let lru_idle_model_id = state
-                        .resident_models
-                        .values()
-                        .filter(|m| m.active_inferences == 0)
-                        .min_by_key(|m| m.last_used_tick)
-                        .map(|m| m.model_id);
-
-                    if let Some(evict_id) = lru_idle_model_id
-                        && let Some(removed) = state.resident_models.remove(&evict_id)
-                    {
-                        state.usage.ram_bytes =
-                            state.usage.ram_bytes.saturating_sub(removed.ram_bytes);
-                        state.usage.vram_bytes =
-                            state.usage.vram_bytes.saturating_sub(removed.vram_bytes);
-                        evicted_to_unload.push(removed);
-                    } else {
-                        return Err(SchedulerError::BudgetExceeded(err));
+                    Err(error) => {
+                        let candidate = if self.policy.evict_idle_on_pressure
+                            && matches!(
+                                error,
+                                DomainError::ResourceLimitExceeded {
+                                    resource: ResourceKind::Ram | ResourceKind::Vram,
+                                    ..
+                                }
+                            ) {
+                            state
+                                .resident_models
+                                .values()
+                                .filter(|entry| {
+                                    entry.active_inferences == 0
+                                        && entry.model_id != model_id
+                                        && !attempted.contains(&entry.model_id)
+                                        && !matches!(
+                                            entry.residency,
+                                            ResidencyState::Loading | ResidencyState::Unloading
+                                        )
+                                })
+                                .min_by_key(|entry| entry.last_used_tick)
+                                .map(|entry| entry.model_id)
+                        } else {
+                            None
+                        };
+                        Err((error, candidate))
                     }
                 }
-
-                let new_usage = self.policy.budget.admit(&state.usage, &request)?;
-                state.usage = new_usage;
-                let tick = state.next_tick();
-                state.resident_models.insert(
-                    model_id,
-                    ResidentModel {
-                        model_id,
-                        provider_id: model_reg.provider_id,
-                        provider_model_identifier: model_reg.provider_model_identifier.clone(),
-                        ram_bytes: model_ram,
-                        vram_bytes: model_vram,
-                        active_inferences: 1,
-                        last_used_tick: tick,
-                    },
-                );
+            };
+            match decision {
+                Ok(needs_load) => break needs_load,
+                Err((_, Some(candidate))) => {
+                    attempted.insert(candidate);
+                    self.evict_model(candidate, cancel.clone()).await?;
+                }
+                Err((error, None)) => return Err(SchedulerError::BudgetExceeded(error)),
+            }
+        };
+        let mut loaded_on_demand = false;
+        if needs_load {
+            let mut transition = TransitionGuard {
+                state: self.state.clone(),
+                model_id,
+                loading: true,
+                armed: true,
+            };
+            let explicit = provider.lifecycle_support().explicit_model_load
+                == LifecycleCapabilityState::Supported;
+            if explicit {
+                let outcome = provider
+                    .load_model(
+                        &model.provider_model_identifier,
+                        Some(self.policy.default_keep_alive),
+                        cancel.clone(),
+                    )
+                    .await?;
+                if !outcome.acknowledged
+                    || outcome.provider_id != model.provider_id
+                    || outcome.provider_model_name != model.provider_model_identifier
+                {
+                    return Err(SchedulerError::UnacknowledgedLifecycle { model_id });
+                }
                 loaded_on_demand = true;
             }
-        }
-
-        for evicted in evicted_to_unload {
-            if let Ok(evicted_provider) = self.registry.get_provider(evicted.provider_id).await
-                && matches!(
-                    evicted_provider.lifecycle_support().explicit_model_unload,
-                    LifecycleCapabilityState::Supported
-                )
             {
-                let _ = evicted_provider
-                    .unload_model(&evicted.provider_model_identifier, cancel.clone())
-                    .await;
+                let mut state = lock(&self.state);
+                if let Some(entry) = state.resident_models.get_mut(&model_id) {
+                    entry.residency = if explicit {
+                        ResidencyState::Loaded
+                    } else {
+                        ResidencyState::ProviderManaged
+                    };
+                }
             }
+            transition.armed = false;
         }
-
-        if loaded_on_demand
-            && matches!(
-                provider.lifecycle_support().explicit_model_load,
-                LifecycleCapabilityState::Supported
-            )
-            && let Err(err) = provider
-                .load_model(
-                    &model_reg.provider_model_identifier,
-                    Some(self.policy.default_keep_alive),
-                    cancel,
-                )
-                .await
-        {
-            let mut state = self.state.lock().await;
-            if let Some(removed) = state.resident_models.remove(&model_id) {
-                state.usage.ram_bytes = state.usage.ram_bytes.saturating_sub(removed.ram_bytes);
-                state.usage.vram_bytes = state.usage.vram_bytes.saturating_sub(removed.vram_bytes);
-            }
-            state.usage.active_inferences = state.usage.active_inferences.saturating_sub(1);
-            return Err(SchedulerError::Provider(err));
+        if cancel.is_cancelled() {
+            self.release_inference(model_id).await;
+            return Err(SchedulerError::Cancelled);
         }
-
         Ok(ScheduledInference {
             model_id,
-            provider_id: model_reg.provider_id,
+            provider_id: model.provider_id,
             provider,
             context_tokens,
             loaded_on_demand,
         })
     }
-
-    /// Releases an active inference slot for a model while keeping the model resident in memory.
+    /// Release an active local slot; model reservation remains until acknowledged unload.
     pub async fn release_inference(&self, model_id: ModelId) {
-        let mut state = self.state.lock().await;
+        let mut state = lock(&self.state);
         if let Some(entry) = state.resident_models.get_mut(&model_id)
             && entry.active_inferences > 0
         {
             entry.active_inferences -= 1;
-            state.usage.active_inferences = state.usage.active_inferences.saturating_sub(1);
+            state.usage.active_inferences -= 1;
         }
     }
-
-    /// Explicitly evicts an idle model from residency and unloads it from the provider.
+    /// Evict an idle reservation only after a matching acknowledged unload.
+    /// Unsupported, failed, unacknowledged, and interrupted unloads retain accounting.
     pub async fn evict_model(
         &self,
         model_id: ModelId,
         cancel: CancellationToken,
     ) -> Result<bool, SchedulerError> {
-        let removed = {
-            let mut state = self.state.lock().await;
+        let gate = self.gate(model_id);
+        let _guard = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(SchedulerError::Cancelled),
+            guard = gate.lock() => guard,
+        };
+        if cancel.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
+        }
+        let model = {
+            let state = lock(&self.state);
             match state.resident_models.get(&model_id) {
-                Some(entry) if entry.active_inferences == 0 => {
-                    let removed = state.resident_models.remove(&model_id);
-                    if let Some(ref r) = removed {
-                        state.usage.ram_bytes = state.usage.ram_bytes.saturating_sub(r.ram_bytes);
-                        state.usage.vram_bytes =
-                            state.usage.vram_bytes.saturating_sub(r.vram_bytes);
-                    }
-                    removed
-                }
-                _ => None,
+                Some(entry) if entry.active_inferences == 0 => entry.clone(),
+                _ => return Ok(false),
             }
         };
-
-        if let Some(evicted) = removed {
-            let provider = self.registry.get_provider(evicted.provider_id).await?;
-            if matches!(
-                provider.lifecycle_support().explicit_model_unload,
-                LifecycleCapabilityState::Supported
-            ) {
-                provider
-                    .unload_model(&evicted.provider_model_identifier, cancel)
-                    .await?;
+        let provider = self.registry.get_provider(model.provider_id).await?;
+        if provider.lifecycle_support().explicit_model_unload != LifecycleCapabilityState::Supported
+        {
+            return Err(ProviderError::UnsupportedOperation {
+                provider_id: model.provider_id,
+                operation: "unload_model",
             }
-            Ok(true)
-        } else {
-            Ok(false)
+            .into());
         }
+        {
+            let mut state = lock(&self.state);
+            if let Some(entry) = state.resident_models.get_mut(&model_id) {
+                entry.residency = ResidencyState::Unloading;
+            }
+        }
+        let mut transition = TransitionGuard {
+            state: self.state.clone(),
+            model_id,
+            loading: false,
+            armed: true,
+        };
+        let outcome = provider
+            .unload_model(&model.provider_model_identifier, cancel)
+            .await?;
+        if !outcome.acknowledged
+            || outcome.provider_id != model.provider_id
+            || outcome.provider_model_name != model.provider_model_identifier
+        {
+            return Err(SchedulerError::UnacknowledgedLifecycle { model_id });
+        }
+        let mut state = lock(&self.state);
+        if let Some(entry) = state.resident_models.remove(&model_id) {
+            state.usage.ram_bytes -= entry.ram_bytes;
+            state.usage.vram_bytes -= entry.vram_bytes;
+        }
+        transition.armed = false;
+        Ok(true)
     }
 }
