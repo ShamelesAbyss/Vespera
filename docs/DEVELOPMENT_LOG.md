@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Workflow CLI integration and live dependent execution
+
+Previous verified checkpoint: `020bdeb4f576b6e17de63cca5d85bc5ec834f5bc`, pushed; Ubuntu CI [42326680634](https://github.com/ShamelesAbyss/Vespera/actions/runs/42326680634) passed. The native CLI now exposes `run-workflow --workflow-file` with strict bounded UTF-8 JSON, explicit invocation-only resume, overall deadline, opt-in unload and JSON/human reports. Added a structurally validated example. Composition validates the complete config/plan/references/authority before adapters and scopes initialization to eligible named worker models. A delegation-only coordinator does not initialize its unrelated model adapter or credentials.
+
+Integration review found that a long step could expire the next step's health evidence. The engine now explicitly polls only eligible candidate providers before each attempt, within the workflow/command deadline. A regression forces observation expiry between steps and proves subsequent routing recovers. No model activation is performed by those health checks; no failed/suspended identity is silently resumed by the engine. Configuration stays unchanged.
+
+Windows validation passed: all 158 offline workspace tests (one explicit live health test ignored), formatting, all-target compilation, strict Clippy, strict rustdoc, optimized workspace build, 28 optimized application/CLI tests and twelve optimized orchestration tests. Executable fixtures cover both HTTP adapters, dependencies/provenance/cleanup, denied activation/permissions, unknown agents, invalid/oversized files before credential resolution, coordinator-only inventory isolation and cancellation preventing later steps. Validation handles disappeared after an environment continuation; authoritative checks were re-run and observed terminal success rather than assuming missing results were successful.
+
+The optimized CLI then executed a real native two-step workflow against Ollama 0.40.13 / hermes3:8b. Both contributions returned exactly `OK`, dependency data reached the second request, root/child states completed and runtime elapsed was 4,001 ms. Explicit native unload was acknowledged and a fresh residency query reported zero models. Evidence with executable SHA-256 and sanitized full report is in `artifacts/live-workflow-2026-11-06.json`; inputs/raw output remain in ignored private data files. This uses one agent/model and is not a live multi-model or performance claim. No weights were downloaded or existing config rewritten.
+
+Updated CLI/architecture/agent/orchestration/roadmap/implementation documentation and root onboarding. Remaining work includes durable isolated SQLite memory/retrieval and parent/child histories, events/replay, external-agent authentication/connectivity, automatic decomposition/evaluation, resource/context-aware ranking and allocation reconciliation, simulation, native 3D and experiments. Next priority is the durable memory foundation with namespace/provenance/migration/reopen tests; platform completion is not claimed.
+
 ## 2026-11-06 — Bounded authorized master workflow engine
 
 Previous verified checkpoint: `596fc5c60f88213cb4d1ba08fbe59bfce37e9c33`, pushed; Ubuntu CI [42325700985](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325700985) passed. Added the eighth first-party crate, `vespera-orchestrator`, without changing third-party package versions.

@@ -6,19 +6,19 @@ The eight-crate workspace now integrates real provider adapters, effective-healt
 registry operations, conservative model reservations/lifecycle, bounded priority
 admission, owned inference leases, bounded independent agents and actual task
 inference. The application library composes these services. The CLI implements
-`validate-config`, `doctor`, `models`, `agents`, `provider-health` and `run-agent`;
+`validate-config`, `doctor`, `models`, `agents`, `provider-health`, `run-agent` and `run-workflow`;
 the complete command contract is in [CLI.md](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-151-test offline suite (one live test ignored), strict Clippy, rustdoc, optimized
-workspace build, and all 22 optimized application/CLI tests. HTTP end-to-end
+158-test offline suite (one live test ignored), strict Clippy, rustdoc, optimized
+workspace build, and all 28 optimized application/CLI tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
 GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoints
 were independently checked and succeeded. Current-checkpoint remote CI is tracked
 in the development log after pushing; it is not inferred from local validation.
 
-The bounded workflow library is implemented and tested; see [ORCHESTRATION.md](ORCHESTRATION.md). Application workflow submission, automatic decomposition and durable workflow history remain. This remains an incomplete platform: no durable
+The bounded workflow library is implemented and tested; see [ORCHESTRATION.md](ORCHESTRATION.md). Native workflow submission and selected per-attempt health refresh are integrated; automatic decomposition and durable workflow history remain. This remains an incomplete platform: no durable
 memory/event bus, authenticated external-agent server, simulation engine, 3D
 client, experiment engine or release package is claimed. Provider allocation
 reconciliation and per-request overhead accounting also remain. See the current

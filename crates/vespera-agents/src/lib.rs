@@ -671,6 +671,41 @@ impl AgentRuntime {
         Ok(task_id)
     }
 
+    /// Refresh only providers eligible for the given idle candidates and capabilities.
+    /// This is explicit health I/O, not model activation or agent resumption.
+    pub async fn refresh_candidate_health(
+        &self,
+        candidates: &[AgentId],
+        required: &BTreeSet<Capability>,
+        cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        let models = self.registry.list_registrations().await;
+        let mut providers = BTreeSet::new();
+        for id in candidates {
+            let agent = self.get_agent(*id).await?;
+            if agent.status != AgentStatus::Idle {
+                continue;
+            }
+            for model in &models {
+                if model.available
+                    && required.is_subset(&model.capabilities)
+                    && match &agent.model_policy {
+                        ModelSelectionPolicy::Fixed { model_id } => *model_id == model.model_id,
+                        ModelSelectionPolicy::Capability { required } => {
+                            required.is_subset(&model.capabilities)
+                        }
+                    }
+                {
+                    providers.insert(model.provider_id);
+                }
+            }
+        }
+        self.registry
+            .health_check_providers(&providers, cancel)
+            .await;
+        Ok(())
+    }
+
     /// Resolves the appropriate model for an agent and a set of required task capabilities.
     pub async fn resolve_model_for_agent(
         &self,

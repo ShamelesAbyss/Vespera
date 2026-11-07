@@ -14,6 +14,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `agents` | List declared identities, status, policy and permissions | None |
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
+| `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 
 Every command supports `--help`; the root supports `--version`. All except
 `doctor` take `--config <PATH>` (default `config/local.toml`). Each command supports
@@ -133,3 +134,28 @@ matrix. See [PROVIDERS.md](PROVIDERS.md), [AGENTS.md](AGENTS.md),
 Two bounded release CLI tasks against Ollama 0.40.13 / hermes3:8b returned `OK`: native and compatible `/v1`. See the [sanitized artifact](../artifacts/live-ollama-2026-11-06.json). This is one backend/model version and nonstreaming execution, not universal compatibility or a benchmark. Native unload was acknowledged. Compatible residency was cleaned up by a separate explicit native operator request, not by the compatible adapter.
 
 A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting; scheduler context is a logical constraint rather than proof of actual backend allocation. At the recorded source checkpoint native preload could initially allocate the backend default; scheduler-driven native preload now sends the admitted context too. Estimates must account for backend behavior; external/startup allocations and per-request overhead remain unreconciled.
+
+## Execute a workflow
+
+```powershell
+.\target\release\vespera.exe run-workflow --config config/local.private.toml --workflow-file config/workflow.example.json --resume --timeout-seconds 120 --unload-after --json
+```
+
+The shipped [workflow example](../config/workflow.example.json) validates structurally and references the sample agent UUID. To execute it, configure a real installed model, known estimates/budgets and `permissions = ["delegate"]` for its coordinator in the private configuration. The default sample intentionally grants no delegation. The example uses the same agent for two dependent steps; distinct specialized candidates are supported and tested separately. Eight-token output bounds are deliberately small and can produce length-limited text, whose finish reason remains recorded.
+
+| `run-workflow` option | Requirement/default |
+| --- | --- |
+| `--config <PATH>` | Default `config/local.toml` |
+| `--workflow-file <PATH>` | Required strict UTF-8 JSON, at most one MiB |
+| `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
+| `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |
+| `--unload-after` | Explicit supported unload after local execution, including failure |
+| `--json` | Root/child history, accepted contributions/errors and cleanup evidence |
+
+The file supplies whole-workflow and per-step deadlines; the command deadline additionally bounds the entire operation. Cleanup has up to five extra seconds. Unknown fields, invalid bounds/cycles, missing configured agent IDs and denied coordinator permissions fail before provider requests. A suspended coordinator requires explicit `--resume`; suspended candidates otherwise remain ineligible. Source configuration is unchanged.
+
+Composition initializes only providers/models eligible for named idle (or explicitly resumed) step candidates. A delegation-only coordinator needs no model activation or adapter/credential initialization. Each attempt refreshes relevant health, so a long prior step does not leave the next step dependent on expired observations. No unrelated inventory is activated.
+
+JSON fields are `task_id`, optional `workflow`, optional sanitized `error`, and `cleanup`. A failed/cancelled/partial workflow returns nonzero while retaining accepted attempt evidence. Command cancellation/expiry recovers any workflow history created before interruption; failure before workflow acceptance may leave it null. Early file/configuration/permission/credential errors can leave stdout empty. Human output prints a selected contribution only after workflow evaluation succeeds. Cleanup behavior and compatible unload limitations are the same as `run-agent`.
+
+See [ORCHESTRATION.md](ORCHESTRATION.md) for strict plan fields, bounds, retry/selection/conflict policies and in-process retention limits. [Live evidence](../artifacts/live-workflow-2026-11-06.json) records one native two-step sample, not broad interoperability or factual validation.

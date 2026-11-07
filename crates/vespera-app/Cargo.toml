@@ -18,6 +18,7 @@ vespera-providers.workspace = true
 vespera-model-registry = { path = "../vespera-model-registry" }
 vespera-scheduler = { path = "../vespera-scheduler" }
 vespera-agents = { path = "../vespera-agents" }
+vespera-orchestrator = { path = "../vespera-orchestrator" }
 tokio = { workspace = true, features = ["signal"] }
 clap.workspace = true
 serde.workspace = true

@@ -51,6 +51,8 @@ enum Command {
     },
     /// Execute one bounded agent task using configured real provider adapters.
     RunAgent(RunAgentArgs),
+    /// Execute a strict bounded workflow file through authorized agent delegation.
+    RunWorkflow(RunWorkflowArgs),
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
@@ -94,6 +96,25 @@ struct RunAgentArgs {
     json: bool,
 }
 
+#[derive(Debug, Args)]
+struct RunWorkflowArgs {
+    #[arg(long, default_value = "config/local.toml")]
+    config: PathBuf,
+    /// Strict UTF-8 JSON workflow, at most one MiB.
+    #[arg(long)]
+    workflow_file: PathBuf,
+    /// Overall command bound, including provider health and workflow execution.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    timeout_seconds: u64,
+    /// Activate only named workflow agents for this invocation; grants remain unchanged.
+    #[arg(long)]
+    resume: bool,
+    #[arg(long)]
+    unload_after: bool,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Serialize)]
 struct ConfigReport {
     valid: bool,
@@ -108,6 +129,14 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error("could not read bounded UTF-8 workflow file")]
+    WorkflowIo,
+    #[error("workflow must be valid strict JSON and fit within one MiB")]
+    InvalidWorkflow,
+    #[error("{0}")]
+    WorkflowPlan(#[from] vespera_orchestrator::PlanError),
+    #[error("workflow did not complete successfully; inspect its report")]
+    WorkflowFailed,
     #[error("{0}")]
     Runtime(#[from] RuntimeError),
     #[error("could not read UTF-8 prompt file: {0}")]
@@ -176,6 +205,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             .await?
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
+        Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::ValidateConfig { config, json } => {
             let config = AppConfig::load(config)?;
             let report = ConfigReport {

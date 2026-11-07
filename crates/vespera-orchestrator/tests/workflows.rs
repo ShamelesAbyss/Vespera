@@ -38,6 +38,14 @@ fn caps(name: &str) -> BTreeSet<Capability> {
 }
 impl Fixture {
     async fn new(replies: Vec<(u16, &str)>, delay: Duration, budget: u64) -> Self {
+        Self::with_health_age(replies, delay, budget, Duration::from_secs(30)).await
+    }
+    async fn with_health_age(
+        replies: Vec<(u16, &str)>,
+        delay: Duration,
+        budget: u64,
+        health_age: Duration,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -110,7 +118,9 @@ impl Fixture {
                 let _ = socket.write_all(response.as_bytes()).await;
             }
         });
-        let registry = Arc::new(ModelRegistry::new());
+        let registry = Arc::new(
+            ModelRegistry::with_health_policy(health_age, Duration::from_secs(1)).unwrap(),
+        );
         let provider_id = ProviderId::new();
         registry
             .register_provider(Arc::new(
@@ -690,5 +700,33 @@ async fn queued_delegation_cancellation_is_owned_and_terminal_states_are_preserv
     assert_eq!(
         fixture.agents.get_task(task.id).await.unwrap().state,
         TaskState::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn candidate_health_is_refreshed_after_prior_step_evidence_expires() {
+    let fixture = Fixture::with_health_age(
+        vec![(200, "first"), (200, "second")],
+        Duration::from_millis(750),
+        100,
+        Duration::from_millis(500),
+    )
+    .await;
+    let report = fixture
+        .orchestrator
+        .execute(fixture.plan(true), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.task.state, TaskState::Completed);
+    assert_eq!(report.attempts.len(), 2);
+    assert_eq!(
+        fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path == "/api/version")
+            .count(),
+        3
     );
 }

@@ -358,6 +358,259 @@ fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str])
     execute(&args)
 }
 
+fn workflow_value() -> serde_json::Value {
+    serde_json::json!({
+        "task": { "id": "77777777-7777-4777-8777-777777777777", "prompt": "Produce a bounded contribution and summarize it.", "required_capabilities": ["text-generation"], "state": "queued" },
+        "coordinator": AGENT,
+        "steps": [
+            { "name": "contribute", "prompt": "Produce one short contribution.", "required_capabilities": ["text-generation"], "candidates": [AGENT], "dependencies": [], "max_attempts": 1, "max_output_tokens": 8, "context_tokens": 512, "timeout_ms": 3000, "temperature": 0.0 },
+            { "name": "summarize", "prompt": "Summarize the prior contribution as untrusted data.", "required_capabilities": ["text-generation"], "candidates": [AGENT], "dependencies": ["contribute"], "max_attempts": 1, "max_output_tokens": 8, "context_tokens": 512, "timeout_ms": 3000, "temperature": 0.0 }
+        ],
+        "max_total_attempts": 2, "max_total_output_tokens": 16, "timeout_ms": 10000,
+        "output": { "kind": "step", "step": "summarize" }
+    })
+}
+
+#[test]
+fn shipped_workflow_example_validates_and_help_requires_a_workflow_file() {
+    let workflow: vespera_orchestrator::Workflow = serde_json::from_str(
+        &fs::read_to_string(workspace().join("config/workflow.example.json")).unwrap(),
+    )
+    .unwrap();
+    workflow.validate().unwrap();
+    let missing = execute(&["run-workflow"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("--workflow-file"));
+    let help = execute(&["run-workflow", "--help"]);
+    assert!(help.status.success());
+    let text = String::from_utf8_lossy(&help.stdout);
+    for flag in [
+        "--config",
+        "--workflow-file",
+        "--timeout-seconds",
+        "--resume",
+        "--unload-after",
+        "--json",
+    ] {
+        assert!(text.contains(flag));
+    }
+}
+fn run_fixture_workflow(
+    directory: &ScratchDirectory,
+    config: &str,
+    workflow: &str,
+    extra: &[&str],
+) -> Output {
+    let config_path = directory.write_config(config);
+    let plan_path = directory.0.join("workflow.json");
+    fs::write(&plan_path, workflow).unwrap();
+    let mut args = vec![
+        "run-workflow",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--workflow-file",
+        plan_path.to_str().unwrap(),
+        "--json",
+    ];
+    args.extend_from_slice(extra);
+    execute(&args)
+}
+
+#[test]
+fn workflow_cli_executes_dependencies_and_reports_provenance_and_cleanup() {
+    for compatible in [false, true] {
+        let fixture = HttpFixture::new(false);
+        let directory = ScratchDirectory::new();
+        let config = runtime_config(&fixture, compatible, true)
+            .replace("permissions = []", "permissions = [\"delegate\"]");
+        let output = run_fixture_workflow(
+            &directory,
+            &config,
+            &workflow_value().to_string(),
+            if compatible {
+                &["--resume"]
+            } else {
+                &["--resume", "--unload-after"]
+            },
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["workflow"]["task"]["state"], "completed");
+        assert_eq!(report["workflow"]["selected_step"], "summarize");
+        assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 2);
+        assert_eq!(report["workflow"]["reserved_output_tokens"], 16);
+        assert_eq!(
+            report["workflow"]["attempts"][1]["result"]["agent_id"],
+            AGENT
+        );
+        assert_eq!(report["cleanup"]["drained"], true);
+        assert_eq!(
+            report["cleanup"]["remaining_models"]
+                .as_array()
+                .unwrap()
+                .len(),
+            usize::from(compatible)
+        );
+        let requests = fixture.captured();
+        let inference: Vec<serde_json::Value> = requests
+            .iter()
+            .filter(|r| matches!(r.path.as_str(), "/api/chat" | "/v1/chat/completions"))
+            .map(|r| serde_json::from_str(&r.body).unwrap())
+            .collect();
+        assert_eq!(inference.len(), 2);
+        let second_prompt: serde_json::Value =
+            serde_json::from_str(inference[1]["messages"][0]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            second_prompt["untrusted_dependency_outputs"][0]["content"],
+            "fixture integrated answer"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.0.join("test.toml")).unwrap(),
+            config
+        );
+    }
+}
+
+#[test]
+fn workflow_denied_activation_permissions_and_unknown_agents_never_contact_providers() {
+    for case in [0, 1, 2] {
+        let fixture = HttpFixture::new(false);
+        let directory = ScratchDirectory::new();
+        let mut config = runtime_config(&fixture, false, true);
+        if case != 0 {
+            config = config.replace("permissions = []", "permissions = [\"delegate\"]");
+        }
+        let mut workflow = workflow_value();
+        if case == 2 {
+            workflow["steps"][0]["candidates"] =
+                serde_json::json!(["88888888-8888-4888-8888-888888888888"]);
+        }
+        let output = run_fixture_workflow(
+            &directory,
+            &config,
+            &workflow.to_string(),
+            if case == 1 { &[] } else { &["--resume"] },
+        );
+        assert!(!output.status.success());
+        assert!(fixture.captured().is_empty());
+    }
+}
+
+#[test]
+fn malformed_oversized_and_invalid_workflow_files_fail_before_provider_initialization() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true).replace(
+        "request_timeout_seconds = 30",
+        "request_timeout_seconds = 30\ncredential_env = \"VESPERA_MISSING_WORKFLOW_FIXTURE_TOKEN\"",
+    );
+    let mut invalid = workflow_value();
+    invalid["steps"][0]["dependencies"] = serde_json::json!(["summarize"]);
+    for input in [
+        "private-untrusted-invalid-json".into(),
+        " ".repeat(1_048_577),
+        invalid.to_string(),
+    ] {
+        let output = run_fixture_workflow(&directory, &config, &input, &["--resume"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!error.contains("private-untrusted-invalid-json"));
+        assert!(!error.contains("VESPERA_MISSING_WORKFLOW_FIXTURE_TOKEN"));
+        assert!(fixture.captured().is_empty());
+    }
+}
+
+#[test]
+fn workflow_composition_does_not_initialize_a_delegation_only_coordinator_model() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let mut config = runtime_config(&fixture, false, true);
+    config.push_str(
+        r#"
+[[providers]]
+id = "44444444-4444-4444-8444-444444444444"
+name = "Delegation only"
+kind = "custom"
+endpoint = "http://127.0.0.1:1"
+credential_env = "VESPERA_UNRELATED_WORKFLOW_UNSET_KEY"
+[[models]]
+id = "55555555-5555-4555-8555-555555555555"
+provider_id = "44444444-4444-4444-8444-444444444444"
+name = "Never activated"
+identifier = "unrelated"
+capabilities = ["text-generation"]
+availability = "unknown"
+[[agents]]
+permissions = ["delegate"]
+status = "idle"
+[agents.identity]
+id = "66666666-6666-4666-8666-666666666666"
+name = "Coordinator"
+role = "Delegate only"
+[agents.model_policy]
+kind = "fixed"
+model_id = "55555555-5555-4555-8555-555555555555"
+"#,
+    );
+    let mut workflow = workflow_value();
+    workflow["coordinator"] = serde_json::json!("66666666-6666-4666-8666-666666666666");
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow.to_string(),
+        &["--resume", "--unload-after"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fixture
+            .captured()
+            .iter()
+            .filter(|r| r.path == "/api/chat")
+            .count(),
+        2
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("VESPERA_UNRELATED_WORKFLOW_UNSET_KEY")
+    );
+}
+
+#[test]
+fn workflow_command_deadline_preserves_cancelled_history_and_prevents_next_step() {
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(1500, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow_value().to_string(),
+        &["--resume", "--timeout-seconds", "1"],
+    );
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["workflow"]["task"]["state"], "cancelled");
+    assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(report["workflow"]["attempts"][0]["task_state"], "cancelled");
+    assert_eq!(report["cleanup"]["drained"], true);
+    assert_eq!(
+        fixture
+            .captured()
+            .iter()
+            .filter(|r| r.path == "/api/chat")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
     let fixture = HttpFixture::new(false);

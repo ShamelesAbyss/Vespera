@@ -1229,6 +1229,7 @@ dependencies = [
  "vespera-config",
  "vespera-core",
  "vespera-model-registry",
+ "vespera-orchestrator",
  "vespera-providers",
  "vespera-scheduler",
 ]

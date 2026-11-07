@@ -9,12 +9,13 @@ use vespera_agents::{
 };
 use vespera_config::{AppConfig, ConfigError};
 use vespera_core::{
-    AgentId, AgentStatus, ModelAvailability, ModelId, ModelSelectionPolicy, ProviderId,
+    AgentId, AgentStatus, ModelAvailability, ModelId, ModelSelectionPolicy, Permission, ProviderId,
     ProviderKind, Task,
 };
 use vespera_model_registry::{
     ModelRegistration, ModelRegistry, ProviderHealthState, RegistryError,
 };
+use vespera_orchestrator::{Orchestrator, OrchestratorError, Workflow, WorkflowReport};
 use vespera_providers::{
     CancellationToken, EndpointPolicy, InferenceProvider, OllamaConfig, OllamaProvider,
     OpenAiCompatibleProvider, OpenAiConfig, ProviderError, ProviderHealthStatus, SecretRef,
@@ -25,6 +26,8 @@ use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
 /// Application errors deliberately exclude configuration endpoints/credential values.
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("{0}")]
+    Orchestration(#[from] OrchestratorError),
     /// Invalid offline declarations.
     #[error("{0}")]
     Config(#[from] ConfigError),
@@ -175,6 +178,7 @@ pub struct VesperaRuntime {
     registry: Arc<ModelRegistry>,
     scheduler: Arc<ResourceScheduler>,
     agents: AgentRuntime,
+    orchestrator: Orchestrator,
 }
 /// A charged model reservation, separate from measured provider residency.
 #[derive(Debug, Serialize)]
@@ -201,6 +205,86 @@ pub struct CleanupReport {
     pub unload_errors: BTreeMap<ModelId, String>,
 }
 impl VesperaRuntime {
+    /// Compose only a workflow's named agents and matching worker inventory.
+    /// The coordinator's model is unnecessary unless it is also a step candidate.
+    pub async fn from_config_for_workflow(
+        config: &AppConfig,
+        workflow: &Workflow,
+        resume: bool,
+    ) -> Result<Self, RuntimeError> {
+        config.validate()?;
+        workflow.validate().map_err(OrchestratorError::from)?;
+        let ids: BTreeSet<_> = workflow
+            .steps
+            .iter()
+            .flat_map(|step| step.candidates.iter().copied())
+            .chain([workflow.coordinator])
+            .collect();
+        if ids.len() > 64 {
+            return Err(AgentRuntimeError::Capacity { resource: "agents" }.into());
+        }
+        let mut selected = Vec::new();
+        for id in &ids {
+            let mut agent = config
+                .agents
+                .iter()
+                .find(|a| a.identity.id == *id)
+                .cloned()
+                .ok_or(AgentRuntimeError::AgentNotFound { agent_id: *id })?;
+            if agent.status == AgentStatus::Running {
+                return Err(AgentRuntimeError::InvalidAgentState {
+                    agent_id: *id,
+                    status: agent.status,
+                }
+                .into());
+            }
+            if *id == workflow.coordinator {
+                if !agent.permissions.contains(&Permission::Delegate) {
+                    return Err(OrchestratorError::CoordinatorDenied.into());
+                }
+                if agent.status != AgentStatus::Idle && !resume {
+                    return Err(RuntimeError::ActivationRequired { agent_id: *id });
+                }
+            }
+            if resume && agent.status != AgentStatus::Idle {
+                agent.status = AgentStatus::Idle;
+            }
+            selected.push(agent);
+        }
+        let mut scoped = config.clone();
+        scoped.agents.clear();
+        scoped.models.retain(|model| {
+            model.availability != ModelAvailability::Unavailable
+                && workflow.steps.iter().any(|step| {
+                    step.required_capabilities.is_subset(&model.capabilities)
+                        && selected.iter().any(|agent| {
+                            agent.status == AgentStatus::Idle
+                                && step.candidates.contains(&agent.identity.id)
+                                && match &agent.model_policy {
+                                    ModelSelectionPolicy::Fixed { model_id } => {
+                                        *model_id == model.id
+                                    }
+                                    ModelSelectionPolicy::Capability { required } => {
+                                        required.is_subset(&model.capabilities)
+                                    }
+                                }
+                        })
+                })
+        });
+        let providers: BTreeSet<_> = scoped
+            .models
+            .iter()
+            .map(|model| model.provider_id)
+            .collect();
+        scoped
+            .providers
+            .retain(|provider| providers.contains(&provider.id));
+        let runtime = Self::from_config(&scoped).await?;
+        for agent in selected {
+            runtime.agents.register_agent(agent).await?;
+        }
+        Ok(runtime)
+    }
     /// Compose one agent and its candidate inventory without initializing unrelated credentials.
     /// The complete source configuration is still validated before selecting the inventory.
     pub async fn from_config_for_agent(
@@ -253,15 +337,39 @@ impl VesperaRuntime {
         for agent in &config.agents {
             agents.register_agent(agent.clone()).await?;
         }
+        let orchestrator = Orchestrator::new(agents.clone());
         Ok(Self {
             registry,
             scheduler,
             agents,
+            orchestrator,
         })
     }
     /// Access the trusted agent control plane.
     pub fn agents(&self) -> &AgentRuntime {
         &self.agents
+    }
+    pub fn orchestrator(&self) -> &Orchestrator {
+        &self.orchestrator
+    }
+
+    /// Bounded workflow execution with relevant health refreshed before each attempt.
+    pub async fn run_workflow(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+    ) -> Result<WorkflowReport, RuntimeError> {
+        workflow.validate().map_err(OrchestratorError::from)?;
+        let coordinator = self.agents.get_agent(workflow.coordinator).await?;
+        if coordinator.status != AgentStatus::Idle
+            || !coordinator.permissions.contains(&Permission::Delegate)
+        {
+            return Err(OrchestratorError::CoordinatorDenied.into());
+        }
+        if cancel.is_cancelled() {
+            return Err(RuntimeError::Cancelled);
+        }
+        Ok(self.orchestrator.execute(workflow, cancel).await?)
     }
     /// Access the registry; lookups alone do not establish provider health.
     pub fn registry(&self) -> &Arc<ModelRegistry> {

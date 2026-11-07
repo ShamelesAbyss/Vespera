@@ -276,6 +276,17 @@ impl Orchestrator {
                 {
                     return Err(Failure::OutputBudget);
                 }
+                self.agents
+                    .refresh_candidate_health(
+                        &step.candidates,
+                        &step.required_capabilities,
+                        cancel.clone(),
+                    )
+                    .await
+                    .map_err(|_| Failure::NoCandidate)?;
+                if cancel.is_cancelled() {
+                    return Err(Failure::Cancelled);
+                }
                 let mut chosen = None;
                 for agent_id in &step.candidates {
                     if self
