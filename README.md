@@ -28,7 +28,7 @@ Open the read-only Machine view to inspect local CPU utilization, system memory 
 cargo run --locked -p vespera-view --features graphics -- --machine
 ```
 
-Machine can also inspect scheduler queues and estimated reservations from an opted-in local run. Press 4 for the scheduler, 5 to cycle model reservations, or 6 to cycle providers connected to those reservations. [Connect a run to Machine](docs/CLI.md#observe-a-local-scheduler)
+Machine can also inspect scheduler queues, estimated reservations and running task leases from an opted-in local run. Press 4 for the scheduler, 5 for models, 6 for providers, or 7 for tasks. [Connect a run to Machine](docs/CLI.md#observe-a-local-scheduler)
 
 Open the read-only Swarm view to follow live workflow attempts in a local event journal or accepted worker messages on a signed broker connection. Cyan arrows show delegations, green arrows show predecessor results included in accepted attempts, and amber arrows show messages. Freeze and step through a bounded evidence window while the source continues live. [Open Swarm](docs/CLI.md#swarm-view)
 

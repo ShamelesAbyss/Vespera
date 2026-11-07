@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Local task ownership in Atlas
+
+The Machine reservation checkpoint `c8b0f5db949231b63a8ece0ea278d452a47c6e2d` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42420881117). The opt-in scheduler sample now pairs running task and agent IDs with their confirmed local lease, model and provider IDs. Machine renders a task node only when the scheduler still accounts for that exact lease. The sample is bounded, and the viewer still accepts versions 1 and 2.
+
+Windows validation covered the offline workspace suite, the SDK doctest, seven graphics tests, strict workspace and graphics Clippy, and the graphics and CLI builds. The CLI regression compared the sampled lease and task IDs against the execution report, exercised both older formats, and rejected mismatched providers and duplicate ownership. In a native Atlas session driven by a held workflow fixture, Machine and Swarm showed the same attempt UUID. The selected owner transferred to the matching Living World resident, and returning from Swarm selected the corresponding live Machine task. The final sample contained zero tasks and reservations after cleanup.
+
+This graph covers live ownership for one opted-in local runtime. A task can finish between samples, and ownership rows are retained only for reservations visible in the sample. It omits queued identities, provider-side execution progress and historical local task ownership.
+
 ## 2026-11-07 — Model and provider reservations in Machine
 
 Verified implementation checkpoint `c8b0f5db949231b63a8ece0ea278d452a47c6e2d` was pushed to `main`.

@@ -777,9 +777,10 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
                     if model.state == ReservationState::Loading {
                         assert_eq!(model.charged_slots, 1);
                         assert_eq!(model.issued_leases, 0);
+                        assert!(sample.tasks.as_ref().unwrap().is_empty());
                         saw_loading = true;
                     }
-                    if model.issued_leases == 1 {
+                    if model.issued_leases == 1 && !sample.tasks.as_ref().unwrap().is_empty() {
                         break Some(sample);
                     }
                 }
@@ -821,7 +822,35 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     );
     assert_eq!((model.ram_bytes, model.vram_bytes), (100, 0));
     assert_eq!((model.charged_slots, model.issued_leases), (1, 1));
+    let [owner] = active.tasks.as_deref().unwrap() else {
+        panic!("expected one task owner");
+    };
+    let report: serde_json::Value = serde_json::from_slice(&output.0.stdout).unwrap();
+    let execution = &report["execution"];
+    assert_eq!(
+        owner.task_id.to_string(),
+        execution["task"]["id"].as_str().unwrap()
+    );
+    assert_eq!(owner.agent_id.to_string(), AGENT);
+    assert_eq!(
+        owner.lease_id.to_string(),
+        execution["lease_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        (owner.model_id, owner.provider_id),
+        (model.model_id, model.provider_id)
+    );
+    let mut mismatched = active.clone();
+    mismatched.tasks.as_mut().unwrap()[0].provider_id = vespera_core::ProviderId::new();
+    assert!(!mismatched.is_supported());
+    let mut duplicated = active.clone();
+    duplicated.tasks.as_mut().unwrap().push(*owner);
+    assert!(!duplicated.is_supported());
     let mut legacy = serde_json::to_value(&active).unwrap();
+    legacy["schema_version"] = 2.into();
+    legacy.as_object_mut().unwrap().remove("tasks");
+    let v2: SchedulerSample = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(v2.is_supported() && v2.models.is_some() && v2.tasks.is_none());
     legacy["schema_version"] = 1.into();
     legacy.as_object_mut().unwrap().remove("models");
     let legacy: SchedulerSample = serde_json::from_value(legacy).unwrap();
@@ -833,6 +862,7 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     assert_eq!(final_sample.reserved, Default::default());
     assert_eq!(final_sample.model_reservations, 0);
     assert!(final_sample.models.unwrap().is_empty());
+    assert!(final_sample.tasks.unwrap().is_empty());
     assert!(
         !String::from_utf8(final_bytes.clone())
             .unwrap()

@@ -14,11 +14,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use vespera_core::{
     AgentDefinition, AgentId, AgentStatus, Capability, DomainError, MemoryId, MemoryLayer, ModelId,
-    ModelSelectionPolicy, Permission, ProviderId, Task, TaskId, TaskState,
+    ModelSelectionPolicy, Permission, ProviderId, SchedulerSample, Task, TaskId, TaskLeaseSample,
+    TaskState,
 };
 use vespera_model_registry::{ModelRegistration, ModelRegistry, RegistryError};
 use vespera_providers::CancellationToken;
-use vespera_scheduler::{ResourceScheduler, ScheduledInference, SchedulerError};
+use vespera_scheduler::{
+    ReservationObservation, ResourceScheduler, ScheduledInference, SchedulerError,
+};
 
 mod execution;
 pub use execution::{ExecutionError, ExecutionOptions, MemoryContext, TaskExecutionResult};
@@ -374,6 +377,30 @@ impl AgentRuntime {
             .executions
             .get(&task_id)
             .map(|execution| (execution.model_id, execution.provider_id))
+    }
+
+    /// Capture bounded running task ownership together with scheduler accounting.
+    pub fn observe_scheduler(&self) -> ReservationObservation {
+        // Completion releases its lease under the same agent-then-scheduler lock order.
+        let state = lock_state(&self.state);
+        let candidates: Vec<_> = state
+            .executions
+            .iter()
+            .filter_map(|(&task_id, execution)| {
+                let agent_id = *state.task_assignments.get(&task_id)?;
+                Some(TaskLeaseSample {
+                    task_id,
+                    agent_id,
+                    lease_id: execution.lease_id(),
+                    model_id: execution.model_id,
+                    provider_id: execution.provider_id,
+                })
+            })
+            .take(SchedulerSample::MAX_TASKS)
+            .collect();
+        let observation = self.scheduler.observe_task_reservations(&candidates);
+        drop(state);
+        observation
     }
 
     /// Cancel accepted queued work for its recorded owner. Running work must use

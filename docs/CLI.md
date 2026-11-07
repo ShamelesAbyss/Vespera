@@ -389,6 +389,8 @@ cargo run --locked -p vespera-view --features graphics -- --atlas --broker 127.0
 
 The footer marks the active and unavailable layers. Each configured layer keeps its camera, filter and replay position. A selected worker, Swarm participant or world resident transfers to the destination when the same UUID is visible there. Each layer keeps its selection when the destination has no matching identity.
 
+Machine shares the selected task's agent UUID with other layers. Switching back from another layer selects a Machine task when exactly one displayed lease belongs to that agent.
+
 The window observes configured sources in the background. Leaving World pauses window-driven playback, and leaving Intelligence Network dismisses any cancellation confirmation that has yet to be sent. Controls are read-only by default. Use `--allow-cancel` with `--broker` or `--allow-world-control` with `--world` to enable the corresponding live controls. `--world-revision` opens the World layer at a retained revision with read-only controls.
 
 ### Intelligence Network controls
@@ -441,7 +443,9 @@ Select the amber component or press 4. The meter shows the fraction of granted l
 
 Click a model cube or press 5 to cycle through model reservations. Click a violet provider sphere or press 6 to cycle providers represented by those reservations. The model inspector shows its UUID, provider UUID, scheduler lifecycle state, issued leases, charged slots and estimated memory reservation. Cyan links indicate at least one issued local lease in the displayed sample. A slot can be charged while preparation is still in progress. Provider totals cover the displayed reservations. They do not measure provider-side inference.
 
-The CLI replaces one bounded `scheduler.json` in the newly created directory and leaves a final sample after its cleanup attempt. Version 2 includes up to 16 reservations and prioritizes those with charged slots. Version 1 samples display aggregate counts. A final sample may still show reservations when unload was unrequested or unconfirmed. If the publisher stops before a final sample, Machine marks the last running sample stale. Keep the parent directory private and use the same local filesystem and clock for both processes. Samples carry local accounting and UUIDs without prompts, responses, provider endpoints, provider-native model names or credentials. Use a different directory for each invocation.
+Click a yellow task capsule or press 7 to cycle through displayed local task leases. The yellow link connects a task to its reserved model. The inspector shows the task, owning agent, lease, model and provider UUIDs. The publisher records ownership only when the agent runtime holds the task and the scheduler still accounts for the same issued lease. Queued tasks and tasks preparing a model have no capsule. A completed task disappears from this live graph.
+
+The CLI replaces one bounded `scheduler.json` in the newly created directory and leaves a final sample after its cleanup attempt. Version 3 includes up to 16 model reservations, with charged slots prioritized, and up to 16 task owners whose models appear in the sample. Version 2 displays model reservations without task owners, and version 1 displays aggregate counts. A final sample may still show reservations when unload was unrequested or unconfirmed. If the publisher stops before a final sample, Machine marks the last running sample stale. Keep the parent directory private and use the same local filesystem and clock for both processes. Samples carry local accounting and UUIDs without prompts, responses, provider endpoints, provider-native model names or credentials. Use a different directory for each invocation.
 
 ## Local task outcome journal
 

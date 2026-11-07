@@ -120,7 +120,7 @@ fn switch(
         layers.switched = true;
         commands.queue(move |world: &mut World| {
             let agent = match previous {
-                Layer::Machine => None,
+                Layer::Machine => crate::machine_scene::selected_agent(world),
                 Layer::Network => crate::scene::selected_agent(world),
                 Layer::Swarm => crate::swarm_scene::selected_agent(world),
                 Layer::World => crate::world_scene::selected_agent(world),

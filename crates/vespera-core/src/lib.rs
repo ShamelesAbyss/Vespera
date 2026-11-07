@@ -34,6 +34,7 @@ pub use model::{ModelAvailability, ModelDescriptor, ProviderKind};
 pub use resource::{
     ModelReservationSample, ProviderHealthCounts, ReservationState, ResourceBudget,
     ResourceEstimate, ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample,
+    TaskLeaseSample,
 };
 pub use task::{Task, TaskState};
 

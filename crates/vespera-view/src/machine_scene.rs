@@ -10,7 +10,8 @@ use bevy::render::renderer::RenderAdapterInfo;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::sync::watch;
 use vespera_core::{
-    ModelId, ModelReservationSample, ProviderId, ReservationState, SchedulerSample,
+    AgentId, ModelId, ModelReservationSample, ProviderId, ReservationState, SchedulerSample,
+    TaskId, TaskLeaseSample,
 };
 
 use crate::atlas::{Layer, Layers, register};
@@ -117,6 +118,19 @@ impl Default for Selected {
 enum RuntimeNode {
     Provider(ProviderId),
     Model(ModelId),
+    Task(TaskId),
+}
+
+pub(super) fn selected_agent(world: &World) -> Option<AgentId> {
+    let Target::Runtime(RuntimeNode::Task(id)) = world.get_resource::<Selected>()?.0 else {
+        return None;
+    };
+    world
+        .resource::<RuntimeGraph>()
+        .tasks()
+        .iter()
+        .find(|task| task.task_id == id)
+        .map(|task| task.agent_id)
 }
 
 #[derive(Resource, Default)]
@@ -140,13 +154,21 @@ impl RuntimeGraph {
             _ => &[],
         }
     }
+
+    fn tasks(&self) -> &[TaskLeaseSample] {
+        match self.scheduler() {
+            SchedulerObservation::Sample(sample) => sample.tasks.as_deref().unwrap_or_default(),
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Resource)]
 struct RuntimeMeshes {
     provider: Handle<Mesh>,
     model: Handle<Mesh>,
-    material: [Handle<StandardMaterial>; 4],
+    task: Handle<Mesh>,
+    material: [Handle<StandardMaterial>; 5],
 }
 
 #[derive(Component)]
@@ -233,11 +255,13 @@ fn setup(
     commands.insert_resource(RuntimeMeshes {
         provider: meshes.add(Sphere::new(0.40)),
         model: meshes.add(Cuboid::new(0.62, 0.48, 0.62)),
+        task: meshes.add(Capsule3d::new(0.23, 0.28)),
         material: [
             Color::srgb(0.56, 0.40, 0.88),
             Color::srgb(0.26, 0.69, 0.55),
             Color::srgb(0.20, 0.82, 0.98),
             Color::srgb(0.98, 0.64, 0.24),
+            Color::srgb(0.95, 0.89, 0.48),
         ]
         .map(|base_color| {
             materials.add(StandardMaterial {
@@ -380,6 +404,12 @@ fn sync_runtime(
             (position(index, -8.6), &meshes.model, material),
         );
     }
+    for (index, task) in graph.tasks().iter().enumerate() {
+        nodes.insert(
+            RuntimeNode::Task(task.task_id),
+            (position(index, -12.0), &meshes.task, 4),
+        );
+    }
     graph.nodes.retain(|node, (entity, _)| {
         if nodes.contains_key(node) {
             return true;
@@ -420,7 +450,16 @@ fn navigate(
     mut selected: ResMut<Selected>,
     mut focus: ResMut<Focus>,
     graph: Res<RuntimeGraph>,
+    layers: Res<Layers>,
 ) {
+    if let Some(agent) = layers.incoming {
+        let mut matches = graph.tasks().iter().filter(|task| task.agent_id == agent);
+        if let Some(task) = matches.next()
+            && matches.next().is_none()
+        {
+            selected.0 = Target::Runtime(RuntimeNode::Task(task.task_id));
+        }
+    }
     for (key, device) in [
         (KeyCode::Digit1, Device::Cpu),
         (KeyCode::Digit2, Device::Memory),
@@ -431,21 +470,25 @@ fn navigate(
             selected.0 = Target::Device(device);
         }
     }
-    for (key, provider) in [(KeyCode::Digit5, false), (KeyCode::Digit6, true)] {
+    for key in [KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7] {
         if keys.just_pressed(key) {
+            let matches_kind = |node| {
+                matches!(
+                    (key, node),
+                    (KeyCode::Digit5, RuntimeNode::Model(_))
+                        | (KeyCode::Digit6, RuntimeNode::Provider(_))
+                        | (KeyCode::Digit7, RuntimeNode::Task(_))
+                )
+            };
             let mut nodes = graph
                 .nodes
                 .keys()
                 .copied()
-                .filter(|node| matches!(node, RuntimeNode::Provider(_)) == provider);
+                .filter(|node| matches_kind(*node));
             let mut cycle = nodes.clone();
             if let Some(node) = cycle
                 .find(|node| match selected.0 {
-                    Target::Runtime(prior)
-                        if matches!(prior, RuntimeNode::Provider(_)) == provider =>
-                    {
-                        *node > prior
-                    }
+                    Target::Runtime(prior) if matches_kind(prior) => *node > prior,
                     _ => true,
                 })
                 .or_else(|| nodes.next())
@@ -482,6 +525,11 @@ fn draw_runtime(graph: Res<RuntimeGraph>, selected: Res<Selected>, mut gizmos: G
             accounting
         };
         gizmos.line(from, to, color);
+    }
+    for task in graph.tasks() {
+        let (_, from) = graph.nodes[&RuntimeNode::Model(task.model_id)];
+        let (_, to) = graph.nodes[&RuntimeNode::Task(task.task_id)];
+        gizmos.line(from, to, Color::srgb(0.95, 0.89, 0.48));
     }
     let outline = match selected.0 {
         Target::Device(device) => Some((
@@ -583,14 +631,14 @@ fn present(
             format!("WGPU RENDER ADAPTER\n\n{identity}\n\nVRAM and inference devices unavailable.")
         }
         Target::Device(Device::Scheduler) => scheduler_detail(scheduler),
-        Target::Runtime(node) => runtime_detail(node, graph.models(), scheduler),
+        Target::Runtime(node) => runtime_detail(node, &graph),
     };
     let age = sample.map_or(
         "Host measurements unavailable",
         |_| "Host measurements / live",
     );
     let text = format!(
-        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | 5 Models | 6 Providers\nClick to select | F focus | R reset\nWASD pan | Right drag orbit\nScroll zoom"
+        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | 5 Models | 6 Providers\n7 Tasks | Click to select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit"
     );
     if readout.0 != text {
         readout.0 = text;
@@ -647,12 +695,8 @@ fn scheduler_detail(observation: &SchedulerObservation) -> String {
     format!("SCHEDULER / ONE LOCAL RUNTIME\n\n{detail}")
 }
 
-fn runtime_detail(
-    node: RuntimeNode,
-    models: &[ModelReservationSample],
-    source: &SchedulerObservation,
-) -> String {
-    let status = match source {
+fn runtime_detail(node: RuntimeNode, graph: &RuntimeGraph) -> String {
+    let status = match graph.scheduler() {
         SchedulerObservation::Sample(sample) if sample.finished => "Final snapshot",
         SchedulerObservation::Sample(_) => "Recent sample",
         SchedulerObservation::Stale => "Last scheduler sample expired",
@@ -660,7 +704,7 @@ fn runtime_detail(
     };
     let detail = match node {
         RuntimeNode::Model(id) => {
-            if let Some(model) = models.iter().find(|model| model.model_id == id) {
+            if let Some(model) = graph.models().iter().find(|model| model.model_id == id) {
                 let state = match model.state {
                     ReservationState::Loading => "Loading",
                     ReservationState::Loaded => "Load acknowledged",
@@ -683,13 +727,27 @@ fn runtime_detail(
         RuntimeNode::Provider(id) => {
             let mut count = 0;
             let mut leases = 0_u64;
-            for model in models.iter().filter(|model| model.provider_id == id) {
+            for model in graph
+                .models()
+                .iter()
+                .filter(|model| model.provider_id == id)
+            {
                 count += 1;
                 leases += u64::from(model.issued_leases);
             }
             format!(
                 "PROVIDER ACCOUNTING\n{id}\n\nDisplayed reservations {count}\nIssued local leases {leases}"
             )
+        }
+        RuntimeNode::Task(id) => {
+            if let Some(task) = graph.tasks().iter().find(|task| task.task_id == id) {
+                format!(
+                    "LOCAL TASK LEASE\n{id}\n\nAgent\n{}\n\nLease\n{}\n\nModel\n{}\n\nProvider\n{}",
+                    task.agent_id, task.lease_id, task.model_id, task.provider_id,
+                )
+            } else {
+                format!("LOCAL TASK LEASE\n{id}\n\nOutside the displayed sample")
+            }
         }
     };
     format!("{status}\n\n{detail}")

@@ -199,6 +199,17 @@ pub struct ModelReservationSample {
     pub issued_leases: u32,
 }
 
+/// Payload-free provenance of an agent's running local task and issued lease.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskLeaseSample {
+    pub task_id: crate::TaskId,
+    pub agent_id: crate::AgentId,
+    pub lease_id: uuid::Uuid,
+    pub model_id: crate::ModelId,
+    pub provider_id: crate::ProviderId,
+}
+
 /// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -219,33 +230,62 @@ pub struct SchedulerSample {
     /// Version 1 carried only aggregate counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<ModelReservationSample>>,
+    /// Version 3 adds bounded ownership for leases whose model is displayed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<Vec<TaskLeaseSample>>,
 }
 
 impl SchedulerSample {
-    pub const SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 3;
     pub const FILE_NAME: &str = "scheduler.json";
-    pub const MAX_FILE_BYTES: u64 = 8192;
+    pub const MAX_FILE_BYTES: u64 = 16384;
     pub const MAX_MODELS: usize = 16;
+    pub const MAX_TASKS: usize = 16;
 
     pub fn is_supported(&self) -> bool {
         if self.budget.validate().is_err() {
             return false;
         }
-        match (self.schema_version, &self.models) {
-            (1, None) => true,
-            (Self::SCHEMA_VERSION, Some(models)) => {
-                models.len() == self.model_reservations.min(Self::MAX_MODELS)
-                    && models.iter().all(|model| {
-                        model.model_id.validate().is_ok()
-                            && model.provider_id.validate().is_ok()
-                            && model.issued_leases <= model.charged_slots
-                    })
-                    && models
-                        .iter()
-                        .map(|model| model.model_id)
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .len()
-                        == models.len()
+        if self.schema_version == 1 {
+            return self.models.is_none() && self.tasks.is_none();
+        }
+        let Some(models) = &self.models else {
+            return false;
+        };
+        let mut issued = std::collections::BTreeMap::new();
+        if models.len() != self.model_reservations.min(Self::MAX_MODELS)
+            || !models.iter().all(|model| {
+                model.model_id.validate().is_ok()
+                    && model.provider_id.validate().is_ok()
+                    && model.issued_leases <= model.charged_slots
+                    && issued
+                        .insert(model.model_id, (model.provider_id, model.issued_leases))
+                        .is_none()
+            })
+        {
+            return false;
+        }
+        match (self.schema_version, &self.tasks) {
+            (2, None) => true,
+            (Self::SCHEMA_VERSION, Some(tasks)) if tasks.len() <= Self::MAX_TASKS => {
+                let mut ids = std::collections::BTreeSet::new();
+                let mut leases = std::collections::BTreeSet::new();
+                tasks.iter().all(|task| {
+                    task.task_id.validate().is_ok()
+                        && task.agent_id.validate().is_ok()
+                        && !task.lease_id.is_nil()
+                        && ids.insert(task.task_id)
+                        && leases.insert(task.lease_id)
+                        && issued
+                            .get_mut(&task.model_id)
+                            .is_some_and(|(provider, count)| {
+                                if *provider != task.provider_id || *count == 0 {
+                                    return false;
+                                }
+                                *count -= 1;
+                                true
+                            })
+                })
             }
             _ => false,
         }

@@ -34,6 +34,7 @@ impl Publisher {
         .map_err(AppError::SchedulerTelemetry)?;
 
         let scheduler = runtime.scheduler().clone();
+        let agents = runtime.agents().clone();
         let registry = runtime.registry().clone();
         let (finish, mut finished) = oneshot::channel();
         let worker = tokio::spawn(async move {
@@ -52,7 +53,7 @@ impl Publisher {
                 };
                 let provider_health = registry.provider_health_counts().await;
                 let queue = scheduler.queue_snapshot();
-                let reservations = scheduler.observe_reservations();
+                let reservations = agents.observe_scheduler();
                 let observed_unix_ms = SystemTime::UNIX_EPOCH
                     .elapsed()
                     .map_err(io::Error::other)?
@@ -72,6 +73,7 @@ impl Publisher {
                     uncertain_reservations: reservations.uncertain,
                     provider_health,
                     models: Some(reservations.models),
+                    tasks: Some(reservations.tasks),
                 };
                 let directory = directory.clone();
                 tokio::task::spawn_blocking(move || publish(directory, sample))

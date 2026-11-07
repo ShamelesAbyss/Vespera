@@ -16,7 +16,7 @@ use tokio::sync::Mutex as AsyncMutex;
 pub use vespera_core::ReservationState as ResidencyState;
 use vespera_core::{
     DomainError, ModelId, ModelReservationSample, ProviderId, ResourceBudget, ResourceKind,
-    ResourceRequest, ResourceUsage, SchedulerSample,
+    ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
@@ -208,6 +208,7 @@ pub struct ReservationObservation {
     pub total: usize,
     pub uncertain: usize,
     pub models: Vec<ModelReservationSample>,
+    pub tasks: Vec<TaskLeaseSample>,
 }
 impl fmt::Debug for SchedulerState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -294,13 +295,22 @@ impl ResourceScheduler {
     }
 
     pub fn observe_reservations(&self) -> ReservationObservation {
+        self.observe_task_reservations(&[])
+    }
+
+    /// Include only task ownership candidates still backed by an issued lease
+    /// and a displayed model reservation in this accounting snapshot.
+    pub fn observe_task_reservations(
+        &self,
+        candidates: &[TaskLeaseSample],
+    ) -> ReservationObservation {
         let state = lock(&self.state);
         let (total, uncertain) = state.reservation_counts();
         let mut leases = BTreeMap::<ModelId, u32>::new();
         for &model in state.leases.values() {
             *leases.entry(model).or_default() += 1;
         }
-        let models = state
+        let models: Vec<_> = state
             .resident_models
             .values()
             .filter(|model| model.active_inferences > 0)
@@ -321,12 +331,24 @@ impl ResourceScheduler {
                 issued_leases: leases.get(&model.model_id).copied().unwrap_or_default(),
             })
             .collect();
+        let tasks = candidates
+            .iter()
+            .copied()
+            .filter(|task| {
+                state.leases.get(&task.lease_id) == Some(&task.model_id)
+                    && models.iter().any(|model| {
+                        model.model_id == task.model_id && model.provider_id == task.provider_id
+                    })
+            })
+            .take(SchedulerSample::MAX_TASKS)
+            .collect();
         ReservationObservation {
             budget: self.policy.budget,
             usage: state.usage,
             total,
             uncertain,
             models,
+            tasks,
         }
     }
 
