@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of broker activity and persistent simulation state. The fourteen-crate workspace has 216 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, model-driven residents and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity and persistent simulation state. The fourteen-crate workspace has 216 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, model-driven residents and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -15,6 +15,12 @@ cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:876
 ```
 
 The Intelligence Network groups tasks by observed state. Pick a task or worker, use N or B to cycle through them, or press Tab to filter tasks. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus or R to reset the camera. With `--allow-cancel`, press C on a queued or running task, then Y to confirm or Esc to dismiss. The inspector shows the broker response. Add `--reduced-motion` to skip animated lane and camera focus transitions. The view labels resource measurements as unavailable. [Broker setup](docs/CLI.md#external-worker-service)
+
+Open the read-only Machine view to inspect local CPU utilization, system memory and the adapter Bevy uses to render the application. It requires no broker or operator key. Select a component with the mouse or keys 1–3. [Machine controls and measurement scope](docs/CLI.md#machine-view)
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --machine
+```
 
 Open the same executable in World Simulation Mode with an initialized database.
 
@@ -64,7 +70,7 @@ flowchart TD
 | `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
 | `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
 | `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
-| `vespera-view` | Optional native 3D orchestration and persistent simulation modes |
+| `vespera-view` | Optional native 3D Machine, orchestration and persistent simulation views |
 | `vespera-world` | Deterministic resident actions, shared resources, relationships and transactional SQLite worlds |
 | `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
 | `vespera-app` | Runtime composition, diagnostics and eleven top-level CLI commands |

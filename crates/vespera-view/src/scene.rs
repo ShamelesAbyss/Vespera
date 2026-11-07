@@ -115,6 +115,13 @@ impl Orbit {
             ..default()
         }
     }
+
+    pub(super) fn at_home(home: &CameraFocus) -> Self {
+        Self {
+            focus: home.home_point,
+            ..Self::with_distance(home.home_distance)
+        }
+    }
 }
 
 #[derive(Resource)]

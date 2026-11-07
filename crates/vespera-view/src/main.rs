@@ -1,3 +1,4 @@
+mod machine_scene;
 mod scene;
 mod world_scene;
 
@@ -23,6 +24,9 @@ struct Options {
     /// Disable animated camera focus and task lane transitions.
     #[arg(long)]
     reduced_motion: bool,
+    /// Open the local hardware view without a broker or credentials.
+    #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world"])]
+    machine: bool,
     /// Open a persistent simulation world instead of the broker view.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
     world: Option<PathBuf>,
@@ -41,6 +45,10 @@ enum Update {
 
 fn main() -> ExitCode {
     let options = Options::parse();
+    if options.machine {
+        machine_scene::run(options.reduced_motion);
+        return ExitCode::SUCCESS;
+    }
     if let Some(path) = options.world {
         return match world_scene::run(path, options.allow_world_control, options.reduced_motion) {
             Ok(()) => ExitCode::SUCCESS,

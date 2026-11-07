@@ -332,7 +332,7 @@ For live events, use the Rust SDK or a client that implements the signed WebSock
 
 Run `cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765` with the operator key in `VESPERA_OPERATOR_TOKEN`. The view groups the latest observed states into queued, running, complete, failed and cancelled lanes. Violet spheres represent workers that appear in lease events. Cyan links identify running attempts. Selecting a task or worker can reveal its dimmed links to the latest recorded attempts. The activity list shows recent observations and their feed sequences. Counts reflect the loaded observations.
 
-Press Tab to cycle all tasks, queued and running work, and terminal outcomes. N cycles visible tasks and B cycles workers. Left-click picks a visible object. Use right-drag, wheel and WASD to navigate, F to focus, and R to reset. `--reduced-motion` applies to both graphical modes and skips animated camera focus and task lane transitions.
+Press Tab to cycle all tasks, queued and running work, and terminal outcomes. N cycles visible tasks and B cycles workers. Left-click picks a visible object. Use right-drag, wheel and WASD to navigate, F to focus, and R to reset. `--reduced-motion` skips animated camera focus and task lane transitions.
 
 The view is read-only by default. `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. The inspector displays pending, returned or uncertain outcomes. The task lane changes when the event feed reports the new state.
 
@@ -355,6 +355,12 @@ cargo run --locked -p vespera-app -- serve --access-file data/worker-access.json
 ```
 
 Use the same database on each restart to recover queued tasks, terminal outcomes, generations, revocations and recent event feeds. An authorized client can resume with its saved event cursor. The broker creates the database when needed and uses it exclusively. A second server using the same database exits with a startup error. Protect the database and its SQLite journal with filesystem permissions because they contain prompts and results. If an authenticated action returns `storage_unavailable`, resolve the database error and restart with the same file, then inspect the task before retrying. The default without `--broker-db` uses process memory. [Recovery contract](PROTOCOL.md#durable-broker-recovery)
+
+## Machine view
+
+Run `cargo run --locked -p vespera-view --features graphics -- --machine` without a broker, provider or key. Click a component or press 1 for CPU, 2 for memory, or 3 for the renderer adapter. Right-drag to orbit, scroll to zoom, use WASD to pan, F to focus and R to reset. Use `--reduced-motion` to skip animated focus and reset.
+
+The window samples host CPU and RAM roughly once per second. The CPU inspector shows process-available logical threads and host-wide CPU utilization. The CPU meter starts after a utilization baseline. The memory meter shows the fraction of physical RAM currently unavailable to applications according to the OS. Host RAM can exceed container limits. Missing or stale samples are labeled unavailable and their meters are hidden. The adapter inspector displays the device and backend selected by wgpu for this window. Other adapters, VRAM, inference-device activity and scheduler or provider state are unavailable in this view.
 
 ## Local task outcome journal
 
