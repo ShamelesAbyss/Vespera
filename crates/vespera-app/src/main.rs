@@ -65,6 +65,9 @@ enum Command {
         /// Strict JSON access policy with environment variable references.
         #[arg(long)]
         access_file: PathBuf,
+        /// Optional SQLite broker database for task and revocation recovery.
+        #[arg(long)]
+        broker_db: Option<PathBuf>,
         /// Numeric IPv4 or IPv6 loopback address and port.
         #[arg(long, default_value = "127.0.0.1:8765")]
         listen: SocketAddr,
@@ -258,8 +261,14 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::Serve {
             access_file,
             listen,
+            broker_db,
         } => {
-            let server = vespera_api::http::Server::bind(listen, access_file).await?;
+            let server = vespera_api::http::Server::bind_with_database(
+                listen,
+                access_file,
+                broker_db.as_deref(),
+            )
+            .await?;
             println!("http://{}", server.address());
             tokio::select! {
                 result = server.serve() => result?,

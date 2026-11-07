@@ -110,6 +110,7 @@ pub enum ErrorCode {
     ExpectedJson,
     NonceCapacity,
     Capacity,
+    StorageUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

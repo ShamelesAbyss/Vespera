@@ -18,6 +18,7 @@ hyper = { version = "1", default-features = false, features = ["http1", "server"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 subtle = { version = "2.6", default-features = false }
 ring = { version = "0.17", default-features = false }
+rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqlite3-sys", "bundled"] }
 
 [lints]
 workspace = true

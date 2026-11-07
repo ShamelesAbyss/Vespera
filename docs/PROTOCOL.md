@@ -55,11 +55,11 @@ Application errors carry `{"error":"code"}`.
 | 413 | `body_limit` |
 | 415 | `expected_json` |
 | 429 | `nonce_capacity` |
-| 503 | `capacity` |
+| 503 | `capacity`, `storage_unavailable` |
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, live push delivery and durable restart recovery remain open.
+Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Durable mode also records it in the database. In memory-only mode, remove a revoked worker from the access file before restarting. Protected remote transport and live push delivery remain open.
 
 ### Broker event replay
 
@@ -68,6 +68,16 @@ Replay reads a bounded page over the same signed operator or worker endpoint. A 
 Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. An operator cursor or another worker's cursor yields 409. A cursor from a previous server process also yields 409. An older cursor beyond retention yields 410. A cursorless restart of replay reports how far retention has advanced in `discarded_through`.
 
 Broker feeds and cursors last for the running process. Revocation removes the worker's feed and signing authority. Replay uses HTTP polling. Durable feeds and live streaming remain roadmap work.
+
+### Durable broker recovery
+
+With `--broker-db` the server commits task changes and revocations in SQLite transactions before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts and accepted results are stored in the database without encryption.
+
+On restart, queued work and terminal outcomes keep their task IDs and ordering. Previously active leases are fenced immediately and produce `lease_expired` observations in the new process. An interrupted task returns to the queue only if its deadline and attempt budget allow another claim. That claim uses the next generation and a fresh attempt ID. The broker still recognizes an exact completion retry for an already accepted result when the worker remains authorized.
+
+Live deadlines use a monotonic clock. Recovery derives the remaining lifetime from the saved wall-clock deadline and fails unfinished work when the clock has moved behind the last recorded high-water mark or the remaining lifetime is outside its bounds. Clock changes while the service is down can affect remaining time. The store keeps up to 256 task records, including terminal outcomes, and 4,096 distinct worker revocations. No in-place purge or reapproval operation is exposed.
+
+A database write failure returns `503 storage_unavailable` and disables further broker operations until restart. Any in-memory state after the failure is withheld from clients. Reopen the same database after fixing the storage problem and inspect the task to reconcile an uncertain result. SQLite writes run synchronously in the service. Slow storage can delay unrelated requests and their timeout handling.
 
 The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
 
@@ -110,7 +120,7 @@ Version the public API independently from event payload schemas and domain stora
 
 Leases last up to 30 seconds and are capped by the task deadline. Renewal uses the host's monotonic clock. Every claim assigns a fresh attempt UUID and increments the task generation. Expiry or revocation fences the attempt and queues another attempt if time and budget remain. Cancellation and completion leave one terminal state. A result retry with the same worker, fence and content returns the accepted result. A different result under that fence is rejected.
 
-The broker retains up to 64 workers and 256 tasks per process, including terminal tasks. Prompts and results are capped at 64 KiB each. The HTTP host serializes mutations and owns operator authorization. Restart drops broker state.
+The broker retains up to 64 approved workers and 256 tasks, including terminal tasks. Prompts and results are capped at 64 KiB each. The HTTP host serializes mutations and owns operator authorization. Restart drops broker state in the default memory-only mode.
 
 ## Remote task lease and result semantics — draft
 

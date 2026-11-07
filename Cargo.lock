@@ -1281,6 +1281,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ring",
+ "rusqlite",
  "serde",
  "serde_json",
  "subtle",

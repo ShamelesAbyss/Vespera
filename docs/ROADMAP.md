@@ -13,7 +13,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 7: agents | Partial: bounded records/history, permissions/provenance, delegation, owned actual inference and cancellation/abort tested; CLI composition and HTTP end-to-end fixtures implemented. Bounded workflow library integrates delegation/execution; durable retention and autonomous planning remain. See [AGENTS.md](AGENTS.md). |
 | 8: memory | Authorized SQLite library with FTS, lineage, quotas, transactional initialization and process-exit recovery tested; real agent adapter/rebind/reopen verified. Offline CLI initialization/inspection/write/consolidation/deletion verified across processes. Opt-in retrieval and generated-result persistence verified through single-agent inference. Backup, restore and durable task sources remain. See [MEMORY.md](MEMORY.md). |
 | 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
-| 10: interoperability | Loopback HTTP v2 and a typed Rust SDK cover authenticated task leasing, renewal, completion, operator controls and worker-scoped event replay. Tests cover reconnect, retention gaps, request integrity, fencing, expiry, revocation, cancellation and idempotent completion. Durable reconciliation, live subscriptions and protected remote transport remain. |
+| 10: interoperability | Loopback HTTP v2 and a typed Rust SDK cover authenticated task leasing, renewal, completion, operator controls and worker-scoped event replay. Optional SQLite recovery preserves work, results and revocations while fencing interrupted attempts. Durable feeds, live subscriptions and protected remote transport remain. |
 | 11: simulation | Pending; independent deterministic world engine required. |
 | 12: 3D command center | Required product destination; native observed graph and world mode pending. Headless operation remains supported architecturally. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
@@ -100,7 +100,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 
 ## Milestone 10 — External agent interoperability
 
-Extend the [loopback worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) with durable recovery, live subscriptions and protected remote transport.
+Extend the [loopback worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) with durable event feeds, live subscriptions and protected remote transport.
 
 - An authenticated test agent registers with approved authority, receives a task lease, submits a result, and reads authorized events.
 - Reject invalid credentials, expired/revoked leases, stale attempts, duplicate conflicts, auth replay, and unauthorized identity/namespace/permission changes.

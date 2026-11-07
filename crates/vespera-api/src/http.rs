@@ -26,6 +26,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use vespera_core::{AgentId, BrokerEventCursor, Capability, Task, TaskId, TaskState};
 
+use crate::storage::Store;
+pub use crate::storage::StoreError;
 use crate::{BrokerError, Fence, LeaseBroker, MAX_WORKERS};
 use auth::{Authentication, Principal, Proof, SCHEME};
 
@@ -48,6 +50,8 @@ pub enum ServerError {
     DuplicateCredential,
     #[error(transparent)]
     Broker(#[from] BrokerError),
+    #[error(transparent)]
+    Storage(#[from] StoreError),
     #[error("worker HTTP listener failed: {0}")]
     Listener(#[from] io::Error),
 }
@@ -70,6 +74,8 @@ struct WorkerAccess {
 struct Service {
     auth: Authentication,
     broker: LeaseBroker,
+    store: Option<Store>,
+    storage_failed: bool,
 }
 
 impl Service {
@@ -89,6 +95,8 @@ impl Service {
         let mut service = Self {
             auth: Authentication::new(),
             broker: LeaseBroker::default(),
+            store: None,
+            storage_failed: false,
         };
         service
             .auth
@@ -103,9 +111,37 @@ impl Service {
         }
         Ok(service)
     }
+
+    fn apply(&mut self, principal: Principal, bytes: &[u8]) -> Result<Reply, HttpError> {
+        const STORAGE_UNAVAILABLE: HttpError =
+            HttpError(StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable");
+        if self.storage_failed {
+            return Err(STORAGE_UNAVAILABLE);
+        }
+        let mut revoked = None;
+        let result = match principal {
+            Principal::Operator => {
+                let operation = decode(bytes)?;
+                if let OperatorRequest::Revoke { worker_id } = &operation {
+                    revoked = Some(*worker_id);
+                }
+                operate(self, operation)
+            }
+            Principal::Worker(worker) => work(&mut self.broker, worker, decode(bytes)?),
+        };
+        if let Some(store) = &mut self.store
+            && store
+                .flush(&mut self.broker, revoked.filter(|_| result.is_ok()), false)
+                .is_err()
+        {
+            self.storage_failed = true;
+            return Err(STORAGE_UNAVAILABLE);
+        }
+        result
+    }
 }
 
-/// A bound loopback listener with an in-memory lease broker.
+/// A bound loopback listener with an optional durable lease broker.
 pub struct Server {
     listener: TcpListener,
     address: SocketAddr,
@@ -117,16 +153,32 @@ impl Server {
         address: SocketAddr,
         access_file: impl AsRef<Path>,
     ) -> Result<Self, ServerError> {
+        Self::bind_with_database(address, access_file, None).await
+    }
+
+    /// Bind the worker service and optionally recover an exclusive broker database.
+    pub async fn bind_with_database(
+        address: SocketAddr,
+        access_file: impl AsRef<Path>,
+        database: Option<&Path>,
+    ) -> Result<Self, ServerError> {
         if !address.ip().is_loopback() {
             return Err(ServerError::NonLoopback);
         }
-        let service = Arc::new(Mutex::new(Service::load(access_file.as_ref())?));
+        let mut service = Service::load(access_file.as_ref())?;
         let listener = TcpListener::bind(address).await?;
+        if let Some(path) = database {
+            let (store, revoked) = Store::open(path, &mut service.broker)?;
+            for worker in revoked {
+                service.auth.revoke(worker);
+            }
+            service.store = Some(store);
+        }
         let address = listener.local_addr()?;
         Ok(Self {
             listener,
             address,
-            service,
+            service: Arc::new(Mutex::new(service)),
         })
     }
 
@@ -245,10 +297,7 @@ async fn handle(state: &Mutex<Service>, request: Request<Incoming>) -> Result<Re
     let bytes = read_body(&parts.headers, body).await?;
     let mut service = state.lock().await;
     service.auth.verify(proof, path, &bytes)?;
-    match principal {
-        Principal::Operator => operate(&mut service, decode(&bytes)?),
-        Principal::Worker(worker) => work(&mut service.broker, worker, decode(&bytes)?),
-    }
+    service.apply(principal, &bytes)
 }
 
 async fn read_body(headers: &HeaderMap, body: Incoming) -> Result<Bytes, HttpError> {

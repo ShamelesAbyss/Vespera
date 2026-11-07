@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Durable broker recovery
+
+The worker event replay checkpoint `74d2392e7487fdb8b0f95283d3fc687f91692c3f` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42338686957). Added opt-in `serve --broker-db`. A single exclusive SQLite connection commits task state, accepted outcomes, attempt generations and revocations before HTTP responses. Startup recovers queue order, checks deadlines and fences interrupted attempts. A failed write leaves the last committed database state available for recovery and disables service operations until restart. The existing locked Rusqlite build is reused.
+
+Windows validation passed 208 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, the release workspace build and optimized broker and worker HTTP tests. The subprocess fixture verifies forced exit and reopening, exclusive ownership, preserved outcomes and revocations, restart fencing, generation advancement, retry exhaustion and queue order. The storage tests inject a failed write batch and simulate a wall-clock rollback.
+
+The database contains prompts and results and relies on local filesystem permissions. Broker event feeds remain process-local. Writes are synchronous, so storage latency can delay other requests. Durable feeds, live subscriptions and protected remote transport remain open.
+
 ## 2026-11-06 — Worker-scoped event replay
 
 Verified implementation checkpoint `74d2392e7487fdb8b0f95283d3fc687f91692c3f` was pushed to the default branch, `main`.

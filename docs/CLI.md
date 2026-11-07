@@ -220,7 +220,7 @@ A retained response carries the accepted task ID and appears as `stored_memory_i
 
 ## External worker service
 
-`vespera serve --access-file <path> [--listen <address:port>]` starts the broker until Ctrl+C or process exit. It prints the bound HTTP URL to stdout. The default address is `127.0.0.1:8765`. A numeric loopback address is required. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
+`vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound HTTP URL to stdout. The default address is `127.0.0.1:8765`. A numeric loopback address is required. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
 
 Save this strict JSON as `data/worker-access.json`. The policy references environment variables and grants one worker the `text-generation` capability.
 
@@ -294,6 +294,16 @@ Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 ```
 
 See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
+
+### Durable broker mode
+
+With the access file and environment variables configured, supply a path in a private directory on local storage. The parent directory must already exist.
+
+```powershell
+cargo run --locked -p vespera-app -- serve --access-file data/worker-access.json --broker-db data/worker-broker.sqlite3
+```
+
+Use the same database on each restart to recover queued tasks, terminal outcomes, generations and revocations. The broker creates the database when needed and uses it exclusively. A second server using the same database exits with a startup error. Protect the database and its SQLite journal with filesystem permissions because they contain prompts and results. If an authenticated action returns `storage_unavailable`, resolve the database error and restart with the same file, then inspect the task before retrying. The default without `--broker-db` uses process memory. [Recovery contract](PROTOCOL.md#durable-broker-recovery)
 
 ## Local task outcome journal
 

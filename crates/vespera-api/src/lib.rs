@@ -5,6 +5,7 @@
 
 mod events;
 pub mod http;
+mod storage;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -65,7 +66,8 @@ pub struct Lease {
     pub expires_in_ms: u64,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcceptedResult {
     pub worker: AgentId,
     pub fence: Fence,
@@ -95,9 +97,11 @@ struct Record {
     task: Task,
     eligible: BTreeSet<AgentId>,
     deadline: Instant,
+    deadline_unix_ms: i64,
     max_attempts: u32,
     generation: u32,
     phase: Phase,
+    dirty: bool,
 }
 
 impl Record {
@@ -113,10 +117,11 @@ impl Record {
     }
 
     fn transition(
-        &self,
+        &mut self,
         change: ExternalTaskChange,
         attempt: Option<ExternalAttempt>,
     ) -> Transition {
+        self.dirty = true;
         Transition {
             task_id: self.task.id,
             change,
@@ -246,13 +251,17 @@ impl LeaseBroker {
         if self.tasks.len() >= MAX_TASKS {
             return Err(BrokerError::Capacity);
         }
-        let record = Record {
+        let mut record = Record {
             task,
             eligible,
             deadline: Instant::now() + lifetime,
+            deadline_unix_ms: storage::unix_ms()
+                .and_then(|now| now.checked_add(lifetime.as_millis() as i64))
+                .unwrap_or(0),
             max_attempts,
             generation: 0,
             phase: Phase::Queued,
+            dirty: false,
         };
         self.events
             .publish(record.transition(ExternalTaskChange::Submitted, None));

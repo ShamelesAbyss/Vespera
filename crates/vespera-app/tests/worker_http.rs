@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -94,6 +94,28 @@ impl Wire {
 }
 
 fn launch(first: AgentId, second: AgentId) -> (Process, String) {
+    launch_with_database(first, second, None)
+}
+
+fn server_command(policy: &Path, database: Option<&Path>) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vespera"));
+    command
+        .args(["serve", "--listen", "127.0.0.1:0", "--access-file"])
+        .arg(policy)
+        .env("TEST_OPERATOR_TOKEN", OPERATOR)
+        .env("TEST_FIRST_TOKEN", FIRST)
+        .env("TEST_SECOND_TOKEN", SECOND);
+    if let Some(database) = database {
+        command.arg("--broker-db").arg(database);
+    }
+    command
+}
+
+fn launch_with_database(
+    first: AgentId,
+    second: AgentId,
+    database: Option<&Path>,
+) -> (Process, String) {
     let policy = std::env::temp_dir().join(format!("vespera-worker-{}.json", Uuid::new_v4()));
     std::fs::write(
         &policy,
@@ -105,12 +127,7 @@ fn launch(first: AgentId, second: AgentId) -> (Process, String) {
             ]
         })).unwrap(),
     ).unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_vespera"))
-        .args(["serve", "--listen", "127.0.0.1:0", "--access-file"])
-        .arg(&policy)
-        .env("TEST_OPERATOR_TOKEN", OPERATOR)
-        .env("TEST_FIRST_TOKEN", FIRST)
-        .env("TEST_SECOND_TOKEN", SECOND)
+    let child = server_command(&policy, database)
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
@@ -127,6 +144,128 @@ fn launch(first: AgentId, second: AgentId) -> (Process, String) {
         .unwrap();
     assert!(base.starts_with("http://127.0.0.1:"));
     (process, base)
+}
+
+struct DatabaseFixture(PathBuf);
+
+impl Drop for DatabaseFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[tokio::test]
+async fn durable_service_recovers_work_and_fences_interrupted_attempts() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let (process, base) = launch_with_database(first, second, Some(&db.0));
+    let second_host = server_command(&process.policy, Some(&db.0))
+        .output()
+        .unwrap();
+    assert!(!second_host.status.success());
+    assert!(second_host.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&second_host.stderr).contains("broker database is busy"));
+
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let completed = TaskId::new();
+    let interrupted = TaskId::new();
+    let queued = TaskId::new();
+    let exhausted = TaskId::new();
+    let submission = |task_id, max_attempts| Submission {
+        task_id,
+        prompt: "Durable worker task".into(),
+        required_capabilities: ["text-generation".parse().unwrap()].into(),
+        eligible_workers: [first, second].into(),
+        lifetime_seconds: 60,
+        max_attempts,
+    };
+    operator.submit(&submission(completed, 2)).await.unwrap();
+    let complete_fence = worker.claim().await.unwrap().unwrap().fence;
+    let accepted = worker
+        .complete(complete_fence, "saved outcome")
+        .await
+        .unwrap();
+    operator.submit(&submission(interrupted, 2)).await.unwrap();
+    let old_fence = worker.claim().await.unwrap().unwrap().fence;
+    operator.submit(&submission(exhausted, 1)).await.unwrap();
+    let second_worker =
+        WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let exhausted_fence = second_worker.claim().await.unwrap().unwrap().fence;
+    assert_eq!(exhausted_fence.task_id, exhausted);
+    operator.revoke(second).await.unwrap();
+    operator
+        .submit(&Submission {
+            eligible_workers: [first].into(),
+            ..submission(queued, 2)
+        })
+        .await
+        .unwrap();
+    let previous_cursor = operator.replay(None, 64).await.unwrap().next_cursor;
+    drop(process); // Kill the service without graceful shutdown.
+
+    let (_restarted, base) = launch_with_database(first, second, Some(&db.0));
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let revoked =
+        WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    assert_eq!(
+        operator.inspect(completed).await.unwrap().result.unwrap(),
+        accepted
+    );
+    assert_eq!(
+        worker
+            .complete(complete_fence, "saved outcome")
+            .await
+            .unwrap(),
+        accepted
+    );
+    assert_eq!(
+        operator.inspect(exhausted).await.unwrap().state,
+        TaskState::Failed
+    );
+    assert_eq!(
+        operator.inspect(interrupted).await.unwrap().state,
+        TaskState::Queued
+    );
+    assert!(matches!(
+        revoked.claim().await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+    assert!(matches!(
+        worker.renew(old_fence).await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::StaleLease),
+            ..
+        })
+    ));
+    assert!(matches!(
+        operator.replay(Some(previous_cursor), 1).await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::ForeignCursor),
+            ..
+        })
+    ));
+    let recovery = worker.replay(None, 1).await.unwrap();
+    assert!(
+        matches!(recovery.entries[0].event.kind, EventKind::ExternalTaskChanged {
+        change: ExternalTaskChange::LeaseExpired, attempt: Some(attempt), ..
+    } if attempt.attempt_id == old_fence.attempt_id)
+    );
+    let replacement = worker.claim().await.unwrap().unwrap();
+    assert_eq!(replacement.fence.task_id, interrupted);
+    assert_eq!(replacement.fence.generation, old_fence.generation + 1);
+    assert_ne!(replacement.fence.attempt_id, old_fence.attempt_id);
+    worker
+        .complete(replacement.fence, "recovered outcome")
+        .await
+        .unwrap();
+    assert_eq!(worker.claim().await.unwrap().unwrap().fence.task_id, queued);
 }
 
 #[tokio::test]
