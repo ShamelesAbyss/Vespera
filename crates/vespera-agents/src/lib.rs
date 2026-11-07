@@ -1,6 +1,6 @@
 //! Agent runtime, capability routing, permission enforcement, and memory isolation for VESPERA.
 //!
-//! Implements Milestone 6:
+//! Independent agent runtime foundation:
 //! - Agent lifecycle management (`Suspended`, `Idle`, `Running`, `Failed`).
 //! - Decoupled model selection (`Fixed` and `Capability` policies) preserving agent identity.
 //! - Permission-gated memory layers, inter-agent messaging, task delegation, and simulation actions.
@@ -20,9 +20,18 @@ use vespera_model_registry::{ModelRegistration, ModelRegistry, RegistryError};
 use vespera_providers::CancellationToken;
 use vespera_scheduler::{ResourceScheduler, ScheduledInference, SchedulerError};
 
+mod execution;
+pub use execution::{ExecutionError, ExecutionOptions, TaskExecutionResult};
+
 /// Error taxonomy for agent runtime operations.
 #[derive(Debug, Error)]
 pub enum AgentRuntimeError {
+    /// Managed provider work must stop before its lease can be released.
+    #[error("task {task_id} has managed inference in progress; request cancellation instead")]
+    ExecutionInProgress {
+        /// Target task.
+        task_id: TaskId,
+    },
     /// Task identities and assignments are immutable once accepted.
     #[error("task {task_id} conflicts with an existing task or execution")]
     TaskConflict {
@@ -147,6 +156,7 @@ struct RuntimeState {
     tasks: BTreeMap<TaskId, Task>,
     task_assignments: BTreeMap<TaskId, AgentId>,
     executions: BTreeMap<TaskId, ScheduledInference>,
+    managed_tasks: BTreeMap<TaskId, CancellationToken>,
     logical_tick: u64,
 }
 
@@ -171,6 +181,7 @@ impl Drop for TaskStartGuard {
             return;
         }
         let mut state = lock_state(&self.state);
+        state.managed_tasks.remove(&self.task_id);
         if let Some(task) = state.tasks.get_mut(&self.task_id) {
             let _ = task.state.transition(if self.failed {
                 TaskState::Failed
@@ -557,9 +568,21 @@ impl AgentRuntime {
     pub async fn start_task_execution(
         &self,
         agent_id: AgentId,
+        task: Task,
+        requested_context_tokens: Option<u32>,
+        cancel: CancellationToken,
+    ) -> Result<ActiveTaskExecution, AgentRuntimeError> {
+        self.start_task_execution_inner(agent_id, task, requested_context_tokens, cancel, None)
+            .await
+    }
+
+    async fn start_task_execution_inner(
+        &self,
+        agent_id: AgentId,
         mut task: Task,
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
+        managed: Option<CancellationToken>,
     ) -> Result<ActiveTaskExecution, AgentRuntimeError> {
         task.validate()?;
         if task.state != TaskState::Queued {
@@ -591,6 +614,9 @@ impl AgentRuntime {
             task.state.transition(TaskState::Running)?;
             state.tasks.insert(task.id, task.clone());
             state.task_assignments.insert(task.id, agent_id);
+            if let Some(token) = managed {
+                state.managed_tasks.insert(task.id, token);
+            }
             if let Some(agent) = state.agents.get_mut(&agent_id) {
                 agent.status = AgentStatus::Running;
             }
@@ -655,6 +681,16 @@ impl AgentRuntime {
         model_id: ModelId,
         terminal_state: TaskState,
     ) -> Result<Task, AgentRuntimeError> {
+        self.finish_task_execution_inner(task_id, model_id, terminal_state, None)
+    }
+
+    fn finish_task_execution_inner(
+        &self,
+        task_id: TaskId,
+        model_id: ModelId,
+        terminal_state: TaskState,
+        owned: Option<&ScheduledInference>,
+    ) -> Result<Task, AgentRuntimeError> {
         if !matches!(
             terminal_state,
             TaskState::Completed | TaskState::Failed | TaskState::Cancelled
@@ -668,11 +704,16 @@ impl AgentRuntime {
         }
 
         let mut state = lock_state(&self.state);
+        if state.managed_tasks.contains_key(&task_id) && owned.is_none() {
+            return Err(AgentRuntimeError::ExecutionInProgress { task_id });
+        }
         let inference = state
             .executions
             .get(&task_id)
             .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
-        if inference.model_id != model_id {
+        if inference.model_id != model_id
+            || owned.is_some_and(|owned| owned.lease_id() != inference.lease_id())
+        {
             return Err(AgentRuntimeError::ExecutionMismatch { task_id });
         }
         let assigned_agent = state.task_assignments.get(&task_id).copied();
@@ -706,6 +747,7 @@ impl AgentRuntime {
         if let Some(inference) = state.executions.remove(&task_id) {
             inference.release();
         }
+        state.managed_tasks.remove(&task_id);
 
         Ok(snapshot)
     }

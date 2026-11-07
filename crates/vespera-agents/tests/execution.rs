@@ -1,4 +1,4 @@
-//! Deterministic scheduler integration tests; no live provider is required.
+//! Deterministic agent lifecycle and actual provider-invocation regressions.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -22,6 +22,8 @@ struct MockProvider {
     unloads: AtomicUsize,
     entered: tokio::sync::Notify,
     proceed: tokio::sync::Notify,
+    infer_mode: AtomicUsize,
+    requests: std::sync::Mutex<Vec<vespera_providers::BoundedInferenceRequest>>,
 }
 
 impl MockProvider {
@@ -34,6 +36,8 @@ impl MockProvider {
             unloads: AtomicUsize::new(0),
             entered: tokio::sync::Notify::new(),
             proceed: tokio::sync::Notify::new(),
+            infer_mode: AtomicUsize::new(1),
+            requests: std::sync::Mutex::new(Vec::new()),
         }
     }
     async fn lifecycle(
@@ -173,14 +177,49 @@ impl InferenceProvider for MockProvider {
     }
     fn infer<'a>(
         &'a self,
-        _request: vespera_providers::BoundedInferenceRequest,
+        request: vespera_providers::BoundedInferenceRequest,
         _cancel: CancellationToken,
     ) -> vespera_providers::BoxFuture<'a, Result<InferenceResponse, vespera_providers::ProviderError>>
     {
         Box::pin(async move {
-            Err(vespera_providers::ProviderError::UnsupportedOperation {
-                provider_id: self.id,
-                operation: "infer",
+            use vespera_providers::{InferenceFinishReason, InferenceMetrics, ProviderError};
+            let model_name = request.model_name().to_owned();
+            self.requests.lock().unwrap().push(request);
+            let mode = self.infer_mode.load(Ordering::SeqCst);
+            if mode == 3 {
+                self.entered.notify_one();
+                self.proceed.notified().await;
+            }
+            if mode == 2 {
+                return Err(ProviderError::ConnectionFailed {
+                    provider_id: self.id,
+                    sanitized_message: "fixture failure".into(),
+                });
+            }
+            Ok(InferenceResponse {
+                provider_id: if mode == 4 {
+                    ProviderId::new()
+                } else {
+                    self.id
+                },
+                model_name,
+                content: if mode == 5 {
+                    "x".repeat(300 * 1024)
+                } else {
+                    "fixture answer".into()
+                },
+                finish_reason: if mode == 7 {
+                    InferenceFinishReason::ToolCalls
+                } else {
+                    InferenceFinishReason::Stop
+                },
+                metrics: InferenceMetrics {
+                    client_elapsed_ms: 0,
+                    prompt_tokens: Some(10),
+                    completion_tokens: Some(if mode == 6 { 1000 } else { 3 }),
+                    provider_load_duration_ms: None,
+                    provider_eval_duration_ms: None,
+                },
             })
         })
     }
@@ -460,4 +499,310 @@ async fn inbox_read_requires_communication_permission() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn managed_execution_invokes_bounded_provider_and_preserves_provenance() {
+    use vespera_agents::ExecutionOptions;
+    let (runtime, scheduler, provider, a, _, model) = runtime_fixture().await;
+    let id = TaskId::new();
+    let result = runtime
+        .execute_task(
+            a,
+            task(id),
+            ExecutionOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.task.state, TaskState::Completed);
+    assert_eq!(result.task.id, id);
+    assert_eq!(result.agent_id, a);
+    assert_eq!(result.model_id, model);
+    assert_eq!(result.provider_id, provider.id);
+    assert!(!result.lease_id.is_empty());
+    assert_eq!(result.response.content, "fixture answer");
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].model_name(), model.to_string());
+        assert_eq!(requests[0].messages()[0].content, "bounded fixture task");
+        assert_eq!(requests[0].max_output_tokens(), 256);
+        assert_eq!(requests[0].context_window_limit(), 512);
+    }
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().status,
+        AgentStatus::Idle
+    );
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Completed
+    );
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+}
+
+#[tokio::test]
+async fn provider_failure_and_invalid_results_fail_without_leaking_leases() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    for mode in [2, 4, 5, 6, 7] {
+        let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
+        provider.infer_mode.store(mode, Ordering::SeqCst);
+        let id = TaskId::new();
+        let error = runtime
+            .execute_task(
+                a,
+                task(id),
+                ExecutionOptions::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        if mode == 2 {
+            assert!(matches!(error, ExecutionError::Provider(_)));
+        } else {
+            assert!(matches!(error, ExecutionError::InvalidResponse { .. }));
+        }
+        assert_eq!(runtime.get_task(id).await.unwrap().state, TaskState::Failed);
+        assert_eq!(
+            runtime.get_agent(a).await.unwrap().status,
+            AgentStatus::Failed
+        );
+        assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+        assert_eq!(scheduler.queue_snapshot().active, 0);
+        assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+    }
+}
+
+#[tokio::test]
+async fn managed_cancellation_stops_local_work_before_releasing_lease() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    let (runtime, scheduler, provider, a, _, model) = runtime_fixture().await;
+    provider.infer_mode.store(3, Ordering::SeqCst);
+    let id = TaskId::new();
+    let r = runtime.clone();
+    let running = tokio::spawn(async move {
+        r.execute_task(
+            a,
+            task(id),
+            ExecutionOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+    });
+    provider.entered.notified().await;
+    assert!(matches!(
+        runtime
+            .finish_task_execution(id, model, TaskState::Completed)
+            .await,
+        Err(AgentRuntimeError::ExecutionInProgress { .. })
+    ));
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 1);
+    assert!(runtime.cancel_task(id).await.unwrap());
+    assert!(matches!(
+        running.await.unwrap(),
+        Err(ExecutionError::Cancelled)
+    ));
+    assert!(!runtime.cancel_task(id).await.unwrap());
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Cancelled
+    );
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().status,
+        AgentStatus::Idle
+    );
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn absolute_execution_deadline_cancels_even_uncooperative_provider() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
+    provider.infer_mode.store(3, Ordering::SeqCst);
+    let id = TaskId::new();
+    let r = runtime.clone();
+    let running = tokio::spawn(async move {
+        r.execute_task(
+            a,
+            task(id),
+            ExecutionOptions {
+                timeout: Duration::from_secs(1),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await
+    });
+    provider.entered.notified().await;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(matches!(
+        running.await.unwrap(),
+        Err(ExecutionError::DeadlineExceeded)
+    ));
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Cancelled
+    );
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().status,
+        AgentStatus::Idle
+    );
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+}
+
+#[tokio::test]
+async fn aborted_managed_execution_releases_owned_lease_and_records_cancellation() {
+    use vespera_agents::ExecutionOptions;
+    let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
+    provider.infer_mode.store(3, Ordering::SeqCst);
+    let id = TaskId::new();
+    let r = runtime.clone();
+    let running = tokio::spawn(async move {
+        r.execute_task(
+            a,
+            task(id),
+            ExecutionOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+    });
+    provider.entered.notified().await;
+    running.abort();
+    assert!(running.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Cancelled
+    );
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+    assert_eq!(
+        runtime.get_agent(a).await.unwrap().status,
+        AgentStatus::Idle
+    );
+}
+
+#[tokio::test]
+async fn invalid_execution_bounds_never_reach_inference() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
+    let id = TaskId::new();
+    assert!(matches!(
+        runtime
+            .execute_task(
+                a,
+                task(id),
+                ExecutionOptions {
+                    timeout: Duration::ZERO,
+                    ..Default::default()
+                },
+                CancellationToken::new()
+            )
+            .await,
+        Err(ExecutionError::InvalidOptions { .. })
+    ));
+    assert!(runtime.get_task(id).await.is_err());
+    let id = TaskId::new();
+    assert!(matches!(
+        runtime
+            .execute_task(
+                a,
+                task(id),
+                ExecutionOptions {
+                    max_output_tokens: 1024,
+                    ..Default::default()
+                },
+                CancellationToken::new()
+            )
+            .await,
+        Err(ExecutionError::Provider(_))
+    ));
+    assert_eq!(runtime.get_task(id).await.unwrap().state, TaskState::Failed);
+    assert!(provider.requests.lock().unwrap().is_empty());
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+}
+
+#[tokio::test]
+async fn caller_cancellation_while_queued_preserves_other_lease_owners() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    let (runtime, scheduler, provider, a, _, model) = runtime_fixture().await;
+    let mut held = Vec::new();
+    for _ in 0..4 {
+        held.push(
+            scheduler
+                .admit_and_prepare(model, None, CancellationToken::new())
+                .await
+                .unwrap(),
+        );
+    }
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let id = TaskId::new();
+    let r = runtime.clone();
+    let running = tokio::spawn(async move {
+        r.execute_task(a, task(id), ExecutionOptions::default(), token)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while scheduler.queue_snapshot().waiting != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    cancel.cancel();
+    assert!(matches!(
+        running.await.unwrap(),
+        Err(ExecutionError::Cancelled)
+    ));
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Cancelled
+    );
+    assert_eq!(scheduler.queue_snapshot().waiting, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 4);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 4);
+    assert!(provider.requests.lock().unwrap().is_empty());
+    drop(held);
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+}
+
+#[tokio::test]
+async fn managed_cancellation_during_load_retains_uncertain_provider_memory() {
+    use vespera_agents::{ExecutionError, ExecutionOptions};
+    let (runtime, scheduler, provider, a, _, _) = runtime_fixture().await;
+    provider.load_mode.store(4, Ordering::SeqCst);
+    let id = TaskId::new();
+    let r = runtime.clone();
+    let running = tokio::spawn(async move {
+        r.execute_task(
+            a,
+            task(id),
+            ExecutionOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+    });
+    provider.entered.notified().await;
+    assert!(runtime.cancel_task(id).await.unwrap());
+    assert!(matches!(
+        running.await.unwrap(),
+        Err(ExecutionError::Cancelled)
+    ));
+    assert!(!runtime.cancel_task(id).await.unwrap());
+    assert_eq!(
+        runtime.get_task(id).await.unwrap().state,
+        TaskState::Cancelled
+    );
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+    assert_eq!(
+        scheduler.resident_models().await[0].residency,
+        vespera_scheduler::ResidencyState::Unknown
+    );
 }

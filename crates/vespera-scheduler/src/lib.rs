@@ -125,6 +125,7 @@ pub struct ResidentModel {
 #[derive(Clone)]
 pub struct ScheduledInference {
     lease: Arc<InferenceLease>,
+    model_name: String,
     /// Model identity.
     pub model_id: ModelId,
     /// Provider identity.
@@ -137,6 +138,11 @@ pub struct ScheduledInference {
     pub loaded_on_demand: bool,
 }
 impl ScheduledInference {
+    /// Provider-native name captured at admission, unaffected by later registry changes.
+    #[must_use]
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
     /// Unique identity of this admission, shared by clones.
     #[must_use]
     pub fn lease_id(&self) -> uuid::Uuid {
@@ -511,6 +517,7 @@ impl ResourceScheduler {
         let id = uuid::Uuid::new_v4();
         lock(&self.state).leases.insert(id, model_id);
         let inference = ScheduledInference {
+            model_name: model.provider_model_identifier.clone(),
             lease: Arc::new(InferenceLease {
                 id,
                 state: self.state.clone(),

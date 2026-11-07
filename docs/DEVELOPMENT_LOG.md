@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Actual bounded agent inference and managed execution ownership
+
+Previous verified checkpoint: `0eb16a7cd8c72f5698787e3bec71f7fba8534b2c`, pushed to the recovery branch.
+
+Added `AgentRuntime::execute_task` in a dedicated execution module. An accepted task resolves the agent's model, acquires the bounded scheduler lease, constructs a validated provider request and actually invokes inference. Results include independent agent/model/provider identities, the unique admission ID, terminal task, generated response/finish reason, provider observations and runtime-observed elapsed time. Provider-native names are captured at admission. Response identity/content/reported output bounds are enforced; tool/lifecycle results cannot silently execute unsupported actions.
+
+The managed invocation owns its whole queue/load/inference lifecycle. Its absolute budget covers preparation and inference. Caller/operator cancellation, deadline and dropped futures record local cancellation and return owned slots; provider/response failures record failure. Synchronous guards handle task abort without async cleanup. Cancellation is explicitly local, with no claim that remote compute stopped or provider memory was freed. Manual task completion is fenced while managed inference is active, closing a premature-release race before provider return. Low-level preparation/completion remains an explicitly caller-owned composition API.
+
+Fifteen agent tests pass, including actual fake-provider invocation/bounds/provenance, invalid results, failed requests, manual completion fencing, uncooperative-provider deadline, abort, and cancellation during queueing/loading/inference. Queued cancellation preserves all other lease owners; interrupted load retains uncertain memory accounting. Enabled Tokio `test-util` only for deterministic agent deadline tests. Strict Clippy initially identified an explicit-drop test scope it could not prove ended before awaits; a lexical scope resolved it. Full checkpoint validation passed: formatting, all-target workspace check, all 123 tests with one live test ignored, strict Clippy, rustdoc and optimized workspace build.
+
+Rewrote `AGENTS.md` to describe actual behavior and remaining boundaries. No tools, automatic memory injection/writes, persistent results, autonomous loop, or CLI execution command are claimed. Next prerequisites are bounded runtime histories/memory provenance and application composition; orchestration, persistence/events and the remaining full-platform roadmap remain active.
+
 ## 2026-11-06 — Bounded transport and validated request deserialization
 
 Previous verified checkpoint: `497c924b6130b39880c2ed26df6ef7c5f7164a1e`, pushed to the recovery branch.

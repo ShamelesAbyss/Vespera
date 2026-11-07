@@ -1,41 +1,111 @@
-# Agents
+# Agent runtime
 
-## Current foundation
+An agent has an independent UUID, identity, role, personality, goals, replaceable
+model policy, permissions and operational state. The Rust runtime registers and
+inspects agents, routes by fixed model or declared capabilities, coordinates
+owned task execution, and provides permission-gated in-process memory/messages.
+It is not yet a persistent autonomous ecosystem or an external-agent server.
 
-Milestone 1 provides `AgentIdentity`, `AgentDefinition`, replaceable `ModelSelectionPolicy`, default-deny permission declarations, agent-owned memory addressing, and legal task-state transitions. These are domain/configuration contracts, **not an agent executor**. There is no autonomous loop, delegation service, tool runner, persistence, or external-agent session in this build.
+## Actual task inference
 
-An agent is not a model. `AgentIdentity` contains an independent agent UUID, name, description, role, personality, and goals. `AgentDefinition` adds model policy, declared permissions, and status. Status defaults to `suspended`; other declarations are `idle`, `running`, and `failed`. Declaring `running` does not start execution. Persistent relationships and execution history are future runtime/storage features, not fields or services already supplied by this definition.
+`AgentRuntime::execute_task(agent_id, task, options, cancel)` executes one bounded
+provider inference through the selected model and scheduler lease. It returns a
+`TaskExecutionResult` containing the terminal task snapshot, agent/model/provider
+IDs, unique lease identity, response/finish reason/provider metrics, and
+runtime-observed elapsed time including queueing and loading.
 
-Model policy is replaceable: `fixed` references a registered model UUID; `capability` requires a nonempty capability set. Changing the policy does not change identity, memory ownership, or permissions. Configuration checks fixed references and requires at least one registered model whose declared capabilities contain the required set. This is a metadata match, not a promise of current health, affordability, or runtime selection.
+The lifecycle is:
 
-Capability strings are extensible validated slugs: 1–64 ASCII bytes, beginning with `a-z`, followed by `a-z0-9._-`. Values are not silently trimmed or lowercased. Capabilities express claimed/required abilities, not authority to act. Selection must eventually combine them with availability, permissions, measured limits, and routing policy. Agents do not currently have a separate advertised-capability field beyond their model policy.
+```mermaid
+flowchart LR
+    A[Validate task and bounds] --> B[Reserve agent and task identity]
+    B --> C[Select healthy eligible model]
+    C --> D[Bounded scheduler queue and preparation]
+    D --> E[Construct bounded provider request]
+    E --> F[Run provider inference]
+    F --> G[Validate response identity and bounds]
+    G --> H[Record terminal task and release owned lease]
+```
 
-## Identity and authority ownership
+An agent can prepare/run only one task at a time. Accepted task IDs cannot be
+overwritten or revived. Delegation records a queued task for a specific recipient;
+that recipient can execute the unchanged task once. Provider-native model names
+are captured at admission, so a later registry edit cannot silently retarget an
+accepted request.
 
-The user/control plane creates and approves identity and permissions. Agents, external peers, model outputs, retrieved memories, and provider responses cannot silently replace an ID, move into another namespace, grant access, or modify system configuration. A model-policy change is a controlled configuration operation, not a generated instruction.
+`ExecutionOptions` defaults to 256 output tokens, model/scheduler-limited context,
+a 60-second total task budget, no explicit temperature and a 256-KiB accepted
+response content limit. Limits are validated before execution. The task deadline
+includes queue, preparation and inference; it is separate from transport limits.
+Provider/model identity mismatches, excessive content/reported output tokens and
+unsupported tool/lifecycle responses fail the task. Unknown finish reasons remain
+unknown. A completed inference does not certify that generated claims are correct
+or that a broader objective was achieved. Length-limited output retains its
+reported finish reason.
 
-Current permission variants are `communicate`, `memory_read`, `memory_write`, `delegate`, and `simulation_act`; the default set is empty. These are declarations, not runtime enforcement. Tool and network grants are future boundary design, not current permission variants. Future checks must cover tool execution, network destinations, delegation, messaging, memory access, and resource use. A parent's authority is not automatically transferred to a child. Effective delegated authority should be the intersection of user approval, delegator authority, task scope, and recipient limits.
+Only the task prompt is currently supplied as a user message. Personality, goals
+and stored memory are not automatically injected. Output is returned to the
+caller, not automatically stored as memory or executed as actions. Persistent
+result history, bounded memory context assembly, tool execution and autonomous
+multi-step behavior remain integration work.
 
-Local model text, tool results, and retrieved episodes are untrusted data. Embedded instructions cannot override configuration or the user's control plane. Approval/audit paths must be distinct from generated messages. Secret values must never enter routine history, events, or memory.
+## Cancellation, failure and ownership
 
-## Tasks: rules now, execution later
+Caller cancellation and `cancel_task(task_id)` request local cancellation.
+`cancel_task` returns false when the task exists but no managed invocation remains.
+It signals the owned invocation rather than releasing its lease prematurely.
+`finish_task_execution` cannot finish a managed task while provider work is active.
 
-The current `Task` carries a task UUID, prompt, required capabilities, and state. Legal edges are `queued → running`, `queued → cancelled`, and `running → completed | failed | cancelled`. All self-transitions and exits from terminal states are rejected without changing the state. Callers must use `TaskState::transition` for lifecycle changes; public snapshot fields are not a security boundary.
+A synchronous execution guard records cancellation and releases the local slot
+when a running future is dropped/aborted, including an uncooperative provider.
+The total task deadline also cancels local execution. Provider errors and invalid
+responses record failure. Agents return to idle after completion/cancellation;
+failure requires an operator status change before retrying with a new task ID.
+Cancellation does not prove remote compute stopped; provider memory reservations
+remain charged until the scheduler has acknowledged unload evidence.
 
-Transition validation does not enqueue work, implement retries, or execute cancellation. Future execution must distinguish the stable task ID from attempts and leases. Bounded retries need a separate attempt lifecycle; they must not silently revive terminal tasks or reset the current state machine. Cancellation request, local acknowledgement, provider stop confirmation, and terminal state are different observations. Results after cancellation, expiry, or reassignment must not overwrite accepted state.
+The lower-level `start_task_execution`/`finish_task_execution` pair remains for
+trusted composition. A caller choosing that API must finish its accepted task;
+the managed `execute_task` method owns cancellation/abort cleanup for the whole
+invocation. Completion validates the recorded model and unique lease before
+releasing anything. Duplicate/wrong-model completion cannot release another task.
 
-Future tasks need bounded inputs/outputs, deadlines, iteration/delegation limits, and provenance. Missing models, denied permissions, budget exhaustion, and partial failure must be reported truthfully. A capability-selection miss must not trigger every registered model.
+## Operator authority and permissions
 
-## Future runtime — Milestones 6 and 7
+Identity, permissions, model policy and status are control-plane owned. Model
+output cannot modify them. Model-policy rebinding retains identity and memory;
+rebinding/status changes cannot bypass active execution, and registration cannot
+fabricate a running agent.
 
-A runtime will receive authorized tasks, route requests through the orchestrator/scheduler, apply permitted actions, record history, and support bounded communication/suspension. Persistence follows at Milestone 8. No unrestricted autonomous loop is enabled by default; concurrency, queues, retries, and assistance depth need explicit bounds.
+The default permission set is empty. Current variants are `communicate`,
+`memory_read`, `memory_write`, `delegate`, and `simulation_act`. Memory reads and
+writes, message sends and inbox reads, delegation, and simulation authorization
+check the corresponding grant. `simulation_act` authorizes a future action; no
+world engine exists yet. There is no tool executor or OS sandbox in this runtime.
 
-Agents request actions through ports rather than directly editing world state, provider lifecycle, permissions, or storage files. Simulation residents use world-scoped observations and authorized intents. Simulation ticks do not wait for inference; late decisions carry their originating world version and require validation. Once persistence exists, individual memory survives model/provider replacement and restart. Learned summaries cannot become authoritative identity or permission records.
+These Rust library methods assume a trusted caller supplies the correct actor ID.
+They are not a remotely authenticated principal boundary. Future API/external
+agent composition must derive actor identity from authenticated authority, never
+accept an arbitrary agent UUID as proof of identity. Provider network authorization
+is operator configuration, not authority conferred by model text.
 
-External agents may use other languages while VESPERA remains Rust. Authentication, leases, idempotency, quotas, cancellation, and namespace restrictions are **draft** in [PROTOCOL.md](PROTOCOL.md), not current connectivity.
+## Memory and communication limits
 
-## What is observable
+Memory and inbox records currently live in per-agent in-process maps. They do
+not survive restart, do not implement full-text search/consolidation, and do not
+yet have complete capacity/retention enforcement. Durable isolated storage,
+provenance validation and bounded histories remain required work. See
+[MEMORY.md](MEMORY.md) and [ROADMAP.md](ROADMAP.md).
 
-User-visible outputs include authorized answers, messages, explicit concise decision summaries, permitted tool activity, task transitions, routing metadata, and measured observations. They do not include a model's private hidden chain-of-thought. “Observe reasoning workflows” means accountable decisions/effects, not disclosure or invention of internal reasoning.
+## Verification
 
-Agent statements are generated claims unless independently verified. Record model/provider and attempt provenance without conflating them with agent identity. Future inspection must authorize private memory/messages and redact secrets. Acceptance gates are in [ROADMAP.md](ROADMAP.md); the basis is [INITIAL_PLAN.md](INITIAL_PLAN.md) and [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt).
+```powershell
+cargo test -p vespera-agents --locked
+```
+
+Deterministic fake providers verify actual invocation, transmitted bounds,
+provenance, invalid/failing responses, task ownership, model-policy independence,
+permission checks, duplicate delegation, concurrent preparation, managed/manual
+completion fencing, queue/load/inference cancellation, absolute deadlines and
+future abort. This is not live inference evidence for a particular installed
+model/server. The CLI is not yet wired to this runtime.
