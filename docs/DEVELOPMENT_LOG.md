@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — External worker lease broker
+
+Previous checkpoint `8527f95d007e432c5a8b346f84527bdedbb6737a` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42335390456). Added `vespera-api::LeaseBroker` with operator-approved workers, capability matching and explicit task allowlists. Each lease carries a fresh attempt ID, a per-task fencing generation and a monotonic expiry capped by the task deadline. Expiry and revocation permit bounded reassignment. Completion accepts one result and returns the same record on exact retry. Cancellation fences late work and preserves an already accepted result.
+
+The broker holds at most 64 workers and 256 task records, including terminal outcomes. It retains state for one host process and takes the authenticated identity from its caller. Network authentication, transport, durable restart reconciliation and SDK remain open. No new third-party packages were added.
+
+All 197 offline tests passed. Strict Clippy and rustdoc, the optimized workspace build and four optimized broker tests passed. Broker tests cover worker scope, attempt fencing and reassignment, revocation, duplicate results, cancellation, deadline-capped renewal and capacity.
+
 ## 2026-11-06 — Versioned task failure and cancellation events
 
 Previous checkpoint `11fdcd74c8949fb6ac0be20a089c36c7c65eb559` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42334971707). The CLI now journals observed failed and cancelled agent tasks and workflow roots. Existing event kinds still emit version 1. New `task_failed` and `task_cancelled` kinds require version 2, and current readers decode both versions. Records contain task IDs and omit provider errors and user payloads. Publication follows observed terminal state and remains separate from execution. JSON and human reports expose journal errors alongside execution evidence.

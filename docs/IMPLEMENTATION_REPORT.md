@@ -2,7 +2,7 @@
 
 ## Current recovery implementation — 2026-11-06
 
-The ten-crate workspace now integrates real provider adapters, effective-health
+The eleven-crate workspace now integrates real provider adapters, effective-health
 registry operations, conservative model reservations/lifecycle, bounded priority
 admission, owned inference leases, bounded independent agents and actual task
 inference. The application library composes these services. The CLI implements
@@ -10,8 +10,8 @@ inference. The application library composes these services. The CLI implements
 `run-workflow`, `memory` and `events`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-193-test offline suite (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
-workspace build, and the optimized CLI subprocess suite. HTTP end-to-end
+197-test offline suite (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+workspace build, and the optimized external lease broker tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
 GitHub Ubuntu runs for the preceding `aee7e24`, `566f6d7` and `0eb16a7` checkpoints
@@ -20,7 +20,7 @@ in the development log after pushing; it is not inferred from local validation.
 
 The SQLite memory library supports FTS, lineage and process-exit recovery. The offline CLI manages records, and single-agent inference supports opt-in retrieval and result persistence. Native workflow submission supports bounded delegation and selected per-attempt health refresh. See [workflow orchestration](ORCHESTRATION.md).
 
-The local task outcome journal supports durable replay, local streaming and typed terminal events. Remote delivery, automatic decomposition, durable workflow history, external-agent authentication, simulation, the 3D client, experiments and release packaging remain roadmap work. Provider allocation
+The local task outcome journal supports durable replay, local streaming and typed terminal events. The in-process external worker broker validates lease fencing, deadlines, revocation and result retries. Remote delivery, automatic decomposition, durable workflow history, external-agent authentication, simulation, the 3D client, experiments and release packaging remain roadmap work. Provider allocation
 reconciliation and per-request overhead accounting also remain. See the current
 [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md) and
 [checkpoint log](DEVELOPMENT_LOG.md) for exact scope and live-validation evidence.

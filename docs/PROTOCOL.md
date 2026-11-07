@@ -20,7 +20,15 @@ The API needs authorized agent registration/inspection, task submission/claim/re
 
 Version the public API independently from event payload schemas and domain storage. Negotiate supported versions explicitly; reject incompatible major versions. Use structured machine-readable codes for unauthenticated, forbidden, invalid schema/state, conflict, stale lease, quota exhausted, unavailable, and replay gap. Responses must never turn a rejected request into a success-shaped placeholder. Retry advice is advisory and bounded; authentication and permission failures are not ordinary transient retries.
 
-## Task lease and result semantics — draft
+## Implemented in-process lease broker
+
+`vespera-api::LeaseBroker` accepts operator-approved worker IDs and capability sets. A host must authenticate the worker before calling claim, renew or complete. Each submitted task has an explicit worker allowlist, a lifetime of up to one hour and an attempt budget of 1 to 8. A worker can hold one lease at a time. Claims select the earliest submitted eligible task.
+
+Leases last up to 30 seconds and are capped by the task deadline. Renewal uses the host's monotonic clock. Every claim assigns a fresh attempt UUID and increments the task generation. Expiry or revocation fences the attempt and queues another attempt if time and budget remain. Cancellation and completion leave one terminal state. A result retry with the same worker, fence and content returns the accepted result. A different result under that fence is rejected.
+
+The broker retains up to 64 workers and 256 tasks per process, including terminal tasks. Prompts and results are capped at 64 KiB each. The host serializes mutations and owns operator authorization. Restart drops broker state. Network authentication, HTTP and WebSocket transport, durable reconciliation and an SDK remain separate milestones.
+
+## Remote task lease and result semantics — draft
 
 A submitted task has a stable task ID, required capability/scope, deadline, and bounded execution budget. Each execution attempt has a distinct attempt ID and monotonically increasing fencing generation. Claiming a task atomically grants a single active lease bound to the authenticated agent, task, attempt, and generation. The server supplies authoritative expiry and renewal rules. A lease conveys only the task's approved subset of permissions and namespace access.
 

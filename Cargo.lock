@@ -1267,6 +1267,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vespera-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "uuid",
+ "vespera-core",
+]
+
+[[package]]
 name = "vespera-app"
 version = "0.1.0"
 dependencies = [

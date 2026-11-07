@@ -1,7 +1,7 @@
 # Architecture
 
 Vespera is a local-first Rust orchestration and simulation platform under active
-implementation. The current ten-crate workspace connects configuration,
+implementation. The current eleven-crate workspace connects configuration,
 provider HTTP adapters, a model registry, resource scheduling and independent
 agent execution through a native CLI, plus bounded sequential workflow execution. It is not yet the complete autonomous
 orchestrator, durable memory/event system, external-agent API, simulation engine,
@@ -48,6 +48,7 @@ flowchart TD
 | `vespera-scheduler` | Conservative reservation admission, per-model lifecycle gates, owned leases, acknowledged unload, bounded priority/fairness queue and shutdown drain |
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
+| `vespera-api` | In-process broker for approved external workers and fenced task attempts |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |
