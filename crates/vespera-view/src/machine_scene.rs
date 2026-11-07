@@ -119,17 +119,18 @@ enum RuntimeNode {
     Provider(ProviderId),
     Model(ModelId),
     Task(TaskId),
+    Memory(TaskId),
 }
 
 pub(super) fn selected_agent(world: &World) -> Option<AgentId> {
-    let Target::Runtime(RuntimeNode::Task(id)) = world.get_resource::<Selected>()?.0 else {
+    let Target::Runtime(RuntimeNode::Task(id) | RuntimeNode::Memory(id)) =
+        world.get_resource::<Selected>()?.0
+    else {
         return None;
     };
     world
         .resource::<RuntimeGraph>()
-        .tasks()
-        .iter()
-        .find(|task| task.task_id == id)
+        .task(id)
         .map(|task| task.agent_id)
 }
 
@@ -161,6 +162,10 @@ impl RuntimeGraph {
             _ => &[],
         }
     }
+
+    fn task(&self, id: TaskId) -> Option<&TaskLeaseSample> {
+        self.tasks().iter().find(|task| task.task_id == id)
+    }
 }
 
 #[derive(Resource)]
@@ -168,7 +173,8 @@ struct RuntimeMeshes {
     provider: Handle<Mesh>,
     model: Handle<Mesh>,
     task: Handle<Mesh>,
-    material: [Handle<StandardMaterial>; 5],
+    memory: Handle<Mesh>,
+    material: [Handle<StandardMaterial>; 6],
 }
 
 #[derive(Component)]
@@ -256,12 +262,14 @@ fn setup(
         provider: meshes.add(Sphere::new(0.40)),
         model: meshes.add(Cuboid::new(0.62, 0.48, 0.62)),
         task: meshes.add(Capsule3d::new(0.23, 0.28)),
+        memory: meshes.add(Cylinder::new(0.24, 0.25)),
         material: [
             Color::srgb(0.56, 0.40, 0.88),
             Color::srgb(0.26, 0.69, 0.55),
             Color::srgb(0.20, 0.82, 0.98),
             Color::srgb(0.98, 0.64, 0.24),
             Color::srgb(0.95, 0.89, 0.48),
+            Color::srgb(0.44, 0.93, 0.75),
         ]
         .map(|base_color| {
             materials.add(StandardMaterial {
@@ -405,10 +413,14 @@ fn sync_runtime(
         );
     }
     for (index, task) in graph.tasks().iter().enumerate() {
-        nodes.insert(
-            RuntimeNode::Task(task.task_id),
-            (position(index, -12.0), &meshes.task, 4),
-        );
+        let point = position(index, -12.0);
+        nodes.insert(RuntimeNode::Task(task.task_id), (point, &meshes.task, 4));
+        if task.memory_context_records.is_some_and(|count| count > 0) {
+            nodes.insert(
+                RuntimeNode::Memory(task.task_id),
+                (point + Vec3::new(0.85, 0.26, -0.45), &meshes.memory, 5),
+            );
+        }
     }
     graph.nodes.retain(|node, (entity, _)| {
         if nodes.contains_key(node) {
@@ -470,7 +482,12 @@ fn navigate(
             selected.0 = Target::Device(device);
         }
     }
-    for key in [KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7] {
+    for key in [
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+    ] {
         if keys.just_pressed(key) {
             let matches_kind = |node| {
                 matches!(
@@ -478,6 +495,7 @@ fn navigate(
                     (KeyCode::Digit5, RuntimeNode::Model(_))
                         | (KeyCode::Digit6, RuntimeNode::Provider(_))
                         | (KeyCode::Digit7, RuntimeNode::Task(_))
+                        | (KeyCode::Digit8, RuntimeNode::Memory(_))
                 )
             };
             let mut nodes = graph
@@ -530,6 +548,9 @@ fn draw_runtime(graph: Res<RuntimeGraph>, selected: Res<Selected>, mut gizmos: G
         let (_, from) = graph.nodes[&RuntimeNode::Model(task.model_id)];
         let (_, to) = graph.nodes[&RuntimeNode::Task(task.task_id)];
         gizmos.line(from, to, Color::srgb(0.95, 0.89, 0.48));
+        if let Some((_, memory)) = graph.nodes.get(&RuntimeNode::Memory(task.task_id)) {
+            gizmos.line(*memory, to, Color::srgb(0.44, 0.93, 0.75));
+        }
     }
     let outline = match selected.0 {
         Target::Device(device) => Some((
@@ -638,7 +659,7 @@ fn present(
         |_| "Host measurements / live",
     );
     let text = format!(
-        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | 5 Models | 6 Providers\n7 Tasks | Click to select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit"
+        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 RAM | 3 Adapter\n4 Scheduler | 5 Models | 6 Providers\n7 Tasks | 8 Request memory\nClick to select | F focus | R reset\nWASD pan | Scroll zoom | Right drag"
     );
     if readout.0 != text {
         readout.0 = text;
@@ -740,13 +761,30 @@ fn runtime_detail(node: RuntimeNode, graph: &RuntimeGraph) -> String {
             )
         }
         RuntimeNode::Task(id) => {
-            if let Some(task) = graph.tasks().iter().find(|task| task.task_id == id) {
+            if let Some(task) = graph.task(id) {
+                let memory = task.memory_context_records.map_or_else(
+                    || "Request memory unavailable".into(),
+                    |count| format!("Memory records included {count}"),
+                );
                 format!(
-                    "LOCAL TASK LEASE\n{id}\n\nAgent\n{}\n\nLease\n{}\n\nModel\n{}\n\nProvider\n{}",
+                    "LOCAL TASK LEASE\n{id}\n\nAgent\n{}\n\nLease\n{}\n\nModel\n{}\n\nProvider\n{}\n\n{memory}",
                     task.agent_id, task.lease_id, task.model_id, task.provider_id,
                 )
             } else {
                 format!("LOCAL TASK LEASE\n{id}\n\nOutside the displayed sample")
+            }
+        }
+        RuntimeNode::Memory(id) => {
+            let title = format!("REQUEST MEMORY\n\nTask\n{id}");
+            if let Some(task) = graph.task(id)
+                && let Some(count @ 1..) = task.memory_context_records
+            {
+                format!(
+                    "{title}\n\nAgent\n{}\n\nRetrieved records included {count}\nLocal request assembly",
+                    task.agent_id,
+                )
+            } else {
+                format!("{title}\n\nOutside the displayed sample")
             }
         }
     };

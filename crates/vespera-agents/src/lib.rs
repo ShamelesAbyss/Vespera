@@ -205,9 +205,15 @@ struct RuntimeState {
     inbox: BTreeMap<AgentId, Vec<AgentMessage>>,
     tasks: BTreeMap<TaskId, Task>,
     task_assignments: BTreeMap<TaskId, AgentId>,
-    executions: BTreeMap<TaskId, ScheduledInference>,
+    executions: BTreeMap<TaskId, OwnedInference>,
     managed_tasks: BTreeMap<TaskId, CancellationToken>,
     logical_tick: u64,
+}
+
+#[derive(Debug)]
+struct OwnedInference {
+    inference: ScheduledInference,
+    memory_context_records: Option<usize>,
 }
 
 fn lock_state(state: &Mutex<RuntimeState>) -> MutexGuard<'_, RuntimeState> {
@@ -376,7 +382,12 @@ impl AgentRuntime {
         lock_state(&self.state)
             .executions
             .get(&task_id)
-            .map(|execution| (execution.model_id, execution.provider_id))
+            .map(|execution| {
+                (
+                    execution.inference.model_id,
+                    execution.inference.provider_id,
+                )
+            })
     }
 
     /// Capture bounded running task ownership together with scheduler accounting.
@@ -391,9 +402,10 @@ impl AgentRuntime {
                 Some(TaskLeaseSample {
                     task_id,
                     agent_id,
-                    lease_id: execution.lease_id(),
-                    model_id: execution.model_id,
-                    provider_id: execution.provider_id,
+                    lease_id: execution.inference.lease_id(),
+                    model_id: execution.inference.model_id,
+                    provider_id: execution.inference.provider_id,
+                    memory_context_records: execution.memory_context_records,
                 })
             })
             .take(SchedulerSample::MAX_TASKS)
@@ -939,7 +951,13 @@ impl AgentRuntime {
 
         {
             let mut state = lock_state(&self.state);
-            state.executions.insert(task_id, inference.clone());
+            state.executions.insert(
+                task_id,
+                OwnedInference {
+                    inference: inference.clone(),
+                    memory_context_records: None,
+                },
+            );
         }
         preparation.armed = false;
 
@@ -983,10 +1001,11 @@ impl AgentRuntime {
         if state.managed_tasks.contains_key(&task_id) && owned.is_none() {
             return Err(AgentRuntimeError::ExecutionInProgress { task_id });
         }
-        let inference = state
+        let inference = &state
             .executions
             .get(&task_id)
-            .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
+            .ok_or(AgentRuntimeError::TaskNotFound { task_id })?
+            .inference;
         if inference.model_id != model_id
             || owned.is_some_and(|owned| owned.lease_id() != inference.lease_id())
         {
@@ -1020,8 +1039,8 @@ impl AgentRuntime {
             };
         }
 
-        if let Some(inference) = state.executions.remove(&task_id) {
-            inference.release();
+        if let Some(execution) = state.executions.remove(&task_id) {
+            execution.inference.release();
         }
         state.managed_tasks.remove(&task_id);
 

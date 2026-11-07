@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Request memory in Atlas
+
+Machine shows a green node when a validated local inference request includes retrieved memory. The count is attached to the exact running lease after request construction. The task inspector distinguishes zero included records from unavailable evidence. Version 4 carries counts, and the viewer still accepts versions 1 through 3. Memory queries, content and record IDs stay out of telemetry.
+
+Windows validation included the offline workspace suite, the SDK doctest, seven graphics tests, strict workspace and graphics Clippy, and both builds. In a native Atlas session, a held provider request produced one memory node on the active task. The CLI result recorded one included memory ID, while the live telemetry carried only its count. The final sample had no task leases. The regression compared the live count with the provider request and verified that an oversized retrieved record did not enter either.
+
+The previous [Ubuntu run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42421611995) failed the World reasoning heartbeat test when it missed the active phase. The fixture now gates its health and inference responses on observation of the corresponding phase and reports subprocess errors before asserting missing evidence. Memory nodes cover the current local request. Memory lineage and historical visualization remain open.
+
 ## 2026-11-07 — Local task ownership in Atlas
 
 Verified implementation checkpoint `df39d84d72a02b267fbd800ceee9546b940d3782` was pushed to `main`.

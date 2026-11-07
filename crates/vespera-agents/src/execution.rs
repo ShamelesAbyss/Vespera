@@ -4,7 +4,9 @@ use serde::Serialize;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
-use vespera_core::{AgentId, MemoryId, ModelId, Permission, ProviderId, Task, TaskId, TaskState};
+use vespera_core::{
+    AgentId, MemoryId, ModelId, Permission, ProviderId, SchedulerSample, Task, TaskId, TaskState,
+};
 use vespera_memory::{MemoryQuery, MemoryStore, StorageError};
 use vespera_providers::{
     BoundedInferenceRequest, CancellationToken, ChatMessage, ChatRole, InferenceFinishReason,
@@ -29,7 +31,7 @@ impl MemoryContext {
         phrase: &str,
     ) -> Result<Self, StorageError> {
         let query = MemoryQuery {
-            limit: 8,
+            limit: SchedulerSample::MAX_MEMORY_CONTEXT_RECORDS as u32,
             ..Default::default()
         };
         let page = store.search(actor, actor, phrase, &query)?;
@@ -295,6 +297,14 @@ impl AgentRuntime {
                     options.temperature,
                     None,
                 )?;
+                {
+                    let mut state = lock_state(&self.state);
+                    if let Some(execution) = state.executions.get_mut(&task.id)
+                        && execution.inference.lease_id() == active.inference.lease_id()
+                    {
+                        execution.memory_context_records = Some(memory_context_ids.len());
+                    }
+                }
                 let response = active
                     .inference
                     .provider

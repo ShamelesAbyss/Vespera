@@ -208,6 +208,10 @@ pub struct TaskLeaseSample {
     pub lease_id: uuid::Uuid,
     pub model_id: crate::ModelId,
     pub provider_id: crate::ProviderId,
+    /// Count included in the validated local request. Absent before request
+    /// construction or when the runtime does not observe the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_context_records: Option<usize>,
 }
 
 /// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
@@ -236,11 +240,12 @@ pub struct SchedulerSample {
 }
 
 impl SchedulerSample {
-    pub const SCHEMA_VERSION: u32 = 3;
+    pub const SCHEMA_VERSION: u32 = 4;
     pub const FILE_NAME: &str = "scheduler.json";
     pub const MAX_FILE_BYTES: u64 = 16384;
     pub const MAX_MODELS: usize = 16;
     pub const MAX_TASKS: usize = 16;
+    pub const MAX_MEMORY_CONTEXT_RECORDS: usize = 8;
 
     pub fn is_supported(&self) -> bool {
         if self.budget.validate().is_err() {
@@ -267,13 +272,17 @@ impl SchedulerSample {
         }
         match (self.schema_version, &self.tasks) {
             (2, None) => true,
-            (Self::SCHEMA_VERSION, Some(tasks)) if tasks.len() <= Self::MAX_TASKS => {
+            (3 | Self::SCHEMA_VERSION, Some(tasks)) if tasks.len() <= Self::MAX_TASKS => {
                 let mut ids = std::collections::BTreeSet::new();
                 let mut leases = std::collections::BTreeSet::new();
                 tasks.iter().all(|task| {
                     task.task_id.validate().is_ok()
                         && task.agent_id.validate().is_ok()
                         && !task.lease_id.is_nil()
+                        && task.memory_context_records.is_none_or(|count| {
+                            self.schema_version == Self::SCHEMA_VERSION
+                                && count <= Self::MAX_MEMORY_CONTEXT_RECORDS
+                        })
                         && ids.insert(task.task_id)
                         && leases.insert(task.lease_id)
                         && issued

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -195,7 +195,8 @@ struct HttpFixture {
     worker: Option<std::thread::JoinHandle<()>>,
     inference_delay_ms: std::sync::Arc<AtomicU64>,
     lifecycle_delay_ms: std::sync::Arc<AtomicU64>,
-    health_delay_ms: std::sync::Arc<AtomicU64>,
+    hold_health: std::sync::Arc<AtomicBool>,
+    hold_inference: std::sync::Arc<AtomicBool>,
 }
 impl HttpFixture {
     fn new(health_denied: bool) -> Self {
@@ -220,8 +221,10 @@ impl HttpFixture {
         let delay = inference_delay_ms.clone();
         let lifecycle_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
         let lifecycle_delay = lifecycle_delay_ms.clone();
-        let health_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
-        let health_delay = health_delay_ms.clone();
+        let hold_health = std::sync::Arc::new(AtomicBool::new(false));
+        let hold_inference = std::sync::Arc::new(AtomicBool::new(false));
+        let health_gate = hold_health.clone();
+        let inference_gate = hold_inference.clone();
         let worker = std::thread::spawn(move || {
             while !stopped.load(Ordering::SeqCst) {
                 let (mut socket, _) = match listener.accept() {
@@ -303,13 +306,20 @@ impl HttpFixture {
                 let health = matches!(request.path.as_str(), "/api/version" | "/v1/models");
                 let lifecycle = request.path == "/api/generate";
                 capture.lock().unwrap().push(request);
+                let gate = if inference {
+                    Some(&inference_gate)
+                } else {
+                    health.then_some(&health_gate)
+                };
+                if let Some(gate) = gate {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+                    while gate.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
                 if inference {
                     std::thread::sleep(std::time::Duration::from_millis(
                         delay.load(Ordering::SeqCst),
-                    ));
-                } else if health {
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        health_delay.load(Ordering::SeqCst),
                     ));
                 } else if lifecycle {
                     std::thread::sleep(std::time::Duration::from_millis(
@@ -330,7 +340,8 @@ impl HttpFixture {
             worker: Some(worker),
             inference_delay_ms,
             lifecycle_delay_ms,
-            health_delay_ms,
+            hold_health,
+            hold_inference,
         }
     }
     fn captured(&self) -> Vec<CapturedRequest> {
@@ -621,8 +632,8 @@ fn world_run_observes_preparation_and_inference_without_advancing_the_world() {
     };
 
     let fixture = HttpFixture::with_ollama_answer(false, r#"{"choice":0}"#);
-    fixture.health_delay_ms.store(800, Ordering::SeqCst);
-    fixture.inference_delay_ms.store(1500, Ordering::SeqCst);
+    fixture.hold_health.store(true, Ordering::SeqCst);
+    fixture.hold_inference.store(true, Ordering::SeqCst);
     let directory = ScratchDirectory::new();
     let database = directory.0.join("world.sqlite3");
     let resident = AGENT.parse().unwrap();
@@ -685,26 +696,36 @@ fn world_run_observes_preparation_and_inference_without_advancing_the_world() {
                 assert_eq!((state.tick, state.revision), (1, 1));
                 assert!(state.residents[0].last_model_decision.is_none());
                 match status.phase {
-                    ReasoningPhase::Preparing {} => preparing = Some(status.task_id),
-                    ReasoningPhase::InferenceActive { .. } => break status,
+                    ReasoningPhase::Preparing {} => {
+                        preparing = Some(status.task_id);
+                        fixture.hold_health.store(false, Ordering::SeqCst);
+                    }
+                    ReasoningPhase::InferenceActive { .. } => break Some(status),
                 }
             }
-            assert!(!child.is_finished() && Instant::now() < deadline);
+            if child.is_finished() || Instant::now() >= deadline {
+                break None;
+            }
             std::thread::sleep(Duration::from_millis(25));
         };
-        assert_eq!(preparing, Some(active.task_id));
-        assert!(
-            WorldStore::read_observed(&database, now() + 2500)
-                .unwrap()
-                .1
-                .is_none()
-        );
+        if active.is_some() {
+            assert!(
+                WorldStore::read_observed(&database, now() + 2500)
+                    .unwrap()
+                    .1
+                    .is_none()
+            );
+        }
+        fixture.hold_health.store(false, Ordering::SeqCst);
+        fixture.hold_inference.store(false, Ordering::SeqCst);
         let output = child.join().unwrap();
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let active = active.expect("provider request never received an active heartbeat");
+        assert_eq!(preparing, Some(active.task_id));
         active.task_id
     });
     let (committed, status) = WorldStore::read_observed(&database, now()).unwrap();
@@ -780,7 +801,14 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
                         assert!(sample.tasks.as_ref().unwrap().is_empty());
                         saw_loading = true;
                     }
-                    if model.issued_leases == 1 && !sample.tasks.as_ref().unwrap().is_empty() {
+                    if model.issued_leases == 1
+                        && sample
+                            .tasks
+                            .as_ref()
+                            .unwrap()
+                            .first()
+                            .is_some_and(|task| task.memory_context_records.is_some())
+                    {
                         break Some(sample);
                     }
                 }
@@ -832,6 +860,7 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
         execution["task"]["id"].as_str().unwrap()
     );
     assert_eq!(owner.agent_id.to_string(), AGENT);
+    assert_eq!(owner.memory_context_records, Some(0));
     assert_eq!(
         owner.lease_id.to_string(),
         execution["lease_id"].as_str().unwrap()
@@ -846,6 +875,11 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     let mut duplicated = active.clone();
     duplicated.tasks.as_mut().unwrap().push(*owner);
     assert!(!duplicated.is_supported());
+    let mut v3 = active.clone();
+    v3.schema_version = 3;
+    assert!(!v3.is_supported());
+    v3.tasks.as_mut().unwrap()[0].memory_context_records = None;
+    assert!(v3.is_supported());
     let mut legacy = serde_json::to_value(&active).unwrap();
     legacy["schema_version"] = 2.into();
     legacy.as_object_mut().unwrap().remove("tasks");
@@ -883,10 +917,12 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
 
 #[test]
 fn agent_memory_context_and_generated_result_round_trip() {
-    use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission};
+    use std::time::{Duration, Instant};
+    use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission, SchedulerSample};
     use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
 
     let fixture = HttpFixture::new(false);
+    fixture.hold_inference.store(true, Ordering::SeqCst);
     let directory = ScratchDirectory::new();
     let config = runtime_config(&fixture, false, true).replace(
         "permissions = []",
@@ -923,24 +959,60 @@ fn agent_memory_context_and_generated_result_round_trip() {
             )
             .unwrap();
     }
-    let output = run_fixture_agent(
-        &directory,
-        &config,
-        &[
-            "--resume",
-            "--memory-database",
-            database.to_str().unwrap(),
-            "--memory-query-file",
-            phrase.to_str().unwrap(),
-            "--remember-result",
-        ],
-    );
+    let telemetry = directory.0.join("observation");
+    let file = telemetry.join(SchedulerSample::FILE_NAME);
+    let (output, observed) = std::thread::scope(|scope| {
+        let child = scope.spawn(|| {
+            run_fixture_agent(
+                &directory,
+                &config,
+                &[
+                    "--resume",
+                    "--memory-database",
+                    database.to_str().unwrap(),
+                    "--memory-query-file",
+                    phrase.to_str().unwrap(),
+                    "--remember-result",
+                    "--scheduler-telemetry",
+                    telemetry.to_str().unwrap(),
+                ],
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let observed = loop {
+            if let Ok(bytes) = fs::read(&file) {
+                let sample: SchedulerSample = serde_json::from_slice(&bytes).unwrap();
+                assert!(sample.is_supported());
+                if let Some(task) = sample.tasks.as_ref().and_then(|tasks| tasks.first())
+                    && task.memory_context_records.is_some()
+                {
+                    let data = String::from_utf8(bytes).unwrap();
+                    assert!(!data.contains("amber"));
+                    assert!(!data.contains("operator record"));
+                    assert!(!data.contains(&id.to_string()));
+                    break Some(*task);
+                }
+            }
+            if child.is_finished() || Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        fixture.hold_inference.store(false, Ordering::SeqCst);
+        (child.join().unwrap(), observed)
+    });
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let observed = observed.expect("request memory was sampled during inference");
+    assert_eq!(observed.memory_context_records, Some(1));
+    assert_eq!(
+        observed.task_id.to_string(),
+        report["task_id"].as_str().unwrap()
+    );
     assert_eq!(
         report["execution"]["memory_context_ids"],
         serde_json::json!([id])
