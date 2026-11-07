@@ -1,9 +1,9 @@
 # Architecture
 
 Vespera is a local-first Rust orchestration and simulation platform under active
-implementation. The current seven-crate workspace connects configuration,
+implementation. The current eight-crate workspace connects configuration,
 provider HTTP adapters, a model registry, resource scheduling and independent
-agent execution through a native CLI. It is not yet the complete multi-step
+agent execution through a native CLI, plus a bounded sequential workflow library. It is not yet the complete autonomous
 orchestrator, durable memory/event system, external-agent API, simulation engine,
 3D command center or experimentation platform. Those remain required milestones.
 
@@ -19,6 +19,9 @@ flowchart TD
     App --> Registry[vespera-model-registry]
     App --> Providers[vespera-providers]
     App --> Core[vespera-core]
+    Orchestrator[vespera-orchestrator] --> Agents
+    Orchestrator --> Providers
+    Orchestrator --> Core
     Config --> Core
     Agents --> Scheduler
     Agents --> Registry
@@ -40,6 +43,7 @@ flowchart TD
 | `vespera-model-registry` | Atomic registration/update/removal, immutable bindings, effective expiring health, selected polling, stale-result fencing |
 | `vespera-scheduler` | Conservative reservation admission, per-model lifecycle gates, owned leases, acknowledged unload, bounded priority/fairness queue and shutdown drain |
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
+| `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and one-task agent CLI operations |
 
 `vespera-app::runtime` owns composition. CLI handlers perform bounded input/output
@@ -114,7 +118,7 @@ is present yet.
 
 Current registry, runtime histories and memory are in-process. `MemoryNamespace`
 is a logical address, not a database. Event envelopes are schema contracts, not
-an event bus. The next foundations are bounded multi-step orchestration, SQLite
+an event bus. Bounded multi-step orchestration is implemented as a library; application submission and automatic decomposition remain integration work. The next durable foundations are SQLite
 memory/retrieval with migrations/provenance, durable event delivery and replay,
 authenticated interoperability, and independent deterministic world state.
 

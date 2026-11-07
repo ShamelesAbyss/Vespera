@@ -1268,6 +1268,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "vespera-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "vespera-agents",
+ "vespera-core",
+ "vespera-model-registry",
+ "vespera-providers",
+ "vespera-scheduler",
+]
+
+[[package]]
 name = "vespera-providers"
 version = "0.1.0"
 dependencies = [

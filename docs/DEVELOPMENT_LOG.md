@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Bounded authorized master workflow engine
+
+Previous verified checkpoint: `596fc5c60f88213cb4d1ba08fbe59bfce37e9c33`, pushed; Ubuntu CI [42325700985](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325700985) passed. Added the eighth first-party crate, `vespera-orchestrator`, without changing third-party package versions.
+
+The engine executes actual bounded single/dependent workflows through capability-based candidate routing, permission-checked delegation, managed agent inference and scheduler lifecycle. Plans carry explicit requirements, candidate allowlists, prior-step dependencies, deadlines, attempt/token bounds and output policies. Reports retain root/child states, attempt numbers, candidate and actual model/provider/lease provenance, partial results, failures and conflict evidence. Exact agreement and explicit operator precedence evaluate protocol-level results without claiming factual truth or enabling generated control-plane changes. Only 429/503 rejections qualify for capped retry through remaining idle candidates; failed/suspended identities are never silently resumed and uncertain timeouts are not retried.
+
+Drop guards cover running work and accepted queued delegation; queued cancellation checks the assigned owner and preserves terminal states. Eight retained/running workflows, sixteen steps, forty-eight attempts, bounded prompt expansion and one MiB aggregate accepted generated output cap logical retention. Explicit terminal forgetting cannot delete running work or agent history. Histories remain in-process.
+
+Validation passed: all 151 offline workspace tests (one opt-in live health test ignored), formatting, all-target check, strict Clippy, strict rustdoc, optimized workspace build and eleven optimized orchestration integration tests. Tests use actual native HTTP adapters through the complete library stack, covering dependent payload/provenance, selected-only model activation, permission/capability/resource rejection, partial failure, budgets, capped retry, agreement/conflicts, empty output, caller/global/step cancellation and abort, ownership and retention. A test-only Rust borrow error in invalid-plan fixture construction was corrected before validation. No live multi-model inference claim is made.
+
+Updated current architecture, README, roadmap, dependency/agent/implementation records and added `docs/ORCHESTRATION.md`. This is an operational library checkpoint, not yet application/CLI workflow submission or automatic task decomposition. Next: compose and expose bounded workflow execution in the CLI with real executable fixtures, then durable isolated memory/events and the remaining platform roadmap. Candidate ranking/resource reconciliation and durable workflow history remain explicit limitations.
+
 ## 2026-11-06 — Validate managed requests before model loading
 
 Previous verified checkpoint: `31fb2eecf07e34c650947225805ac62970ca9522`, pushed. Ubuntu CI [42325403037](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325403037) succeeded; documentation checkpoint `fd6596e82b8cdb52d20038965addca2c622baac7` also passed [42325094343](https://github.com/ShamelesAbyss/Vespera/actions/runs/42325094343).

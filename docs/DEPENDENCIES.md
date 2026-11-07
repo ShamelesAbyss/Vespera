@@ -49,3 +49,5 @@ Unsafe Rust is forbidden for workspace code. This lint does not claim that third
 [3]: https://docs.rs/url/latest/url/ "Rust URL parser documentation"
 [4]: https://docs.rs/clap/latest/clap/ "Clap native command line parser documentation"
 [5]: https://doc.rust-lang.org/cargo/reference/workspaces.html "Cargo workspace dependency and lockfile reference"
+
+The bounded orchestrator adds one first-party crate using existing locked Serde/JSON, Tokio and Thiserror dependencies. No new third-party package or version is introduced. Its dependency direction is orchestrator to agents/providers/core; there is no reverse dependency or graphical runtime.

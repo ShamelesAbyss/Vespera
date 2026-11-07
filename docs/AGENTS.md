@@ -125,3 +125,5 @@ against both adapter fixtures. This is not live inference evidence for a
 particular installed model/server. See [CLI.md](CLI.md) for actual operation.
 
 Managed execution validates the selected model name, input and output/context bounds before scheduler admission can load a model. Accepted invalid requests become failed history records with no load/reservation. Scheduler request admission fences the validated native name and pins context; current inventory and resource limits are rechecked before lifecycle I/O. Manual preparation remains a lower-level trusted API.
+
+The [orchestrator library](ORCHESTRATION.md) now drives actual authorized dependent workflows. It preserves failure states, never implicitly resumes failed/suspended candidates and uses a synchronous owner-checked queued-task cancellation operation for drop cleanup. CLI workflow submission and autonomous planning remain pending.

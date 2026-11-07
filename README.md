@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The seven-crate workspace has 140 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Multi-step orchestration, durable memory/events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
+**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The eight-crate workspace has 151 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Application workflow submission, durable memory/events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -11,6 +11,7 @@ A local-first AI orchestration and simulation platform written in Rust. Vespera 
 ```mermaid
 flowchart TD
     CLI[vespera-app: CLI and composition] --> Config[vespera-config: strict TOML]
+    Orchestrator[vespera-orchestrator: bounded workflow library] --> Agents
     CLI --> Agents[vespera-agents: identities and bounded execution]
     Agents --> Scheduler[vespera-scheduler: queue and owned leases]
     Scheduler --> Registry[vespera-model-registry: inventory and health]
@@ -31,6 +32,7 @@ flowchart TD
 | `vespera-model-registry` | Independent model inventory, health freshness, lifecycle-safe updates |
 | `vespera-scheduler` | Conservative reservations, bounded priority admission, coordinated loading and owned inference leases |
 | `vespera-agents` | Independent identities, permissions, bounded in-process memory/messages/history and actual inference |
+| `vespera-orchestrator` | Bounded sequential workflows, provenance, retry/failure history and explicit output evaluation |
 | `vespera-app` | Runtime composition, diagnostics and six CLI commands |
 
 `config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/*.private.toml` are ignored. No database, server listener or graphical application starts automatically.
@@ -108,7 +110,7 @@ Configure agents in TOML with stable independent UUIDs, identity/personality/goa
 
 Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [memory design](docs/MEMORY.md).
 
-Delegation primitives exist in the agent library, but a master multi-step orchestrator is not implemented. There is no external-agent listener, SDK or public HTTP API; [protocol documentation](docs/PROTOCOL.md) is a draft. There is no simulation engine, visualization mode or graphical control to launch yet. Deterministic simulation and the native 3D command center are required future milestones, with headless operation retained.
+The [orchestrator library](docs/ORCHESTRATION.md) executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. Workflow submission is not yet exposed in the CLI; automatic task decomposition remains future work. There is no external-agent listener, SDK or public HTTP API; [protocol documentation](docs/PROTOCOL.md) is a draft. There is no simulation engine, visualization mode or graphical control to launch yet. Deterministic simulation and the native 3D command center are required future milestones, with headless operation retained.
 
 ## Validation and development
 

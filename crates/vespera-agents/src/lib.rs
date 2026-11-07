@@ -334,6 +334,29 @@ impl AgentRuntime {
             .ok_or(AgentRuntimeError::TaskNotFound { task_id })
     }
 
+    /// Cancel accepted queued work for its recorded owner. Running work must use
+    /// managed cancellation instead. Synchronous so ownership guards can clean up on drop.
+    pub fn cancel_queued_task(
+        &self,
+        agent_id: AgentId,
+        task_id: TaskId,
+    ) -> Result<bool, AgentRuntimeError> {
+        let mut state = lock_state(&self.state);
+        if state.task_assignments.get(&task_id) != Some(&agent_id) {
+            return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
+        }
+        let task = state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
+        if task.state == TaskState::Queued {
+            task.state.transition(TaskState::Cancelled)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Updates an agent's operational status (`Suspended`, `Idle`, `Running`, `Failed`).
     pub async fn set_agent_status(
         &self,

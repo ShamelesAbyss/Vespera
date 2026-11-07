@@ -7,6 +7,7 @@ members = [
     "crates/vespera-model-registry",
     "crates/vespera-scheduler",
     "crates/vespera-agents",
+    "crates/vespera-orchestrator",
     "crates/vespera-app"
 ]
 
