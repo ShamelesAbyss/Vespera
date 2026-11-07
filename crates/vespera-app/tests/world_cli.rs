@@ -38,7 +38,7 @@ fn json(output: Output) -> Value {
 
 #[test]
 fn replay_retention_keeps_a_deterministic_checkpoint_and_labels_older_gaps() {
-    use vespera_world::{World, WorldStore};
+    use vespera_world::{ReplayDirection, World, WorldStore};
 
     let database = Database::new();
     let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/world.example.json");
@@ -67,6 +67,27 @@ fn replay_retention_keeps_a_deterministic_checkpoint_and_labels_older_gaps() {
         !world(&database, &["replay", "--revision", "1"])
             .status
             .success()
+    );
+    assert!(
+        WorldStore::replay_neighbor(&database.0, 1001, ReplayDirection::Previous)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        WorldStore::replay_neighbor(&database.0, 1, ReplayDirection::Next)
+            .unwrap()
+            .unwrap()
+            .world
+            .revision(),
+        1001
+    );
+    assert_eq!(
+        WorldStore::replay_neighbor(&database.0, 5001, ReplayDirection::Previous)
+            .unwrap()
+            .unwrap()
+            .world
+            .revision(),
+        4001
     );
     let current = json(world(&database, &["inspect"]));
     assert_eq!(json(world(&database, &["replay"]))["world"], current);

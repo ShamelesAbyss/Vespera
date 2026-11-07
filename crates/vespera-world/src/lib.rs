@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use vespera_core::{AgentId, ModelId, ProviderId, TaskId};
 
-pub use storage::{Replay, WorldFence, WorldStore};
+pub use storage::{Replay, ReplayDirection, WorldFence, WorldStore};
 
 const MAX_RESIDENTS: usize = 32;
 const MAX_SITES: usize = 64;
@@ -317,6 +317,10 @@ pub struct ResidentView<'a> {
 }
 
 impl World {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn new(spec: WorldSpec) -> Result<Self, WorldError> {
         let world = Self {
             seed: spec.seed,

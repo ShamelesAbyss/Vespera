@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::{db, encode};
+use super::{ReplayDirection, db, encode};
 use crate::{World, WorldChange, WorldError};
 
 const MAX_COMMITS: i64 = 512;
@@ -186,6 +186,49 @@ pub(super) fn replay(
         latest_revision: latest,
         basis_revision,
     })
+}
+
+pub(super) fn neighbor(
+    tx: &Connection,
+    current: World,
+    from: u64,
+    direction: ReplayDirection,
+) -> Result<Option<Replay>, WorldError> {
+    let latest = current.revision;
+    let baseline = base(tx)?;
+    let revision = match direction {
+        ReplayDirection::Previous if from > latest => Some(latest),
+        ReplayDirection::Previous => {
+            if let Some(baseline) = baseline.filter(|base| base.revision < from) {
+                tx.query_row(
+                    "SELECT revision FROM world_history WHERE revision < ?1 ORDER BY revision DESC LIMIT 1",
+                    [from.to_be_bytes()], |row| row.get::<_, [u8; 8]>(0),
+                ).optional().map_err(db)?
+                    .map(u64::from_be_bytes).or(Some(baseline.revision))
+            } else {
+                None
+            }
+        }
+        ReplayDirection::Next if from >= latest => None,
+        ReplayDirection::Next => {
+            if let Some(baseline) = baseline {
+                if from < baseline.revision {
+                    Some(baseline.revision)
+                } else {
+                    tx.query_row(
+                        "SELECT revision FROM world_history WHERE revision > ?1 ORDER BY revision LIMIT 1",
+                        [from.to_be_bytes()], |row| row.get::<_, [u8; 8]>(0),
+                    ).optional().map_err(db)?
+                        .map(u64::from_be_bytes).or(Some(latest))
+                }
+            } else {
+                Some(latest)
+            }
+        }
+    };
+    revision
+        .map(|target| replay(tx, current, Some(target)))
+        .transpose()
 }
 
 fn insert(tx: &Connection, revision: u64, entry: Entry) -> Result<(), WorldError> {

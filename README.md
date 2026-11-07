@@ -34,7 +34,7 @@ cargo run --locked -p vespera-view --features graphics -- --world data/world.sql
 
 Pick residents, the depot or resource sites to inspect their committed state. World Mode is read-only by default. Add `--allow-world-control` to enable Space for a tick, P for playback, Enter for resident activity and IJKL for one-cell movement. The view labels its state as simulated and uses the same camera controls. It requires no broker or provider. [World setup](docs/CLI.md#persistent-world-simulation)
 
-Add `--world-revision <REVISION>` to inspect a retained world commit in 3D. Recorded choices are replayed through deterministic world rules without running the model again. [World replay](docs/CLI.md#replay-a-committed-world-revision)
+Press T in World Mode to freeze the display, use [ and ] to step through retained commits, and press T again to return live. Add `--world-revision <REVISION>` to start at a particular commit. Recorded choices replay without running the model again. [World replay](docs/CLI.md#replay-a-committed-world-revision)
 
 ## Architecture and workspace
 

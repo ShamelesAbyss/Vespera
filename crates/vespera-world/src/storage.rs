@@ -23,6 +23,12 @@ pub enum WorldFence<'a> {
     Snapshot(&'a World),
 }
 
+#[derive(Clone, Copy)]
+pub enum ReplayDirection {
+    Previous,
+    Next,
+}
+
 impl WorldStore {
     pub fn initialize(path: &Path, world: &World) -> Result<(), WorldError> {
         let bytes = encode(world)?;
@@ -185,6 +191,20 @@ impl WorldStore {
         let tx = connection.transaction().map_err(db)?;
         let world = read_state(&tx)?;
         let replay = history::replay(&tx, world, revision)?;
+        tx.commit().map_err(db)?;
+        Ok(replay)
+    }
+
+    /// Reconstruct the nearest retained commit in a direction from the supplied revision.
+    pub fn replay_neighbor(
+        path: &Path,
+        revision: u64,
+        direction: ReplayDirection,
+    ) -> Result<Option<Replay>, WorldError> {
+        let mut connection = open(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let tx = connection.transaction().map_err(db)?;
+        let world = read_state(&tx)?;
+        let replay = history::neighbor(&tx, world, revision, direction)?;
         tx.commit().map_err(db)?;
         Ok(replay)
     }

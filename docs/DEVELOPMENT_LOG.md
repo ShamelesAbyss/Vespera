@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Interactive World Mode timeline
+
+The world replay checkpoint `5b77ab43cbfda85997055208a08a9cdea1ecf71a` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42350207043). World Mode can freeze the current display, step to the nearest retained commit and return to live observation. The inspector reports the replay range and skipped revisions. Historical controls are fenced in both the window and its worker. Resident selection and camera state stay in the same scene.
+
+Windows validation passed 224 offline workspace tests, the SDK doctest, four graphics tests, strict workspace and graphics Clippy, and the graphics build. The retention test exercised neighbors around a pruned boundary. The graphics worker test verified skipped batch interiors, rejected historical writes and return to a newer live revision. In the native window, Aster remained selected while stepping from revision 3 to 1. A separate CLI commit advanced the live world to 4 while the window stayed at 1. The next step displayed 3 and T returned to 4.
+
+The timeline covers World Mode commits. Graphical timelines for broker and workflow evidence and unified layer navigation remain open.
+
 ## 2026-11-06 — Deterministic replay of committed world revisions
 
 Verified implementation checkpoint `5b77ab43cbfda85997055208a08a9cdea1ecf71a` was pushed to `main`.

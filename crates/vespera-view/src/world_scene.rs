@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::time::{Duration, SystemTime};
 
@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use tokio::sync::watch;
 use vespera_core::AgentId;
 use vespera_world::{
-    Position, ReasoningPhase, ReasoningStatus, Role, Snapshot, World, WorldChange, WorldError,
-    WorldFence, WorldStore,
+    Position, ReasoningPhase, ReasoningStatus, Replay, ReplayDirection, Role, Snapshot, World,
+    WorldChange, WorldError, WorldFence, WorldStore,
 };
 
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
@@ -20,7 +20,25 @@ struct Observation {
     world: World,
     status: &'static str,
     reasoning: Option<ReasoningStatus>,
-    completed_controls: u64,
+    history: Option<HistoryPosition>,
+    completed_requests: u64,
+}
+
+#[derive(Clone, Copy)]
+struct HistoryPosition {
+    earliest: u64,
+    latest: u64,
+    basis: u64,
+}
+
+impl From<&Replay> for HistoryPosition {
+    fn from(replay: &Replay) -> Self {
+        Self {
+            earliest: replay.earliest_revision,
+            latest: replay.latest_revision,
+            basis: replay.basis_revision,
+        }
+    }
 }
 
 struct Command {
@@ -28,16 +46,27 @@ struct Command {
     change: WorldChange,
 }
 
+enum Request {
+    Control(Command),
+    Timeline(TimelineRequest),
+}
+
+enum TimelineRequest {
+    Live,
+    Freeze(u64),
+    Neighbor(u64, ReplayDirection),
+}
+
 #[derive(Resource)]
 struct View {
     updates: watch::Receiver<Observation>,
-    commands: SyncSender<Command>,
+    commands: SyncSender<Request>,
     allow_control: bool,
-    historical: bool,
+    history: Option<HistoryPosition>,
     world: World,
     status: &'static str,
     reasoning: Option<ReasoningStatus>,
-    completed_controls: u64,
+    completed_requests: u64,
     pending: bool,
     scene_dirty: bool,
     playing: bool,
@@ -72,15 +101,13 @@ pub(super) fn run(
     allow_control: bool,
     reduced_motion: bool,
 ) -> Result<(), WorldError> {
-    let (world, reasoning, status) = if let Some(revision) = revision {
-        (
-            WorldStore::replay(&path, Some(revision))?.world,
-            None,
-            "Historical revision",
-        )
+    let (world, reasoning, status, history) = if let Some(revision) = revision {
+        let replay = WorldStore::replay(&path, Some(revision))?;
+        let history = HistoryPosition::from(&replay);
+        (replay.world, None, "Historical revision", Some(history))
     } else {
         let (world, reasoning) = read_observed(&path)?;
-        (world, reasoning, "Database connected")
+        (world, reasoning, "Database connected", None)
     };
     let state = world.snapshot();
     let home_distance = f32::from(state.width.max(state.depth))
@@ -90,22 +117,21 @@ pub(super) fn run(
         world: world.clone(),
         status,
         reasoning,
-        completed_controls: 0,
+        history,
+        completed_requests: 0,
     });
     let (commands, actions) = mpsc::sync_channel(1);
-    if revision.is_none() {
-        std::thread::spawn(move || observe(path, observations, actions));
-    }
+    std::thread::spawn(move || observe(path, observations, actions));
     desktop("Vespera | World Simulation", Color::srgb(0.04, 0.065, 0.06))
         .insert_resource(View {
             updates,
             commands,
             allow_control,
-            historical: revision.is_some(),
+            history,
             world,
             status,
             reasoning,
-            completed_controls: 0,
+            completed_requests: 0,
             pending: false,
             scene_dirty: true,
             playing: false,
@@ -128,7 +154,7 @@ pub(super) fn run(
     Ok(())
 }
 
-fn read_observed(path: &std::path::Path) -> Result<(World, Option<ReasoningStatus>), WorldError> {
+fn read_observed(path: &Path) -> Result<(World, Option<ReasoningStatus>), WorldError> {
     let now = SystemTime::UNIX_EPOCH
         .elapsed()
         .ok()
@@ -137,10 +163,18 @@ fn read_observed(path: &std::path::Path) -> Result<(World, Option<ReasoningStatu
     WorldStore::read_observed(path, now)
 }
 
-fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Receiver<Command>) {
+fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Receiver<Request>) {
     while !updates.is_closed() {
         let (result, is_control) = match actions.recv_timeout(POLL_INTERVAL) {
-            Ok(command) => (commit(&path, command).map(|world| (world, None)), true),
+            Ok(Request::Timeline(request)) => {
+                apply_timeline(&path, &updates, request);
+                continue;
+            }
+            Ok(Request::Control(command)) if updates.borrow().history.is_none() => {
+                (commit(&path, command).map(|world| (world, None)), true)
+            }
+            Ok(Request::Control(_)) => (Err(WorldError::Invalid("historical control")), true),
+            Err(RecvTimeoutError::Timeout) if updates.borrow().history.is_some() => continue,
             Err(RecvTimeoutError::Timeout) => (read_observed(&path), false),
             Err(RecvTimeoutError::Disconnected) => return,
         };
@@ -161,7 +195,7 @@ fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Re
                         last.status = status;
                         last.reasoning = reasoning;
                         if is_control {
-                            last.completed_controls = last.completed_controls.wrapping_add(1);
+                            last.completed_requests = last.completed_requests.wrapping_add(1);
                         }
                         true
                     } else {
@@ -182,7 +216,7 @@ fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Re
                     last.status = status;
                     last.reasoning = None;
                     if is_control {
-                        last.completed_controls = last.completed_controls.wrapping_add(1);
+                        last.completed_requests = last.completed_requests.wrapping_add(1);
                     }
                     is_control || changed
                 });
@@ -191,7 +225,60 @@ fn observe(path: PathBuf, updates: watch::Sender<Observation>, actions: mpsc::Re
     }
 }
 
-fn commit(path: &std::path::Path, command: Command) -> Result<World, WorldError> {
+fn apply_timeline(path: &Path, updates: &watch::Sender<Observation>, request: TimelineRequest) {
+    let result = match request {
+        TimelineRequest::Live => read_observed(path)
+            .map(|(world, reasoning)| (Some((world, reasoning, None)), "Following live world")),
+        TimelineRequest::Freeze(revision) => {
+            WorldStore::replay(path, Some(revision)).map(|replay| {
+                let history = HistoryPosition::from(&replay);
+                (
+                    Some((replay.world, None, Some(history))),
+                    "Historical revision",
+                )
+            })
+        }
+        TimelineRequest::Neighbor(from, direction) => {
+            WorldStore::replay_neighbor(path, from, direction).map(|replay| match replay {
+                Some(replay) => {
+                    let history = HistoryPosition::from(&replay);
+                    let status = if from.abs_diff(replay.world.revision()) > 1 {
+                        "Skipped revisions outside retained commit boundaries"
+                    } else {
+                        "Historical revision"
+                    };
+                    (Some((replay.world, None, Some(history))), status)
+                }
+                None => (
+                    None,
+                    match direction {
+                        ReplayDirection::Previous => "No earlier retained commit",
+                        ReplayDirection::Next => "No later retained commit",
+                    },
+                ),
+            })
+        }
+    };
+    updates.send_modify(|last| {
+        last.completed_requests = last.completed_requests.wrapping_add(1);
+        match result {
+            Ok((frame, status)) => {
+                last.status = status;
+                if let Some((world, reasoning, history)) = frame {
+                    last.world = world;
+                    last.reasoning = reasoning;
+                    last.history = history;
+                }
+            }
+            Err(WorldError::ReplayUnavailable { .. }) => {
+                last.status = "Requested revision is unavailable"
+            }
+            Err(_) => last.status = "Could not read world history",
+        }
+    });
+}
+
+fn commit(path: &Path, command: Command) -> Result<World, WorldError> {
     WorldStore::commit(path, WorldFence::Revision(command.revision), command.change)
 }
 
@@ -270,13 +357,14 @@ fn receive(mut view: ResMut<View>) {
     if !view.updates.has_changed().unwrap_or(false) {
         return;
     }
-    let (world, status, reasoning, completed_controls) = {
+    let (world, status, reasoning, history, completed_requests) = {
         let update = view.updates.borrow_and_update();
         (
             update.world.clone(),
             update.status,
             update.reasoning,
-            update.completed_controls,
+            update.history,
+            update.completed_requests,
         )
     };
     if view.world != world {
@@ -285,8 +373,9 @@ fn receive(mut view: ResMut<View>) {
     }
     view.status = status;
     view.reasoning = reasoning;
-    if view.completed_controls != completed_controls {
-        view.completed_controls = completed_controls;
+    view.history = history;
+    if view.completed_requests != completed_requests {
+        view.completed_requests = completed_requests;
         view.pending = false;
     }
     if status == "Database unavailable" {
@@ -300,7 +389,34 @@ fn controls(
     selected: Res<Selected>,
     mut view: ResMut<View>,
 ) {
-    if !view.allow_control {
+    if view.pending {
+        return;
+    }
+    let revision = view.world.revision();
+    let timeline = if keys.just_pressed(KeyCode::KeyT) {
+        Some(if view.history.is_some() {
+            TimelineRequest::Live
+        } else {
+            TimelineRequest::Freeze(revision)
+        })
+    } else if keys.just_pressed(KeyCode::BracketLeft) {
+        Some(TimelineRequest::Neighbor(
+            revision,
+            ReplayDirection::Previous,
+        ))
+    } else if keys.just_pressed(KeyCode::BracketRight) && view.history.is_some() {
+        Some(TimelineRequest::Neighbor(revision, ReplayDirection::Next))
+    } else {
+        None
+    };
+    if let Some(timeline) = timeline {
+        if view.commands.try_send(Request::Timeline(timeline)).is_ok() {
+            view.playing = false;
+            view.pending = true;
+        }
+        return;
+    }
+    if !view.allow_control || view.history.is_some() {
         return;
     }
     if keys.just_pressed(KeyCode::KeyP) {
@@ -311,7 +427,7 @@ fn controls(
     let shift = movement(&keys);
     let step_key = keys.just_pressed(KeyCode::Space);
     let toggle_key = keys.just_pressed(KeyCode::Enter);
-    if view.pending || !(step || step_key || toggle_key || shift.is_some()) {
+    if !(step || step_key || toggle_key || shift.is_some()) {
         return;
     }
     let snapshot = view.world.snapshot();
@@ -344,10 +460,10 @@ fn controls(
     if let Some(change) = action.or_else(|| step.then_some(WorldChange::Advance { ticks: 1 }))
         && view
             .commands
-            .try_send(Command {
+            .try_send(Request::Control(Command {
                 revision: snapshot.revision,
                 change,
-            })
+            }))
             .is_ok()
     {
         view.pending = true;
@@ -573,22 +689,28 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
         Some(Object::Depot) => format!("DEPOT\nCell {}, {}\n{} stock | {} shelters", state.depot.x, state.depot.z, state.shared_stock, state.shelters),
         None => "Select a resident, resource site, or depot.".into(),
     };
-    let controls = if view.historical {
-        "Read-only historical inspection."
+    let controls = if view.history.is_some() {
+        "[ / ] - earlier / later\nT - return to live"
     } else if view.allow_control {
-        "Space - step   P - play/pause\nEnter - activate/suspend\nArrows or IJKL - move"
+        "Space - step   P - play/pause\nEnter - activate/suspend\nArrows or IJKL - move\nT - freeze   [ - earlier commit"
     } else {
-        "Read-only. Restart with\n--allow-world-control to edit."
+        "T - freeze   [ - earlier commit"
     };
+    let history = view.history.map_or_else(String::new, |position| {
+        format!(
+            "\nRetained {}-{} | Basis {}",
+            position.earliest, position.latest, position.basis
+        )
+    });
     let text = format!(
-        "SIMULATED STATE\n{}\nTick {} | Revision {}\n{} | Stock {} | Shelters {}\n\n{detail}\n\n{controls}\n\nRight drag - orbit\nWheel - zoom   WASD - pan\nF - focus   R - reset",
+        "SIMULATED STATE\n{}\nTick {} | Revision {}\n{} | Stock {} | Shelters {}{history}\n\n{detail}\n\n{controls}\n\nRight drag - orbit\nWheel - zoom   WASD - pan\nF - focus   R - reset",
         view.status,
         state.tick,
         state.revision,
-        if view.historical {
-            "Replay"
+        if view.history.is_some() {
+            "Replay (read-only)"
         } else if !view.allow_control {
-            "Observing"
+            "Live (read-only)"
         } else if view.playing {
             "Playing"
         } else {
@@ -605,6 +727,108 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timeline_skips_batch_gaps_and_fences_controls_until_live() {
+        let resident = AgentId::new();
+        let world = World::new(vespera_world::WorldSpec {
+            seed: 1,
+            width: 3,
+            depth: 3,
+            depot: Position { x: 0, z: 0 },
+            residents: vec![vespera_world::ResidentSpec {
+                id: resident,
+                name: "Fixture".into(),
+                role: Role::Builder,
+                position: Position { x: 1, z: 1 },
+            }],
+            sites: vec![],
+        })
+        .unwrap();
+        let database = std::env::temp_dir().join(format!(
+            "vespera-timeline-{}.sqlite3",
+            vespera_core::TaskId::new()
+        ));
+        WorldStore::initialize(&database, &world).unwrap();
+        let latest = WorldStore::commit(
+            &database,
+            WorldFence::Current,
+            WorldChange::Advance { ticks: 3 },
+        )
+        .unwrap();
+        let (updates, mut observed) = watch::channel(Observation {
+            world: latest,
+            status: "Database connected",
+            reasoning: None,
+            history: None,
+            completed_requests: 0,
+        });
+        let (send, requests) = mpsc::sync_channel(1);
+        let path = database.clone();
+        let worker = std::thread::spawn(move || observe(path, updates, requests));
+
+        send.send(Request::Timeline(TimelineRequest::Neighbor(
+            3,
+            ReplayDirection::Previous,
+        )))
+        .unwrap();
+        {
+            let frame = observed
+                .wait_for(|frame| frame.completed_requests == 1)
+                .await
+                .unwrap();
+            assert_eq!(frame.world.revision(), 0);
+            assert!(frame.history.is_some());
+            assert!(frame.status.starts_with("Skipped"));
+        }
+        send.send(Request::Control(Command {
+            revision: 3,
+            change: WorldChange::SetActive {
+                resident,
+                active: false,
+            },
+        }))
+        .unwrap();
+        {
+            let frame = observed
+                .wait_for(|frame| frame.completed_requests == 2)
+                .await
+                .unwrap();
+            assert_eq!(frame.world.revision(), 0);
+        }
+        assert_eq!(WorldStore::read(&database).unwrap().revision(), 3);
+        WorldStore::commit(
+            &database,
+            WorldFence::Revision(3),
+            WorldChange::Advance { ticks: 1 },
+        )
+        .unwrap();
+        send.send(Request::Timeline(TimelineRequest::Neighbor(
+            0,
+            ReplayDirection::Next,
+        )))
+        .unwrap();
+        {
+            let frame = observed
+                .wait_for(|frame| frame.completed_requests == 3)
+                .await
+                .unwrap();
+            assert_eq!(frame.world.revision(), 3);
+            assert!(frame.history.is_some());
+        }
+        send.send(Request::Timeline(TimelineRequest::Live)).unwrap();
+        {
+            let frame = observed
+                .wait_for(|frame| frame.completed_requests == 4)
+                .await
+                .unwrap();
+            assert_eq!(frame.world.revision(), 4);
+            assert!(frame.history.is_none());
+        }
+        drop(send);
+        worker.join().unwrap();
+        std::fs::remove_file(database).unwrap();
+    }
 
     #[test]
     fn movement_keys_commit_only_against_the_displayed_revision() {
