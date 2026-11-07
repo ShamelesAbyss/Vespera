@@ -8,6 +8,7 @@ license-file.workspace = true
 
 [dependencies]
 vespera-core.workspace = true
+vespera-memory = { path = "../vespera-memory" }
 vespera-providers.workspace = true
 vespera-model-registry = { path = "../vespera-model-registry" }
 vespera-scheduler = { path = "../vespera-scheduler" }

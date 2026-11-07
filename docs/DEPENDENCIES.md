@@ -30,7 +30,7 @@ The CLI enables Tokio `signal` to route Ctrl+C through owned cancellation rather
 
 Axum and WebSockets belong at a later authenticated API boundary.
 
-SQLite, through a chosen Rust database layer, is deferred until memory transactions, schema migration, namespaces, provenance, and recovery can be tested. Start with structured storage and text search; introduce vector retrieval only when embedding dimensions, model versions, indexing, resource limits, and retrieval quality are specified.
+SQLite storage now uses exactly `rusqlite 0.41.1` with default features disabled and explicit `libsqlite3-sys`/`bundled` features. The native source bundle reports SQLite 3.54.1; FTS5 is exercised by actual retrieval tests. No separate database server, SQLCipher, loadable extensions, generated bindings or Wasm SQLite backend is enabled. The build requires a C compiler in addition to Rust. Optional vectors remain deferred until their provenance, rebuild/resource limits and retrieval quality can be verified.
 
 Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC is deferred: REST plus WebSockets is the initial draft interoperability direction, not a deployed server.
 
@@ -51,3 +51,5 @@ Unsafe Rust is forbidden for workspace code. This lint does not claim that third
 [5]: https://doc.rust-lang.org/cargo/reference/workspaces.html "Cargo workspace dependency and lockfile reference"
 
 The bounded orchestrator adds one first-party crate using existing locked Serde/JSON, Tokio and Thiserror dependencies. No new third-party package or version is introduced. Its dependency direction is orchestrator to agents/providers/core; there is no reverse dependency or graphical runtime.
+
+The memory addition locks six new third-party packages: `rusqlite 0.41.1`, `libsqlite3-sys 0.39.1`, `fallible-iterator 0.3.0`, `fallible-streaming-iterator 0.1.9`, `pkg-config 0.3.34` and `vcpkg 0.2.15`. Existing `cc`, `smallvec` and `bitflags` are reused. No existing package version or unrelated lockfile edge is changed. Upstream references: [Rusqlite](https://github.com/rusqlite/rusqlite), [SQLite FTS5](https://www.sqlite.org/fts5.html) and [application/schema pragmas](https://www.sqlite.org/pragma.html). Third-party native SQLite code is a dependency; first-party implementation remains Rust. This is not a full dependency security/license audit.

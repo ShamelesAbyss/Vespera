@@ -1,7 +1,7 @@
 # Architecture
 
 Vespera is a local-first Rust orchestration and simulation platform under active
-implementation. The current eight-crate workspace connects configuration,
+implementation. The current nine-crate workspace connects configuration,
 provider HTTP adapters, a model registry, resource scheduling and independent
 agent execution through a native CLI, plus bounded sequential workflow execution. It is not yet the complete autonomous
 orchestrator, durable memory/event system, external-agent API, simulation engine,
@@ -27,6 +27,8 @@ flowchart TD
     Agents --> Scheduler
     Agents --> Registry
     Agents --> Providers
+    Agents --> Memory[vespera-memory]
+    Memory --> Core
     Agents --> Core
     Scheduler --> Registry
     Scheduler --> Providers
@@ -45,6 +47,7 @@ flowchart TD
 | `vespera-scheduler` | Conservative reservation admission, per-model lifecycle gates, owned leases, acknowledged unload, bounded priority/fairness queue and shutdown drain |
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
+| `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent and workflow CLI operations |
 
 `vespera-app::runtime` owns composition. CLI handlers perform bounded input/output
@@ -117,11 +120,9 @@ is present yet.
 
 ## State, clocks and remaining architecture
 
-Current registry, runtime histories and memory are in-process. `MemoryNamespace`
+Registry, workflow/task histories and the original agent memory buffers remain in-process. The independent memory library now persists authorized records and lineage in SQLite when explicitly opened. `MemoryNamespace`
 is a logical address, not a database. Event envelopes are schema contracts, not
-an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. The next durable foundations are SQLite
-memory/retrieval with migrations/provenance, durable event delivery and replay,
-authenticated interoperability, and independent deterministic world state.
+an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. SQLite memory/retrieval, transactional initialization and provenance are implemented as a library. Application/context integration, durable task history, event delivery/replay, authenticated interoperability and independent deterministic world state remain required work.
 
 Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
 simulation ticks separate. In-process monotonic instants do not survive restart.

@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The eight-crate workspace has 158 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Durable memory/events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
+**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The nine-crate workspace has 174 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Memory CLI/context integration, durable events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -19,6 +19,8 @@ flowchart TD
     Registry --> Providers[vespera-providers: Ollama and compatible HTTP]
     Providers --> Backend[Explicitly configured model server]
     Config --> Core[vespera-core: domain contracts]
+    Agents --> Memory[vespera-memory: authorized SQLite and FTS]
+    Memory --> Core
     Agents --> Core
     Scheduler --> Core
     Registry --> Core
@@ -34,13 +36,14 @@ flowchart TD
 | `vespera-scheduler` | Conservative reservations, bounded priority admission, coordinated loading and owned inference leases |
 | `vespera-agents` | Independent identities, permissions, bounded in-process memory/messages/history and actual inference |
 | `vespera-orchestrator` | Bounded sequential workflows, provenance, retry/failure history and explicit output evaluation |
+| `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
 | `vespera-app` | Runtime composition, diagnostics and seven CLI commands |
 
-`config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/*.private.toml` are ignored. No database, server listener or graphical application starts automatically.
+`config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/local.private.toml` are ignored. No database, server listener or graphical application starts automatically.
 
 ## Requirements and installation
 
-The workspace pins Rust **1.99.1**, edition 2024, through `rust-toolchain.toml`. Install [Rust and Cargo](https://rustup.rs/) and Git. Windows MSVC builds also require the Microsoft C++ build tools used by Rust's MSVC toolchain. Cargo fetches locked dependencies during the first build. Vespera itself needs no Python, Node.js or database runtime.
+The workspace pins Rust **1.99.1**, edition 2024, through `rust-toolchain.toml`. Install [Rust and Cargo](https://rustup.rs/) and Git. Windows MSVC builds also require the Microsoft C++ build tools used by Rust's MSVC toolchain. Cargo fetches locked dependencies during the first build. Vespera needs no Python, Node.js or separate database server. SQLite is bundled through a Rust binding; building it requires a C compiler (MSVC tools on Windows or an equivalent native toolchain).
 
 Windows x86-64 has been built and tested locally; Ubuntu is tested by [GitHub Actions](https://github.com/ShamelesAbyss/Vespera/actions). macOS has not been validated. Offline commands need no model or GPU. Inference requires a separately installed/configured backend, an installed model and operator-supplied RAM/VRAM estimates including context overhead. Hardware suitability depends on that backend and model; `doctor` preserves unknown measurements.
 
@@ -110,7 +113,7 @@ The example assumes the sample agent UUID was retained and the private inventory
 
 Configure agents in TOML with stable independent UUIDs, identity/personality/goals, permissions and either a fixed model UUID or capability policy. The library supports policy rebinding without replacing identity. Health-aware selection and scheduler admission precede inference. Model names are captured at admission, and task/agent/model/provider/lease provenance accompanies accepted results.
 
-Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [memory design](docs/MEMORY.md).
+Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [durable memory](docs/MEMORY.md). The separate `vespera-memory` library now provides permission-checked SQLite persistence, bounded structured/phrase search and atomic consolidation lineage. Its real agent authorization adapter survives model rebinding and supports reopening under a fresh runtime. This is explicitly opened storage; the current CLI and in-process buffers do not automatically use it.
 
 The [orchestrator library](docs/ORCHESTRATION.md) executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan; automatic task decomposition remains future work. There is no external-agent listener, SDK or public HTTP API; [protocol documentation](docs/PROTOCOL.md) is a draft. There is no simulation engine, visualization mode or graphical control to launch yet. Deterministic simulation and the native 3D command center are required future milestones, with headless operation retained.
 

@@ -25,6 +25,25 @@ pub use execution::{ExecutionError, ExecutionOptions, TaskExecutionResult};
 mod limits;
 pub use limits::{RuntimeLimits, RuntimeUsage};
 
+/// Current agent grants/accepted assignments, shared with durable storage without
+/// making model/provider identity an owner. Caller identity remains a trusted boundary.
+struct RuntimeMemoryAuthority {
+    state: Arc<Mutex<RuntimeState>>,
+}
+impl vespera_memory::MemoryAuthorizer for RuntimeMemoryAuthority {
+    fn allowed(&self, actor: AgentId, permission: Permission) -> bool {
+        matches!(permission, Permission::MemoryRead | Permission::MemoryWrite)
+            && lock_state(&self.state)
+                .agents
+                .get(&actor)
+                .is_some_and(|agent| agent.permissions.contains(&permission))
+    }
+    fn owns_task(&self, actor: AgentId, task_id: TaskId) -> bool {
+        let state = lock_state(&self.state);
+        state.tasks.contains_key(&task_id) && state.task_assignments.get(&task_id) == Some(&actor)
+    }
+}
+
 /// Error taxonomy for agent runtime operations.
 #[derive(Debug, Error)]
 pub enum AgentRuntimeError {
@@ -253,6 +272,13 @@ impl fmt::Debug for AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Authorization port for explicit durable memory stores. This creates no file,
+    /// runs no inference and does not replace the separate in-process memory APIs.
+    pub fn memory_authorizer(&self) -> Arc<dyn vespera_memory::MemoryAuthorizer> {
+        Arc::new(RuntimeMemoryAuthority {
+            state: self.state.clone(),
+        })
+    }
     /// Creates a new agent runtime bound to the model registry and resource scheduler.
     #[must_use]
     pub fn new(registry: Arc<ModelRegistry>, scheduler: Arc<ResourceScheduler>) -> Self {

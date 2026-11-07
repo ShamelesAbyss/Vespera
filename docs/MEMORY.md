@@ -1,43 +1,72 @@
 # Individual memory
 
-## Current: bounded in-process records, no durable storage
+## Implemented durable storage and agent ownership
 
-The core supplies `MemoryNamespace`, `MemoryLayer`, and `MemoryRecord`; the agent runtime supplies permission-gated per-agent in-process memory records and layer filtering. The namespace derives solely from an agent UUID and exposes a logical relative address `agents/<agent-uuid>`; it does not create directories or access files. **There is no database, migration, full-text retrieval engine, consolidation worker, or embedding service in this build.** Model/provider identifiers and display names never own a namespace.
+`vespera-memory` provides a blocking SQLite library independent of inference and orchestration. It stores isolated agent-owned records, performs structured and FTS5 literal-phrase retrieval, and commits consolidation lineage with derived records. Data survives close/reopen and agent model-policy changes. The agent runtime supplies a current-grant/accepted-task authorization adapter through `memory_authorizer()`.
 
-Runtime writes reject duplicate memory IDs and source-task references not assigned to the owner. Record/count/aggregate text quotas reject overflow before mutation; no records are silently pruned. Defaults and exact accounting are documented in [AGENTS.md](AGENTS.md). A valid task reference establishes a link to accepted runtime history, not the truth of content or proof that the task completed. Runtime records use a logical tick; the core `MemoryRecord` timestamp contract below is a separate data type, not a persisted schema.
+The older `AgentRuntime::write_memory` / `read_memory` methods remain separate bounded in-process buffers. They are not silently persisted or migrated. The CLI has no memory subcommand yet and does not automatically open a database, inject retrieved content or store generated outputs. Explicit application/CLI storage integration is the next step.
 
-Current agent-writable categories are `long_term`, `episodic`, `working`, `relationship`, `goal`, and `observation`. Identity is intentionally absent: identity/configuration remain control-plane owned. A record carries a memory UUID, owner agent UUID, layer, nonempty content, caller-supplied Unix-millisecond creation time, and optional source task UUID. This records supplied data, not verified provenance or time.
+An agent UUID owns a namespace; model/provider IDs and display names never do. Every store operation checks the trusted actor, requested owner and current `MemoryRead`/`MemoryWrite` grant before looking up content, excerpts or namespace statistics. Cross-owner access is denied even when the actor has memory grants for its own namespace. The caller must authenticate actor identity outside this library; UUIDs are not credentials. No remote authorization boundary or cross-agent sharing API is implied.
 
-Model-policy replacement leaves the namespace unchanged. A typed address is not authorization; future storage must check principal and owner/scope on every operation. Two agents with the same name remain different owners. Untrusted model text or a caller-provided filesystem path must not select another namespace.
+## Store API and records
 
-## Future structured storage — Milestone 8
+Open a file explicitly with `MemoryStore::open(path, StorageLimits, authorizer)`. Parent directories must exist. A trusted `MemoryAuthorizer` supplies current permission and accepted-task ownership checks; `AgentRuntime::memory_authorizer()` implements that port. Calls block on SQLite/filesystem I/O and should run on a blocking worker in async applications. Errors expose bounded categories, not raw SQL, private paths or content.
 
-SQLite is the first persistence target, behind Rust interfaces. Use structured records and transactional migrations rather than an unbounded prompt file. JSON/Markdown can be bounded content or inspectable exports, not the sole ownership/indexing model. Storage must not require an orchestrator or inference engine to be alive.
+| API | Behavior and permission |
+| --- | --- |
+| `insert(actor, record, origin)` | Append immutable record; same owner and `MemoryWrite` required |
+| `get(actor, owner, id)` | Authorized record plus lineage, or none; `MemoryRead` |
+| `list(actor, owner, query)` | Structured, insertion-ordered bounded page; `MemoryRead` |
+| `search(actor, owner, phrase, query)` | FTS5 literal phrase plus the same filters/bounds; `MemoryRead` |
+| `namespace_usage(actor, owner)` | Only that namespace's authoritative record/content counts; `MemoryRead` |
+| `consolidate(actor, summary, sources, method)` | Atomic derived record and lineage; both read/write |
+| `delete(actor, owner, id)` | Atomic authoritative/index deletion; both read/write; referenced originals protected |
+| `sqlite_version()` | Report the linked database library version |
 
-Extend record metadata with source episodes/attempts, update times, content format, provenance, and retention/access policy. Timestamp ordering is not sufficient provenance; preserve stable IDs and relationships. Models/providers can be recorded as sources without becoming owners. Schema, encryption decisions, and migration/backup procedures are future implementation work, not current guarantees.
+A `MemoryRecord` contains its memory UUID, owner UUID, agent-writable layer, nonempty content, caller-supplied Unix-millisecond timestamp and optional source task. Layers are `long_term`, `episodic`, `working`, `relationship`, `goal` and `observation`. Identity and permission records are deliberately absent. Timestamps must fit SQLite's nonnegative signed integer range and are not independently verified clocks.
 
-The intended layers include identity, long-term knowledge, episodes, working context, relationships, goals, and learned observations. Identity and permissions stay in protected control-plane records, not the agent-writable layer enum. Agents may propose authorized goal/fact updates but may not silently overwrite identity, permissions, or global settings. Working memory can be bounded/ephemeral; durable layers must survive restart, suspension, and model/provider changes.
+Origins distinguish `observation`, `import`, `generated` and `derived`; these are supplied classifications, not proof that content is true. `generated` requires a source task. Any supplied source task must be accepted and assigned to the owner according to the authorizer at write time. Acceptance does not imply successful task completion or factual validity. Existing task IDs remain recorded after reopen even when a fresh agent runtime has no old in-process task history; durable task/source auditing remains future work.
 
-Separate original user observations, imports, tool results, and generated claims. Preserve uncertainty so retrieval does not turn repetition into truth. Relationship records may concern several agents, but knowing another ID never grants access to its namespace.
+Stored results include a monotonically increasing **namespace-local** sequence. Other agents' inserts do not create observable cursor gaps. Namespace counters survive deletion, so old cursors do not silently restart. Memory UUIDs must be unique among live records; explicit deletion can free an unreferenced UUID, while sequence numbers are never reset/reused. Stable identity/lineage should therefore use newly generated memory UUIDs for new observations.
 
-## Retrieval before embeddings
+## Bounds, retrieval and consolidation
 
-Start with structured filters and SQLite full-text search (FTS), including owner/category filters, bounded payloads/results, stable ordering, and source links. Apply authorization before exposing excerpts, existence, counts, or aggregates. Cross-agent sharing creates an explicitly authorized reference or copied record with provenance; it does not reassign ownership.
+| Default limit | Value |
+| --- | --- |
+| Ever-created namespace counters per database | 64; configurable 1–1,024 |
+| Record content | 64 KiB maximum |
+| Records per namespace / total | 1,024 / 8,192 |
+| Content bytes per namespace / total | 8 MiB / 64 MiB |
+| Records per query | 1–100 |
+| Query content budget | Default 1 MiB; between configured maximum record size and 4 MiB |
+| Search phrase | 1–256 UTF-8 bytes, at most 32 whitespace-separated terms |
+| Consolidation sources / method | 1–32 distinct IDs / 1–128 bytes |
+| Database busy timeout | One second |
 
-Optional embeddings come later, after useful structured/FTS retrieval. They must not require Python. Track embedding model/version, provenance, rebuild state, and deletion propagation. A vector index is derived, not authoritative; ordinary retrieval stays functional when it is absent. Retrieved content is untrusted prompt input and cannot change identity, network/tool access, or system instructions.
+Write transactions derive current counts from the database and reject limits before mutation, including across independently opened connections. No automatic pruning occurs. These are logical content/count quotas, not measured RAM or physical file/index limits. Indexes, metadata, journals, free pages and caller clones require additional capacity. Reopening with tighter limits does not delete existing data; existing oversized records can require restoring a suitable read limit. Namespace-counter capacity includes deleted namespaces to preserve cursor history.
 
-## Consolidation preserves evidence
+`MemoryQuery` filters layer, cursor, inclusive `created_since_unix_ms`, exclusive `created_before_unix_ms`, result count and content-byte budget. The returned page reports accepted content bytes and an optional continuation sequence. Phrase text is bound as a quoted literal; FTS operators are not a user query language. Results expose insertion order and complete authorized records, not cross-namespace relevance scores. Retrieved content remains untrusted prompt data.
 
-Consolidation creates a derived summary/knowledge record linked to source episode IDs, method/model/version, task/attempt, and time. **Preserve original episodes and their provenance** rather than destructively replacing them with a model summary. Corrected summaries retain lineage and contradictory evidence stays inspectable.
+Consolidation preserves all source records and records the caller-supplied method plus sorted source UUIDs. Sources must exist in the same namespace. Record, FTS entry, quota/counter effects and lineage commit together or roll back. Repeating an existing summary ID conflicts without rewriting evidence. A source referenced by a derived record cannot be deleted until dependent derived records are explicitly removed. There is no automatic summarization model, retention worker, embedding service or vector index.
 
-Commit summary and source links atomically. Interrupted consolidation must not delete sources or falsely claim complete coverage. Idempotency identifiers prevent duplicate consolidation on retry. Normal namespace permissions and resource limits still apply; consolidation cannot rewrite identity.
+## Schema, recovery and privacy
 
-Preserving sources during consolidation does not mean retaining every interaction forever. Explicit user-controlled retention, redaction, and deletion are separate audited operations. Address summaries, FTS, optional vector indexes, exports, backups, and provenance links; disclose when a retained summary's source is no longer available. Event replay is not a substitute for authoritative memory storage.
+The database identifies itself with application ID `0x5653504d` and `PRAGMA user_version = 1`. Initial schema/FTS creation and identity changes occur in one transaction. Initialization rechecks identity under a writer lock so concurrent openers cannot label unrelated data. Unrelated nonempty databases and unsupported future versions are rejected; missing expected tables/columns fail rather than being silently recreated. No migration of an older deployed storage schema has been needed yet.
 
-## Durability, privacy, and limits
+Foreign keys are enabled, synchronous mode is `FULL`, and trusted schema execution is disabled. Extension loading is not enabled. FTS maintenance is explicit inside the same transactions as records. Reads of a record and its lineage use a consistent read transaction. This is a trusted local database, not a sandbox for attacker-edited SQLite files. No application-level encryption or automatic filesystem ACL provisioning is implemented.
 
-Future tests cover transaction rollback, interruption, schema upgrade/recovery, locking, disk-full errors, backup/restore, and namespace isolation. A failed write must not produce a successful memory-update outcome. Storage/event coordination needs a transactional outbox or equivalent documented reconciliation to prevent committed data with missing events, or events for rolled-back data.
+Tests inject migration failure after schema creation and lineage failure after record/index insertion, verify transaction rollback, and abruptly exit a child writer without running transaction destructors. Reopening recovers previously committed content and removes uncommitted record/FTS writes. This verifies process-exit recovery on the tested filesystem; it does not establish resilience to every power-loss, disk-full, filesystem or hardware failure. Lock contention returns a bounded busy error; synchronous OS I/O is not subject to a hard operation deadline.
 
-Bound growth, record sizes, per-agent retention, retrieval budgets, and consolidation work. Unknown capacity is not unlimited storage. Inspection/export require authorization. Secrets and private hidden chain-of-thought are not normal memory content; store user-visible outputs or explicit summaries only under policy and distinguish them from measured facts.
+There is no backup/restore, secure erase, export, physical compaction, event outbox or migration administration command yet. Logical deletion does not guarantee removal from free pages, journals, OS snapshots, exports or backups. Durable event coordination and workflow/task history remain separate required work. Do not store credentials or private hidden reasoning as ordinary memory.
 
-The user should eventually inspect sources, summaries, provenance, and retention decisions without inference. Those controls and restart persistence are Milestone 8 gates in [ROADMAP.md](ROADMAP.md). The basis is [INITIAL_PLAN.md](INITIAL_PLAN.md) and [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt).
+## Verification
+
+```powershell
+cargo test -p vespera-memory --locked
+cargo test -p vespera-agents --test agents --locked
+cargo test -p vespera-memory -p vespera-agents --release --locked
+```
+
+Storage tests exercise namespace/reopen isolation, literal/structured queries, byte/count pagination, source validation, current grants, consolidation/deletion, rollback, concurrent initialization/admission, foreign/future file preservation, lock failure and abrupt-writer recovery. The real agent adapter test rebinds a model and reopens the same two namespaces under a new runtime. No model/server is needed. One child-only crash helper is ignored as a standalone test and explicitly invoked by its parent test; it must not be run manually against user data.
+
+See [agents](AGENTS.md), [architecture](ARCHITECTURE.md), [dependency decisions](DEPENDENCIES.md), [roadmap](ROADMAP.md) and [development log](DEVELOPMENT_LOG.md).

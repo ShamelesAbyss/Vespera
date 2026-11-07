@@ -16,6 +16,95 @@ fn build_runtime() -> AgentRuntime {
     build_runtime_with_limits(vespera_agents::RuntimeLimits::default())
 }
 
+#[tokio::test]
+async fn durable_namespaces_follow_agent_identity_across_model_rebind_and_runtime_restart() {
+    use vespera_core::MemoryRecord;
+    use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageError, StorageLimits};
+    let directory = std::env::temp_dir().join(format!("vespera-agent-memory-{}", MemoryId::new()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("memory.sqlite3");
+    let a = AgentId::new();
+    let b = AgentId::new();
+    let model = ModelId::new();
+    let grants = [
+        Permission::MemoryRead,
+        Permission::MemoryWrite,
+        Permission::Delegate,
+    ]
+    .into();
+    let original = sample_agent(a, "same display name", model, grants, AgentStatus::Idle);
+    let mut other = original.clone();
+    other.identity.id = b;
+    let memory = MemoryRecord {
+        id: MemoryId::new(),
+        agent_id: a,
+        layer: MemoryLayer::Observation,
+        content: "persistent agent observation".into(),
+        created_at_unix_ms: 123,
+        source_task_id: None,
+    };
+    {
+        let runtime = build_runtime();
+        runtime.register_agent(original.clone()).await.unwrap();
+        runtime.register_agent(other.clone()).await.unwrap();
+        let store = MemoryStore::open(&path, StorageLimits::default(), runtime.memory_authorizer())
+            .unwrap();
+        store
+            .insert(a, memory.clone(), MemoryOrigin::Observation)
+            .unwrap();
+        let task = Task {
+            id: TaskId::new(),
+            prompt: "accepted source".into(),
+            required_capabilities: BTreeSet::new(),
+            state: TaskState::Queued,
+        };
+        runtime.delegate_task(a, b, task.clone()).await.unwrap();
+        let mut generated = memory.clone();
+        generated.id = MemoryId::new();
+        generated.source_task_id = Some(task.id);
+        assert_eq!(
+            store.insert(a, generated.clone(), MemoryOrigin::Generated),
+            Err(StorageError::SourceUnavailable)
+        );
+        generated.agent_id = b;
+        store.insert(b, generated, MemoryOrigin::Generated).unwrap();
+        runtime
+            .rebind_model_policy(
+                a,
+                ModelSelectionPolicy::Fixed {
+                    model_id: ModelId::new(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.get(a, a, memory.id).unwrap().unwrap().record, memory);
+        assert_eq!(
+            runtime.get_agent(a).await.unwrap().identity,
+            original.identity
+        );
+    }
+    {
+        let runtime = build_runtime();
+        runtime.register_agent(original).await.unwrap();
+        runtime.register_agent(other).await.unwrap();
+        let store = MemoryStore::open(&path, StorageLimits::default(), runtime.memory_authorizer())
+            .unwrap();
+        assert_eq!(store.get(a, a, memory.id).unwrap().unwrap().record, memory);
+        assert_eq!(store.get(b, a, memory.id), Err(StorageError::Denied));
+        assert_eq!(
+            store
+                .search(a, a, "persistent", &MemoryQuery::default())
+                .unwrap()
+                .records
+                .len(),
+            1
+        );
+        assert_eq!(store.namespace_usage(b, b).unwrap().records, 1);
+    }
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+}
+
 fn build_runtime_with_limits(limits: vespera_agents::RuntimeLimits) -> AgentRuntime {
     let registry = Arc::new(ModelRegistry::new());
     let policy = SchedulingPolicy {
