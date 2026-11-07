@@ -264,6 +264,19 @@ The command previews by default. Add `--apply` to commit the choice from that in
 
 The model receives a small set of simulation facts and a legal action menu. It returns one zero-based JSON choice. The engine validates that choice and commits it against the same world revision. An intervening tick, movement or activity change makes the choice stale. Successful application advances the revision by one and preserves the tick. The world records the latest choice with task, model and provider provenance. Raw generated text and owned memories stay out of this report and the 3D inspector. Deterministic ticks can continue independently. Older Vespera builds can read unchanged worlds and require an update to read worlds containing committed model decisions.
 
+### Run a bounded reasoning schedule
+
+Use `world run` to advance a fixed number of ticks and request one model choice after each group of ticks. Repeat `--resident` to rotate through an approved roster in the supplied order. Each UUID must match an active world resident and a configured agent with `simulation_act`. All selected agents share the run's scheduler.
+
+```powershell
+$state = cargo run --quiet --locked -p vespera-app -- world --database $world inspect | ConvertFrom-Json
+cargo run --locked -p vespera-app -- world --database $world run --revision $state.revision --ticks 12 --reason-every 4 --resident $($state.residents[0].id) --resident $($state.residents[1].id) --config config/local.toml --resume
+```
+
+`--ticks` and `--reason-every` accept 1–1000. Choose values that schedule 1–32 model requests per run. `--tick-ms` adds a delay of 0–5000 ms before each tick and defaults to 200. `--timeout-seconds` applies to each model request, accepts 1–120 and defaults to 10. `--resume` activates configured agents once at startup. `--unload-after` requests cleanup of idle model reservations at the end.
+
+This command commits ticks and legal choices. At each reasoning boundary it waits up to the request deadline before resuming ticks. Invalid choices, provider failures and request deadlines appear in the attempt report, and the run continues with deterministic ticks. A competing world writer can make a pending action or next tick stale. The run then stops, preserving commits already made. Ctrl+C also stops the run and reports its committed progress. Use the read-only 3D window to observe changes from the running CLI.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

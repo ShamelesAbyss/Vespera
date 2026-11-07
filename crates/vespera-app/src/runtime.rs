@@ -292,26 +292,45 @@ impl VesperaRuntime {
         config: &AppConfig,
         agent_id: AgentId,
     ) -> Result<Self, RuntimeError> {
+        Self::from_config_for_agents(config, &[agent_id]).await
+    }
+
+    /// Compose an explicit roster with a single resource scheduler and provider registry.
+    pub async fn from_config_for_agents(
+        config: &AppConfig,
+        agent_ids: &[AgentId],
+    ) -> Result<Self, RuntimeError> {
         config.validate()?;
-        let agent = config
-            .agents
-            .iter()
-            .find(|agent| agent.identity.id == agent_id)
-            .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
         let mut scoped = config.clone();
-        scoped.agents = vec![agent.clone()];
-        scoped.models.retain(|model| {
-            model.availability != ModelAvailability::Unavailable
-                && match &agent.model_policy {
-                    ModelSelectionPolicy::Fixed { model_id } => model.id == *model_id,
-                    ModelSelectionPolicy::Capability { required } => {
-                        required.is_subset(&model.capabilities)
-                    }
-                }
-        });
-        if scoped.models.is_empty() {
-            return Err(AgentRuntimeError::NoMatchingModel { agent_id }.into());
+        scoped.agents.clear();
+        let mut models = BTreeSet::new();
+        for &agent_id in agent_ids {
+            let agent = config
+                .agents
+                .iter()
+                .find(|agent| agent.identity.id == agent_id)
+                .ok_or(AgentRuntimeError::AgentNotFound { agent_id })?;
+            let eligible = config
+                .models
+                .iter()
+                .filter(|model| {
+                    model.availability != ModelAvailability::Unavailable
+                        && match &agent.model_policy {
+                            ModelSelectionPolicy::Fixed { model_id } => model.id == *model_id,
+                            ModelSelectionPolicy::Capability { required } => {
+                                required.is_subset(&model.capabilities)
+                            }
+                        }
+                })
+                .map(|model| model.id)
+                .collect::<Vec<_>>();
+            if eligible.is_empty() {
+                return Err(AgentRuntimeError::NoMatchingModel { agent_id }.into());
+            }
+            models.extend(eligible);
+            scoped.agents.push(agent.clone());
         }
+        scoped.models.retain(|model| models.contains(&model.id));
         let providers: BTreeSet<_> = scoped
             .models
             .iter()

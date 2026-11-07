@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 221 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, autonomous resident reasoning and experiments remain roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 222 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, resident reasoning observability and experiments remain roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -161,7 +161,7 @@ The orchestrator executes bounded operator-authored workflows with capability ro
 
 ## Persistent simulation
 
-The headless `world` command runs a configurable, seeded grid with resident foragers, builders, regenerating resource sites and a shared depot. Committed state includes positions, goals, resources, shelters, encounters and owned action memories. Deterministic ticks require no provider. An operator can also ask a resident's configured model to choose one legal action. Committed choices appear in the 3D inspector. [World setup and controls](docs/CLI.md#persistent-world-simulation) · [Model decisions](docs/CLI.md#model-assisted-resident-decisions)
+The headless `world` command runs a configurable, seeded grid with resident foragers, builders, regenerating resource sites and a shared depot. Committed state includes positions, goals, resources, shelters, encounters and owned action memories. Deterministic ticks require no provider. An operator can request one model decision or run a finite schedule that rotates decisions across approved residents. Committed choices appear in the 3D inspector. [World setup and controls](docs/CLI.md#persistent-world-simulation) · [Model decisions](docs/CLI.md#model-assisted-resident-decisions)
 
 ## External workers
 

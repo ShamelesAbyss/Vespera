@@ -463,6 +463,118 @@ fn world_model_choices_are_authorized_bounded_and_revision_fenced() {
     });
 }
 
+#[test]
+fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
+    use vespera_world::{Position, ResidentSpec, Role, World, WorldSpec, WorldStore};
+
+    const PEER: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let directory = ScratchDirectory::new();
+    let initial = World::new(WorldSpec {
+        seed: 17,
+        width: 5,
+        depth: 5,
+        depot: Position { x: 0, z: 0 },
+        residents: vec![
+            ResidentSpec {
+                id: AGENT.parse().unwrap(),
+                name: "First".into(),
+                role: Role::Forager,
+                position: Position { x: 2, z: 2 },
+            },
+            ResidentSpec {
+                id: PEER.parse().unwrap(),
+                name: "Second".into(),
+                role: Role::Builder,
+                position: Position { x: 3, z: 2 },
+            },
+        ],
+        sites: vec![],
+    })
+    .unwrap();
+    let good = HttpFixture::with_ollama_answer(false, r#"{"choice":0}"#);
+    let invalid = HttpFixture::with_ollama_answer(false, r#"{"choice":999}"#);
+    for (name, provider, expected_revision) in [("good", &good, 7), ("invalid", &invalid, 5)] {
+        let config = runtime_config(provider, false, true)
+            .replace("permissions = []", "permissions = [\"simulation_act\"]");
+        let (_, agent) = config.split_once("[[agents]]").unwrap();
+        let peer = agent.replace(AGENT, PEER).replace("Archivist", "Peer");
+        let config_path = directory.write_config(&format!("{config}\n[[agents]]{peer}"));
+        let database = directory.0.join(format!("{name}.sqlite3"));
+        WorldStore::initialize(&database, &initial).unwrap();
+        let output = execute(&[
+            "world",
+            "--database",
+            database.to_str().unwrap(),
+            "run",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--revision",
+            "0",
+            "--ticks",
+            "5",
+            "--reason-every",
+            "2",
+            "--tick-ms",
+            "0",
+            "--resident",
+            AGENT,
+            "--resident",
+            PEER,
+            "--resume",
+            "--unload-after",
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["committed_ticks"], 5);
+        assert_eq!(report["last_committed_revision"], expected_revision);
+        let attempts = report["attempts"].as_array().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["resident"], AGENT);
+        assert_eq!(attempts[0]["observed_revision"], 2);
+        assert_eq!(attempts[1]["resident"], PEER);
+        let persisted = WorldStore::read(&database).unwrap();
+        let snapshot = persisted.snapshot();
+        assert_eq!(snapshot.tick, 5);
+        assert_eq!(snapshot.revision, expected_revision);
+        if name == "good" {
+            assert_eq!(attempts[0]["committed_revision"], 3);
+            assert_eq!(attempts[1]["committed_revision"], 6);
+            assert_eq!(snapshot.residents[0].last_model_decision.unwrap().tick, 2);
+            assert_eq!(snapshot.residents[1].last_model_decision.unwrap().tick, 4);
+        } else {
+            assert!(
+                attempts.iter().all(|attempt| attempt["error"].is_string()
+                    && attempt["committed_revision"].is_null())
+            );
+            let mut deterministic = initial.clone();
+            for _ in 0..5 {
+                deterministic.advance().unwrap();
+            }
+            assert_eq!(persisted, deterministic);
+        }
+        let requests = provider.captured();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.path == "/api/chat")
+                .count(),
+            2
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.path == "/api/generate")
+                .count(),
+            2,
+            "shared load and unload"
+        );
+    }
+}
+
 fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str]) -> Output {
     let config = directory.write_config(config);
     let prompt = directory.0.join("prompt.txt");

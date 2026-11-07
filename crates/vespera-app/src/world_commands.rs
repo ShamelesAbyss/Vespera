@@ -14,6 +14,8 @@ use vespera_world::{Decision, DecisionSource, Position, World, WorldError, World
 
 use crate::AppError;
 
+mod cadence;
+
 #[derive(Debug, Args)]
 pub(super) struct WorldArgs {
     /// SQLite world database.
@@ -64,6 +66,8 @@ enum WorldCommand {
     },
     /// Ask a resident's configured model to choose from legal world actions.
     Decide(DecisionArgs),
+    /// Advance a bounded world run with sparse model decisions.
+    Run(cadence::RunArgs),
 }
 
 #[derive(Debug, Args)]
@@ -124,6 +128,7 @@ pub(super) async fn run(args: WorldArgs) -> Result<(), AppError> {
             return Ok(());
         }
         WorldCommand::Decide(args) => return decide(database, args).await,
+        WorldCommand::Run(args) => return cadence::run(database, args).await,
     };
     println!("{}", serde_json::to_string_pretty(&world.snapshot())?);
     Ok(())
@@ -137,23 +142,28 @@ struct Choice {
 
 #[derive(Serialize)]
 struct DecisionReport {
+    #[serde(flatten)]
+    attempt: DecisionAttempt,
+    cleanup: CleanupReport,
+}
+
+#[derive(Serialize)]
+struct DecisionAttempt {
     resident: AgentId,
     observed_revision: u64,
     committed_revision: Option<u64>,
     decision: Option<Decision>,
     source: Option<DecisionSource>,
-    cleanup: CleanupReport,
     error: Option<String>,
 }
 
-async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
-    let world = WorldStore::read(database)?;
-    let options = world.decision_options(args.resident, args.revision)?;
+fn plan(world: &World, id: AgentId, revision: u64) -> Result<(Task, Vec<Decision>), WorldError> {
+    let options = world.decision_options(id, revision)?;
     let state = world.snapshot();
     let resident = state
         .residents
         .iter()
-        .find(|resident| resident.id == args.resident)
+        .find(|resident| resident.id == id)
         .expect("validated resident");
     let nearest_site = state
         .sites
@@ -177,15 +187,98 @@ async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
         "nearest_stocked_site": nearest_site,
         "choices_in_index_order": options,
     });
-    let task = Task {
-        id: TaskId::new(),
-        prompt: format!(
-            "Choose one legal action for this simulated resident. Reply only with {{\"choice\":N}}, using a zero-based integer index into choices_in_index_order. World facts: {facts}"
-        ),
-        required_capabilities: [Capability::new("text-generation").expect("static capability")]
-            .into(),
-        state: TaskState::Queued,
-    };
+    Ok((
+        Task {
+            id: TaskId::new(),
+            prompt: format!(
+                "Choose one legal action for this simulated resident. Reply only with {{\"choice\":N}}, using a zero-based integer index into choices_in_index_order. World facts: {facts}"
+            ),
+            required_capabilities: [Capability::new("text-generation").expect("static capability")]
+                .into(),
+            state: TaskState::Queued,
+        },
+        options,
+    ))
+}
+
+fn execution_options(timeout: Duration) -> ExecutionOptions {
+    ExecutionOptions {
+        max_output_tokens: 32,
+        max_response_bytes: 256,
+        temperature: Some(0.0),
+        timeout,
+        ..Default::default()
+    }
+}
+
+fn update_current(
+    database: &Path,
+    observed: &World,
+    operation: impl FnOnce(&mut World) -> Result<(), WorldError>,
+) -> Result<World, WorldError> {
+    WorldStore::update(database, |current| {
+        if current != observed {
+            return Err(WorldError::StaleRevision);
+        }
+        operation(current)
+    })
+}
+
+impl DecisionAttempt {
+    fn new(resident: AgentId, observed_revision: u64) -> Self {
+        Self {
+            resident,
+            observed_revision,
+            committed_revision: None,
+            decision: None,
+            source: None,
+            error: None,
+        }
+    }
+
+    fn choose(
+        &mut self,
+        observed: vespera_agents::TaskExecutionResult,
+        options: &[Decision],
+    ) -> Result<(Decision, DecisionSource), AppError> {
+        let source = DecisionSource {
+            task_id: observed.task.id,
+            model_id: observed.model_id,
+            provider_id: observed.provider_id,
+        };
+        self.source = Some(source);
+        let choice: Choice = serde_json::from_str(&observed.response.content)
+            .map_err(|_| AppError::InvalidWorldChoice)?;
+        let picked = *options
+            .get(choice.choice)
+            .ok_or(AppError::InvalidWorldChoice)?;
+        self.decision = Some(picked);
+        Ok((picked, source))
+    }
+
+    fn commit(
+        &mut self,
+        database: &Path,
+        world: &World,
+        (decision, source): (Decision, DecisionSource),
+    ) -> Result<World, WorldError> {
+        let updated = update_current(database, world, |current| {
+            current.apply_model_decision(
+                self.resident,
+                self.observed_revision,
+                decision,
+                source,
+            )?;
+            Ok(())
+        })?;
+        self.committed_revision = Some(updated.snapshot().revision);
+        Ok(updated)
+    }
+}
+
+async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
+    let world = WorldStore::read(database)?;
+    let (task, options) = plan(&world, args.resident, args.revision)?;
     let config = AppConfig::load(&args.config)?;
     let runtime = VesperaRuntime::from_config_for_agent(&config, args.resident).await?;
     runtime
@@ -194,45 +287,24 @@ async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
         .await
         .map_err(RuntimeError::from)?;
     let timeout = Duration::from_secs(args.timeout_seconds);
-    let execution = ExecutionOptions {
-        max_output_tokens: 32,
-        max_response_bytes: 256,
-        temperature: Some(0.0),
-        timeout,
-        ..Default::default()
-    };
     let cancel = CancellationToken::new();
     let outcome = crate::commands::cancellable(
         timeout,
         cancel.clone(),
-        runtime.run_agent(args.resident, task, execution, args.resume, cancel),
+        runtime.run_agent(
+            args.resident,
+            task,
+            execution_options(timeout),
+            args.resume,
+            cancel,
+        ),
     )
     .await;
-    let mut decision = None;
-    let mut source = None;
-    let mut committed_revision = None;
+    let mut attempt = DecisionAttempt::new(args.resident, args.revision);
     let result = outcome.map_err(AppError::from).and_then(|observed| {
-        let provenance = DecisionSource {
-            task_id: observed.task.id,
-            model_id: observed.model_id,
-            provider_id: observed.provider_id,
-        };
-        source = Some(provenance);
-        let choice: Choice = serde_json::from_str(&observed.response.content)
-            .map_err(|_| AppError::InvalidWorldChoice)?;
-        let picked = *options
-            .get(choice.choice)
-            .ok_or(AppError::InvalidWorldChoice)?;
-        decision = Some(picked);
+        let choice = attempt.choose(observed, &options)?;
         if args.apply {
-            let updated = WorldStore::update(database, |current| {
-                if *current != world {
-                    return Err(WorldError::StaleRevision);
-                }
-                current.apply_model_decision(args.resident, args.revision, picked, provenance)?;
-                Ok(())
-            })?;
-            committed_revision = Some(updated.snapshot().revision);
+            attempt.commit(database, &world, choice)?;
         }
         Ok(())
     });
@@ -240,17 +312,10 @@ async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
         .cleanup(args.unload_after, Duration::from_secs(5))
         .await;
     let cleanup_failed = !cleanup.drained || !cleanup.unload_errors.is_empty();
+    attempt.error = result.as_ref().err().map(ToString::to_string);
     println!(
         "{}",
-        serde_json::to_string_pretty(&DecisionReport {
-            resident: args.resident,
-            observed_revision: args.revision,
-            committed_revision,
-            decision,
-            source,
-            cleanup,
-            error: result.as_ref().err().map(ToString::to_string),
-        })?
+        serde_json::to_string_pretty(&DecisionReport { attempt, cleanup })?
     );
     result?;
     if cleanup_failed {
