@@ -21,6 +21,7 @@ use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
 use vespera_orchestrator::{Workflow, WorkflowReport};
 use vespera_providers::CancellationToken;
+use vespera_scheduler::StartupResidencyReport;
 
 #[derive(Serialize)]
 struct WorkflowRunReport {
@@ -28,6 +29,8 @@ struct WorkflowRunReport {
     workflow: Option<WorkflowReport>,
     error: Option<String>,
     cleanup: CleanupReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
 }
@@ -60,7 +63,14 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let outcome = cancellable(
         Duration::from_secs(args.timeout_seconds),
         cancel.clone(),
-        runtime.run_workflow_observed(workflow, cancel, live.as_ref().map(|live| &live.sender)),
+        async {
+            if args.reconcile_residency {
+                runtime.reconcile_startup(cancel.clone()).await?;
+            }
+            runtime
+                .run_workflow_observed(workflow, cancel, live.as_ref().map(|live| &live.sender))
+                .await
+        },
     )
     .await;
     let cleanup = runtime
@@ -107,6 +117,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let journal_failed = event_publication
         .as_ref()
         .is_some_and(event_commands::Publication::failed);
+    let startup_residency = runtime.scheduler().startup_residency();
     if args.json {
         println!(
             "{}",
@@ -115,10 +126,12 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 workflow,
                 error: error.as_ref().map(ToString::to_string),
                 cleanup,
+                startup_residency,
                 event_publication
             })?
         );
     } else {
+        print_startup_residency(startup_residency);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }
@@ -295,11 +308,22 @@ struct RunReport {
     error: Option<String>,
     cleanup: CleanupReport,
     #[serde(skip_serializing_if = "Option::is_none")]
+    startup_residency: Option<StartupResidencyReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stored_memory_id: Option<MemoryId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
+}
+
+fn print_startup_residency(report: Option<StartupResidencyReport>) {
+    if let Some(report) = report {
+        println!(
+            "External startup residency: {} models across {} providers, {} RAM bytes, {} VRAM bytes",
+            report.external_models, report.providers_observed, report.ram_bytes, report.vram_bytes,
+        );
+    }
 }
 
 pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
@@ -373,11 +397,14 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     };
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let cancel = CancellationToken::new();
-    let outcome = cancellable(
-        timeout,
-        cancel.clone(),
-        runtime.run_agent_with_context(args.agent, task, options, args.resume, context, cancel),
-    )
+    let outcome = cancellable(timeout, cancel.clone(), async {
+        if args.reconcile_residency {
+            runtime.reconcile_startup(cancel.clone()).await?;
+        }
+        runtime
+            .run_agent_with_context(args.agent, task, options, args.resume, context, cancel)
+            .await
+    })
     .await;
     let cleanup = runtime
         .cleanup(args.unload_after, Duration::from_secs(5))
@@ -439,6 +466,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Ok(id) => (id, None),
         Err(error) => (None, Some(error)),
     };
+    let startup_residency = runtime.scheduler().startup_residency();
     if args.json {
         let report = RunReport {
             task_id,
@@ -446,12 +474,14 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             error: error.as_ref().map(ToString::to_string),
             execution,
             cleanup,
+            startup_residency,
             stored_memory_id,
             memory_error: memory_error.as_ref().map(ToString::to_string),
             event_publication,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        print_startup_residency(startup_residency);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }

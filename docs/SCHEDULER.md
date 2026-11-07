@@ -28,18 +28,36 @@ stateDiagram-v2
 was measured. `ProviderManaged` means physical residency is unverified. `Unknown`
 is charged but cannot be reused until unloaded. Unsupported unload returns an
 error without releasing memory. An acknowledgement must name the expected
-provider and model. This process does not reconcile external provider activity.
+provider and model.
 
 A synchronous transition guard marks interrupted lifecycle operations unknown.
 During an interrupted load it also releases the local inference slot. It never
 assumes that dropping a request stopped remote work or freed provider memory.
 
+## Startup residency reconciliation
+
+Before its first admission, a new scheduler can call `reconcile_startup` to
+observe residency from every provider in its scoped registry. It rejects
+unsupported telemetry, inconsistent snapshots and cancelled observations before
+installing a baseline. Ollama reads [running model residency](https://docs.ollama.com/api/ps).
+
+Models already resident at startup stay under external ownership. Admission
+charges their reported RAM and VRAM against available headroom and rejects
+requests for those same model names, including equivalent Ollama names.
+Eviction and shutdown cleanup operate only on local reservations. The startup
+report keeps provider observations separate from local accounting.
+
+The baseline is a point-in-time observation held in process memory. Provider
+changes after sampling can invalidate its assumptions. Shared backends reached
+through multiple provider registrations may be counted more than once. Use a
+single registration per backend for meaningful aggregate memory.
+
 ## Current limits
 
 Both estimate dimensions must be known; CPU-only models use explicit zero VRAM.
 The caller must include overhead and headroom in supplied estimates. There is
-no automatic per-request KV-cache costing, hardware discovery, telemetry
-reconciliation, or automatic shutdown unloading yet. See the development log for
+no automatic per-request KV-cache costing, hardware discovery, continuous
+telemetry reconciliation, or automatic shutdown unloading yet. See the development log for
 checkpoint validation and the roadmap for the complete acceptance gates.
 
 ## Inference lease ownership

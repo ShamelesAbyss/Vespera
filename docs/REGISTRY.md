@@ -4,6 +4,11 @@
 
 The optional SQLite catalog stores declared model metadata across CLI invocations. Providers, credential references, network policy and agents continue to come from the supplied TOML. Health evidence and residency are observed at runtime.
 
+After reopening a catalog, execution can separately reconcile the scoped
+providers' startup residency with `--reconcile-residency`. The scheduler
+handles the observation and leaves catalog declarations intact. See
+[startup residency reconciliation](SCHEDULER.md#startup-residency-reconciliation).
+
 ```powershell
 $db = 'data/models.sqlite3'
 $config = 'config/local.toml'

@@ -22,11 +22,14 @@ use vespera_providers::{
     OpenAiCompatibleProvider, OpenAiConfig, ProviderError, ProviderHealthStatus, SecretRef,
     ValidatedEndpoint,
 };
-use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
+use vespera_scheduler::{ResourceScheduler, SchedulerError, SchedulingPolicy};
 
 /// Application errors deliberately exclude configuration endpoints/credential values.
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    /// The optional startup residency guard could not establish safe accounting.
+    #[error("startup residency reconciliation failed: {0}")]
+    StartupResidency(SchedulerError),
     #[error("{0}")]
     Orchestration(#[from] OrchestratorError),
     /// Invalid offline declarations.
@@ -419,6 +422,14 @@ impl VesperaRuntime {
     /// Access local reservation accounting.
     pub fn scheduler(&self) -> &Arc<ResourceScheduler> {
         &self.scheduler
+    }
+
+    /// Establish external memory pressure without taking ownership of resident models.
+    pub async fn reconcile_startup(&self, cancel: CancellationToken) -> Result<(), RuntimeError> {
+        self.scheduler
+            .reconcile_startup(cancel)
+            .await
+            .map_err(RuntimeError::StartupResidency)
     }
     /// Explicit provider health I/O without model loading.
     pub async fn refresh_health(

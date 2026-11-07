@@ -7,7 +7,8 @@ mod queue;
 use queue::{AdmissionQueue, QueuePermit};
 pub use queue::{QueueError, QueuePolicy, QueueSnapshot};
 
-use std::collections::BTreeMap;
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
@@ -27,6 +28,15 @@ use vespera_providers::{
 /// Typed admission and lifecycle failures.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
+    /// Startup reconciliation cannot replace evidence after scheduling starts.
+    #[error("scheduler startup residency can only be reconciled once before admission")]
+    StartupAlreadyUsed,
+    /// Provider residency data is malformed or no longer identifies the active adapter.
+    #[error("startup residency evidence is invalid for provider {provider_id}")]
+    InvalidStartupResidency { provider_id: ProviderId },
+    /// The selected provider model is already loaded outside local ownership.
+    #[error("model {model_id} is externally resident and cannot be activated by this scheduler")]
+    ExternallyResident { model_id: ModelId },
     /// Inventory differs from a validated request or an existing reservation.
     #[error("model {model_id} binding differs from the request or reservation")]
     RegistrationChanged {
@@ -188,6 +198,31 @@ struct SchedulerState {
     leases: BTreeMap<uuid::Uuid, ModelId>,
     // Retain the actual provider instance so removal/re-registration cannot redirect unload.
     bound_providers: BTreeMap<ModelId, Arc<dyn InferenceProvider>>,
+    admission_started: bool,
+    startup: Option<StartupResidency>,
+}
+
+struct StartupResidency {
+    providers: BTreeMap<ProviderId, ObservedProvider>,
+    report: StartupResidencyReport,
+}
+
+struct ObservedProvider {
+    adapter: Arc<dyn InferenceProvider>,
+    models: BTreeSet<String>,
+}
+
+/// Aggregate provider observations used as external startup pressure.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StartupResidencyReport {
+    /// Number of scoped providers successfully queried.
+    pub providers_observed: usize,
+    /// Number of already resident models reported by those providers.
+    pub external_models: usize,
+    /// Reported external RAM bytes.
+    pub ram_bytes: u64,
+    /// Reported external VRAM bytes.
+    pub vram_bytes: u64,
 }
 
 impl SchedulerState {
@@ -285,6 +320,90 @@ impl ResourceScheduler {
     #[must_use]
     pub fn queue_snapshot(&self) -> QueueSnapshot {
         self.queue.snapshot()
+    }
+
+    /// Read residency before the first local admission. Observed models are
+    /// charged as external pressure and never become owned reservations.
+    pub async fn reconcile_startup(&self, cancel: CancellationToken) -> Result<(), SchedulerError> {
+        {
+            let state = lock(&self.state);
+            if state.admission_started || state.startup.is_some() {
+                return Err(SchedulerError::StartupAlreadyUsed);
+            }
+        }
+        let providers: BTreeSet<_> = self
+            .registry
+            .list_registrations()
+            .await
+            .into_iter()
+            .map(|model| model.provider_id)
+            .collect();
+        let mut startup = StartupResidency {
+            providers: BTreeMap::new(),
+            report: StartupResidencyReport::default(),
+        };
+        for provider_id in providers {
+            let provider = self.registry.get_provider(provider_id).await?;
+            let snapshot = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(SchedulerError::Cancelled),
+                result = provider.query_residency(cancel.clone()) => result?,
+            };
+            if snapshot.provider_id != provider_id {
+                return Err(SchedulerError::InvalidStartupResidency { provider_id });
+            }
+            let mut names = BTreeSet::new();
+            let mut ram = 0;
+            let mut vram = 0;
+            for model in snapshot.resident_models {
+                if model.provider_model_name.trim().is_empty()
+                    || model
+                        .ram_resident_bytes
+                        .checked_add(model.vram_resident_bytes)
+                        != Some(model.total_resident_bytes)
+                    || !names.insert(provider.residency_model_key(&model.provider_model_name))
+                {
+                    return Err(SchedulerError::InvalidStartupResidency { provider_id });
+                }
+                ram = add_memory(ram, model.ram_resident_bytes, ResourceKind::Ram)?;
+                vram = add_memory(vram, model.vram_resident_bytes, ResourceKind::Vram)?;
+            }
+            if ram != snapshot.total_provider_ram_bytes
+                || vram != snapshot.total_provider_vram_bytes
+            {
+                return Err(SchedulerError::InvalidStartupResidency { provider_id });
+            }
+            startup.report.ram_bytes =
+                add_memory(startup.report.ram_bytes, ram, ResourceKind::Ram)?;
+            startup.report.vram_bytes =
+                add_memory(startup.report.vram_bytes, vram, ResourceKind::Vram)?;
+            startup.report.external_models += names.len();
+            startup.report.providers_observed += 1;
+            startup.providers.insert(
+                provider_id,
+                ObservedProvider {
+                    adapter: provider,
+                    models: names,
+                },
+            );
+        }
+        let mut state = lock(&self.state);
+        if cancel.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
+        }
+        if state.admission_started || state.startup.is_some() {
+            return Err(SchedulerError::StartupAlreadyUsed);
+        }
+        state.startup = Some(startup);
+        Ok(())
+    }
+
+    /// Observed startup pressure, separate from this runtime's reservations.
+    pub fn startup_residency(&self) -> Option<StartupResidencyReport> {
+        lock(&self.state)
+            .startup
+            .as_ref()
+            .map(|startup| startup.report)
     }
 
     /// Capture reservation counters and model states under one accounting lock.
@@ -439,6 +558,7 @@ impl ResourceScheduler {
         expected_model_name: Option<&str>,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
+        lock(&self.state).admission_started = true;
         let permit = self
             .queue
             .acquire(priority, &cancel)
@@ -494,6 +614,27 @@ impl ResourceScheduler {
             }
             let decision = {
                 let mut state = lock(&self.state);
+                let external = if let Some(startup) = &state.startup {
+                    let Some(observed) = startup.providers.get(&model.provider_id) else {
+                        return Err(SchedulerError::InvalidStartupResidency {
+                            provider_id: model.provider_id,
+                        });
+                    };
+                    if !Arc::ptr_eq(&observed.adapter, &provider) {
+                        return Err(SchedulerError::InvalidStartupResidency {
+                            provider_id: model.provider_id,
+                        });
+                    }
+                    if observed
+                        .models
+                        .contains(&provider.residency_model_key(&model.provider_model_identifier))
+                    {
+                        return Err(SchedulerError::ExternallyResident { model_id });
+                    }
+                    startup.report
+                } else {
+                    StartupResidencyReport::default()
+                };
                 let existing = state.resident_models.get(&model_id);
                 if existing.is_some_and(|entry| {
                     entry.provider_id != model.provider_id
@@ -521,8 +662,23 @@ impl ResourceScheduler {
                     vram_bytes: if reuse { 0 } else { vram_bytes },
                     context_tokens,
                 };
-                match self.policy.budget.admit(&state.usage, &request) {
-                    Ok(usage) => {
+                let accounted = ResourceUsage {
+                    ram_bytes: add_memory(
+                        state.usage.ram_bytes,
+                        external.ram_bytes,
+                        ResourceKind::Ram,
+                    )?,
+                    vram_bytes: add_memory(
+                        state.usage.vram_bytes,
+                        external.vram_bytes,
+                        ResourceKind::Vram,
+                    )?,
+                    active_inferences: state.usage.active_inferences,
+                };
+                match self.policy.budget.admit(&accounted, &request) {
+                    Ok(mut usage) => {
+                        usage.ram_bytes -= external.ram_bytes;
+                        usage.vram_bytes -= external.vram_bytes;
                         state.usage = usage;
                         state.logical_tick = state.logical_tick.saturating_add(1);
                         let tick = state.logical_tick;
@@ -713,4 +869,16 @@ impl ResourceScheduler {
         transition.armed = false;
         Ok(true)
     }
+}
+
+fn add_memory(
+    current: u64,
+    additional: u64,
+    resource: ResourceKind,
+) -> Result<u64, SchedulerError> {
+    current
+        .checked_add(additional)
+        .ok_or(SchedulerError::BudgetExceeded(
+            DomainError::ResourceOverflow { resource },
+        ))
 }

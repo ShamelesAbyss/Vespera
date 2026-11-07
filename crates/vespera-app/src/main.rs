@@ -119,6 +119,9 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct RunAgentArgs {
+    /// Account for already resident models before scheduling. Requires provider residency telemetry.
+    #[arg(long)]
+    reconcile_residency: bool,
     /// Record the observed terminal outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
@@ -165,6 +168,9 @@ struct RunAgentArgs {
 
 #[derive(Debug, Args)]
 struct RunWorkflowArgs {
+    /// Account for already resident models before scheduling. Requires provider residency telemetry.
+    #[arg(long)]
+    reconcile_residency: bool,
     /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,

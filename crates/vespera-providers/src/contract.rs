@@ -454,6 +454,11 @@ pub trait InferenceProvider: Send + Sync + 'static {
     /// Returns the provider family (`Ollama`, `OpenAiCompatible`, `Bionic`, `Custom`).
     fn provider_kind(&self) -> ProviderKind;
 
+    /// Maps configured and reported model names to a comparable residency identity.
+    fn residency_model_key(&self, name: &str) -> String {
+        name.to_owned()
+    }
+
     /// Returns the static and negotiated lifecycle capability matrix for this provider.
     fn lifecycle_support(&self) -> ProviderLifecycleSupport;
 

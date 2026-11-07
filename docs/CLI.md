@@ -96,6 +96,7 @@ happen in TOML; no agent/model administrative subcommand is supplied yet.
 | `--context-tokens <N>` | Optional 64–1,048,576 ceiling, also limited by model/budget |
 | `--temperature <FLOAT>` | Optional finite value in 0–2 |
 | `--timeout-seconds <N>` | 1–3,600; default 60 across health and task execution |
+| `--reconcile-residency` | Observe external model residency before admission |
 | `--unload-after` | Request explicit unload of this runtime's reservations after work |
 | `--json` | Structured task state, result/error and cleanup evidence |
 
@@ -107,6 +108,15 @@ Generated output remains untrusted data: this command runs no tools and does not
 automatically read/write memories, change identity, or execute model instructions.
 
 ## Cleanup and provider sharing
+
+`run-agent` and `run-workflow` accept `--reconcile-residency`. The startup
+probe shares the command deadline and requires residency telemetry from every
+provider scoped to that invocation. The native Ollama adapter supports it.
+Compatible endpoints return an unsupported operation before execution. A
+successful observation appears as `startup_residency` in JSON with
+`providers_observed`, `external_models`, `ram_bytes` and `vram_bytes`.
+Already-resident models are fenced from admission and their measured memory
+reduces headroom. See [scheduler accounting and scope](SCHEDULER.md#startup-residency-reconciliation).
 
 New admissions are closed and local permits drained after the invocation.
 Cleanup has an additional five-second bound. Default cleanup does not unload
@@ -157,6 +167,7 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `--workflow-file <PATH>` | Required strict UTF-8 JSON, at most one MiB |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |
+| `--reconcile-residency` | Observe external model residency before admission |
 | `--unload-after` | Explicit supported unload after local execution, including failure |
 | `--json` | Root/child history, accepted contributions/errors and cleanup evidence |
 

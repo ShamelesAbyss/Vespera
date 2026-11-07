@@ -190,6 +190,17 @@ impl InferenceProvider for OllamaProvider {
         ProviderKind::Ollama
     }
 
+    fn residency_model_key(&self, name: &str) -> String {
+        let name = name.to_ascii_lowercase();
+        let mut parts = name.rsplitn(3, '/');
+        let model = parts.next().unwrap_or_default();
+        let namespace = parts.next().unwrap_or("library");
+        let host = parts.next().unwrap_or("registry.ollama.ai");
+        let host = host.split_once("://").map_or(host, |(_, host)| host);
+        let tag_suffix = if model.contains(':') { "" } else { ":latest" };
+        format!("{host}/{namespace}/{model}{tag_suffix}")
+    }
+
     fn lifecycle_support(&self) -> ProviderLifecycleSupport {
         ProviderLifecycleSupport {
             model_enumeration: LifecycleCapabilityState::Supported,

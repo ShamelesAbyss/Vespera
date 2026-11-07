@@ -198,6 +198,7 @@ struct HttpFixture {
     hold_health: std::sync::Arc<AtomicBool>,
     hold_inference: std::sync::Arc<AtomicBool>,
     deny_health: std::sync::Arc<AtomicBool>,
+    residency: std::sync::Arc<std::sync::Mutex<String>>,
 }
 impl HttpFixture {
     fn new(health_denied: bool) -> Self {
@@ -228,6 +229,8 @@ impl HttpFixture {
         let inference_gate = hold_inference.clone();
         let deny_health = std::sync::Arc::new(AtomicBool::new(health_denied));
         let denied = deny_health.clone();
+        let residency = std::sync::Arc::new(std::sync::Mutex::new(r#"{"models":[]}"#.to_owned()));
+        let observed_residency = residency.clone();
         let worker = std::thread::spawn(move || {
             while !stopped.load(Ordering::SeqCst) {
                 let (mut socket, _) = match listener.accept() {
@@ -287,6 +290,7 @@ impl HttpFixture {
                 let Some(request) = request else {
                     continue;
                 };
+                let residency_body = observed_residency.lock().unwrap().clone();
                 let (status, body) = if denied.load(Ordering::SeqCst)
                     && matches!(request.path.as_str(), "/api/version" | "/v1/models")
                 {
@@ -295,6 +299,7 @@ impl HttpFixture {
                     match request.path.as_str() {
                         "/api/version" => ("200 OK", r#"{"version":"fixture-v1"}"#),
                         "/api/generate" => ("200 OK", r#"{"done":true}"#),
+                        "/api/ps" => ("200 OK", residency_body.as_str()),
                         "/api/chat" => ("200 OK", chat_response.as_str()),
                         "/v1/models" => ("200 OK", r#"{"data":[{"id":"fixture-model"}]}"#),
                         "/v1/chat/completions" => (
@@ -346,6 +351,7 @@ impl HttpFixture {
             hold_health,
             hold_inference,
             deny_health,
+            residency,
         }
     }
     fn captured(&self) -> Vec<CapturedRequest> {
@@ -888,6 +894,79 @@ fn model_catalog_reopens_and_supplies_a_real_runtime_registration() {
             .any(|request| request.path == "/api/chat")
     );
     assert_eq!(json(run(&["list"])), recovered);
+}
+
+#[test]
+fn startup_residency_fences_external_models_and_charges_memory() {
+    let fixture = HttpFixture::new(false);
+    let scratch = ScratchDirectory::new();
+    let config =
+        runtime_config(&fixture, false, true).replace("ram_bytes = 4294967296", "ram_bytes = 120");
+    let execute = |model| {
+        *fixture.residency.lock().unwrap() = serde_json::json!({
+            "models": [{"name": model, "size": 90, "size_vram": 0}]
+        })
+        .to_string();
+        run_fixture_agent(
+            &scratch,
+            &config,
+            &["--resume", "--reconcile-residency", "--unload-after"],
+        )
+    };
+    for (name, expected) in [
+        (
+            "external-model",
+            "RAM bytes request/usage 190 exceeds budget 120",
+        ),
+        (
+            "https://registry.ollama.ai/library/fixture-model:latest",
+            "externally resident",
+        ),
+    ] {
+        let result = execute(name);
+        assert!(!result.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(
+            report["error"].as_str().unwrap().contains(expected),
+            "{report}"
+        );
+        assert_eq!(
+            report["startup_residency"],
+            serde_json::json!({
+                "providers_observed": 1, "external_models": 1, "ram_bytes": 90, "vram_bytes": 0
+            })
+        );
+        assert_eq!(report["cleanup"]["remaining_models"], serde_json::json!([]));
+    }
+    assert!(
+        fixture
+            .captured()
+            .iter()
+            .all(|request| matches!(request.path.as_str(), "/api/ps" | "/api/version"))
+    );
+
+    *fixture.residency.lock().unwrap() = r#"{"models":[]}"#.into();
+    let result = run_fixture_agent(
+        &scratch,
+        &config,
+        &["--resume", "--reconcile-residency", "--unload-after"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["startup_residency"]["external_models"], 0);
+    assert_eq!(report["execution"]["task"]["state"], "completed");
+    assert_eq!(
+        fixture
+            .captured()
+            .iter()
+            .filter(|request| request.path == "/api/generate")
+            .count(),
+        2
+    );
 }
 
 #[test]
