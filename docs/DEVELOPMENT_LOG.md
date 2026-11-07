@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Per-inference memory allowances
+
+Verified implementation checkpoint `ce1cf5c58847efbc454276b8d96e84d4bb8730b4` was pushed to `main`. The context-aware scheduler checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42425514575).
+
+The optional `[inference_overhead]` configuration adds fixed and per-context-token RAM and VRAM allowances to each local inference from preparation until lease release. Reused models share one resident reservation and still charge each lease. A failed or interrupted load returns the transient charge while retaining uncertain resident memory. The scheduler fixtures exercised separate RAM and VRAM budget failures, idempotent release, drop and abort. The CLI telemetry fixture observed the allowance during both loading and active execution. Windows formatting, strict workspace Clippy and offline workspace tests passed.
+
+With Ollama 0.40.13 and `hermes3:8b`, a 512-token request was rejected at 7 GiB of configured VRAM costs against a 6 GiB budget, leaving residency empty. With the configured transient allowance reduced to 64 MiB, the request completed and explicit unload left residency empty again. These allowances are operator estimates. Automatic estimation and provider-side memory verification remain open. The next Milestone 5 work is refreshing external pressure between admissions and preserving uncertainty across process restart.
+
 ## 2026-11-07 — Context-aware scheduler reuse
 
 Verified implementation checkpoint `680f9d839726a88c43038c08ac70e32a90ddf225` was pushed to `main`. The startup residency checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42425220762).
