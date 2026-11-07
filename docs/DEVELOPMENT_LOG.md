@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Unified native Atlas navigation
+
+The signed task replay checkpoint `b6988a6866a5c9b4d259cb86000674a9b06dd327` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42419091459). Added a single-window Atlas mode for Machine, Intelligence Network, Swarm and Living World. Layer switches retain cameras, filters and replay state. A selected agent UUID transfers when it appears in the destination. The active scene handles input. Broker observation continues in the background, and switching away from World pauses window-driven ticks.
+
+Windows validation passed the offline workspace suite, the SDK doctest, seven graphics tests, strict workspace and graphics Clippy, and the graphics build. In the native window, a worker selected from a signed lease appeared as the selected Swarm sender and the corresponding World resident. The broker accepted a cancellation while Network was hidden, and the world database stayed paused at revision 8 while another layer was open. The World inspector retained its replay revision on return. Signed Swarm replay hid the message at sequence 0 and restored its arrow at the accepted sequence 3.
+
+Atlas opens only the configured layers and transfers only identities already observed by the destination. The session keeps layer context in memory. Model, provider and hardware drill-downs require more cross-source evidence.
+
 ## 2026-11-07 — Intelligence Network task replay
 
 Verified implementation checkpoint `b6988a6866a5c9b4d259cb86000674a9b06dd327` was pushed to `main`.

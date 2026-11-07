@@ -1,3 +1,4 @@
+mod atlas;
 mod machine_scene;
 mod scene;
 mod swarm_scene;
@@ -9,7 +10,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::Parser;
+use bevy::prelude::Color;
+use clap::{CommandFactory, Parser, error::ErrorKind};
 use tokio::sync::mpsc;
 use vespera_sdk::{
     BrokerEventEntry, BrokerStreamEnd, BrokerStreamFrame, ClientError, OperatorClient, SigningKey,
@@ -19,27 +21,31 @@ use vespera_sdk::{
 #[derive(Parser)]
 #[command(about = "Vespera native 3D orchestration and simulation")]
 struct Options {
-    #[arg(long, default_value = "127.0.0.1:8765")]
-    broker: SocketAddr,
+    /// Signed broker address. Standalone broker views default to 127.0.0.1:8765.
+    #[arg(long)]
+    broker: Option<SocketAddr>,
     #[arg(long)]
     allow_cancel: bool,
     /// Disable animated camera focus and task lane transitions.
     #[arg(long)]
     reduced_motion: bool,
+    /// Switch between configured layers in a single desktop window.
+    #[arg(long, conflicts_with_all = ["machine", "swarm_broker"])]
+    atlas: bool,
     /// Open the local hardware view without a broker or credentials.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world"])]
     machine: bool,
-    /// Read scheduler telemetry from this local run directory.
-    #[arg(long, requires = "machine")]
+    /// Read scheduler telemetry in Machine or Atlas mode.
+    #[arg(long)]
     scheduler_telemetry: Option<PathBuf>,
-    /// Open a persistent simulation world instead of the broker view.
-    #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
+    /// Open a persistent simulation world, standalone or as an Atlas layer.
+    #[arg(long)]
     world: Option<PathBuf>,
     /// Inspect a retained world revision in a read-only 3D window.
     #[arg(long, requires = "world", conflicts_with = "allow_world_control")]
     world_revision: Option<u64>,
     /// Inspect observed agent relationships from an existing local event journal.
-    #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world", "machine"])]
+    #[arg(long, conflicts_with = "machine")]
     swarm: Option<PathBuf>,
     /// Inspect accepted mailbox messages on the signed operator feed.
     #[arg(long, conflicts_with_all = ["swarm", "allow_cancel", "world", "machine"])]
@@ -49,6 +55,7 @@ struct Options {
     allow_world_control: bool,
 }
 
+#[derive(Clone)]
 enum Update {
     Ready(u64),
     Status(&'static str),
@@ -59,7 +66,21 @@ enum Update {
 }
 
 fn main() -> ExitCode {
-    let options = Options::parse();
+    let mut options = Options::parse();
+    if let Some(error) = options.conflict() {
+        Options::command()
+            .error(ErrorKind::ArgumentConflict, error)
+            .exit();
+    }
+    if options.atlas {
+        return match run_atlas(&mut options) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if let Some(path) = options.swarm {
         return match swarm_scene::run(path, options.reduced_motion) {
             Ok(()) => ExitCode::SUCCESS,
@@ -87,32 +108,16 @@ fn main() -> ExitCode {
             }
         };
     }
-    let Ok(key) = std::env::var("VESPERA_OPERATOR_TOKEN") else {
-        eprintln!("Set VESPERA_OPERATOR_TOKEN to the broker operator signing key.");
-        return ExitCode::FAILURE;
-    };
-    let client =
-        SigningKey::from_hex(&key).and_then(|key| OperatorClient::new(options.broker, key));
-    let client = match client {
-        Ok(client) => client,
+    let address = options
+        .broker
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 8765)));
+    let (receiver, control) = match start_broker(address, None) {
+        Ok(channels) => channels,
         Err(error) => {
             eprintln!("{error}");
             return ExitCode::FAILURE;
         }
     };
-    let (observations, receiver) = mpsc::channel(64);
-    let (control, actions) = mpsc::channel(4);
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("Could not start broker client: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    std::thread::spawn(move || runtime.block_on(observe(client, observations, actions)));
     if options.swarm_broker {
         drop(control);
         swarm_scene::run_broker(receiver, options.reduced_motion);
@@ -126,17 +131,110 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-async fn observe(
-    client: OperatorClient,
-    updates: mpsc::Sender<Update>,
-    mut actions: mpsc::Receiver<TaskId>,
-) {
+impl Options {
+    fn conflict(&self) -> Option<&'static str> {
+        if self.scheduler_telemetry.is_some() && !(self.atlas || self.machine) {
+            return Some("--scheduler-telemetry requires --machine or --atlas");
+        }
+        if self.atlas {
+            return (self.allow_cancel && self.broker.is_none())
+                .then_some("--atlas --allow-cancel requires --broker");
+        }
+        if (self.world.is_some() || self.swarm.is_some())
+            && (self.broker.is_some() || self.allow_cancel)
+        {
+            return Some("combining a broker with --world or --swarm requires --atlas");
+        }
+        if self.world.is_some() && self.swarm.is_some() {
+            return Some("combining --world and --swarm requires --atlas");
+        }
+        None
+    }
+}
+
+fn run_atlas(options: &mut Options) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = scene::desktop(
+        "Vespera | Atlas",
+        Color::srgb(0.017, 0.023, 0.043),
+        atlas::Layer::Machine,
+    );
+    let reduced = options.reduced_motion;
+    machine_scene::install(&mut app, options.scheduler_telemetry.take(), reduced);
+    if let Some(path) = options.world.take() {
+        world_scene::install(
+            &mut app,
+            path,
+            options.world_revision,
+            options.allow_world_control,
+            reduced,
+        )?;
+    }
+    let use_broker_swarm = options.swarm.is_none();
+    if let Some(path) = options.swarm.take() {
+        swarm_scene::install_journal(&mut app, path, reduced)?;
+    }
+    if let Some(address) = options.broker {
+        let (mirror, swarm_updates) = if use_broker_swarm {
+            let (send, recv) = mpsc::channel(64);
+            (Some(send), Some(recv))
+        } else {
+            (None, None)
+        };
+        let (updates, control) = start_broker(address, mirror)?;
+        scene::install(
+            &mut app,
+            updates,
+            options.allow_cancel.then_some(control),
+            reduced,
+        );
+        if let Some(updates) = swarm_updates {
+            swarm_scene::install_broker(&mut app, updates, reduced);
+        }
+    }
+    atlas::navigation(&mut app);
+    app.run();
+    Ok(())
+}
+
+struct Feeds {
+    primary: mpsc::Sender<Update>,
+    mirror: Option<mpsc::Sender<Update>>,
+}
+
+impl Feeds {
+    async fn send(&self, update: Update) -> Result<(), ()> {
+        if let Some(mirror) = &self.mirror {
+            let _ = mirror.send(update.clone()).await;
+        }
+        self.primary.send(update).await.map_err(|_| ())
+    }
+}
+
+fn start_broker(
+    address: SocketAddr,
+    mirror: Option<mpsc::Sender<Update>>,
+) -> Result<(mpsc::Receiver<Update>, mpsc::Sender<TaskId>), Box<dyn std::error::Error>> {
+    let key = std::env::var("VESPERA_OPERATOR_TOKEN")
+        .map_err(|_| "Set VESPERA_OPERATOR_TOKEN to the broker operator signing key.")?;
+    let client = OperatorClient::new(address, SigningKey::from_hex(&key)?)?;
+    let (primary, observations) = mpsc::channel(64);
+    let (control, actions) = mpsc::channel(4);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    std::thread::spawn(move || {
+        runtime.block_on(observe(client, Feeds { primary, mirror }, actions))
+    });
+    Ok((observations, control))
+}
+
+async fn observe(client: OperatorClient, updates: Feeds, mut actions: mpsc::Receiver<TaskId>) {
     let mut cursor = None;
-    while !updates.is_closed() {
+    while !updates.primary.is_closed() {
         match client.subscribe(cursor).await {
             Ok(mut stream) => loop {
                 tokio::select! {
-                    () = updates.closed() => return,
+                    () = updates.primary.closed() => return,
                     action = actions.recv(), if !actions.is_closed() => {
                         if let Some(task) = action {
                             let update = match client.cancel(task).await {

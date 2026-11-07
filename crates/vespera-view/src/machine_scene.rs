@@ -10,7 +10,10 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::sync::watch;
 use vespera_core::SchedulerSample;
 
+use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
+
+type Focus = CameraFocus<{ Layer::Machine as usize }>;
 
 const INTERVAL: Duration = Duration::from_secs(1);
 
@@ -103,21 +106,35 @@ struct Meter(Device);
 struct Readout;
 
 pub(super) fn run(telemetry_directory: Option<PathBuf>, reduced_motion: bool) {
+    let mut app = desktop(
+        "Vespera | The Machine",
+        Color::srgb(0.017, 0.023, 0.043),
+        Layer::Machine,
+    );
+    install(&mut app, telemetry_directory, reduced_motion);
+    app.run();
+}
+
+pub(super) fn install(app: &mut App, telemetry_directory: Option<PathBuf>, reduced_motion: bool) {
+    register(app, Layer::Machine);
     let source = telemetry_directory.map(|directory| directory.join(SchedulerSample::FILE_NAME));
     let (send, receive) = watch::channel(None);
     std::thread::spawn(move || observe(&send, source.as_deref()));
-    desktop("Vespera | The Machine", Color::srgb(0.017, 0.023, 0.043))
-        .insert_resource(Telemetry(receive))
+    app.insert_resource(Telemetry(receive))
         .init_resource::<Selected>()
-        .insert_resource(CameraFocus {
+        .insert_resource(Focus {
             point: None,
             home_point: Vec3::new(1.6, 0.0, 0.0),
             home_distance: 16.0,
             reduced_motion,
         })
         .add_systems(Startup, setup)
-        .add_systems(Update, (navigate, camera, present).chain())
-        .run();
+        .add_systems(
+            Update,
+            (navigate, camera::<{ Layer::Machine as usize }>, present)
+                .chain()
+                .run_if(|layers: Res<Layers>| layers.active == Layer::Machine),
+        );
 }
 
 fn observe(send: &watch::Sender<Option<Sample>>, source: Option<&Path>) {
@@ -149,19 +166,28 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    focus: Res<CameraFocus>,
+    focus: Res<Focus>,
+    layers: Res<Layers>,
 ) {
     let plate = meshes.add(Cuboid::new(2.9, 0.25, 2.45));
     let chip = meshes.add(Cuboid::new(1.35, 0.5, 1.35));
     let meter = meshes.add(Cuboid::new(1.0, 0.10, 0.20));
     let base = materials.add(Color::srgb(0.085, 0.12, 0.19));
+    let camera = commands
+        .spawn((
+            Layer::Machine,
+            Camera {
+                is_active: layers.active == Layer::Machine,
+                ..default()
+            },
+            Camera3d::default(),
+            Tonemapping::None,
+            Orbit::at_home(&focus),
+            Transform::from_xyz(1.6, 10.0, 13.0).looking_at(focus.home_point, Vec3::Y),
+        ))
+        .id();
     commands.spawn((
-        Camera3d::default(),
-        Tonemapping::None,
-        Orbit::at_home(&focus),
-        Transform::from_xyz(1.6, 10.0, 13.0).looking_at(focus.home_point, Vec3::Y),
-    ));
-    commands.spawn((
+        layers.parent(Layer::Machine),
         DirectionalLight {
             illuminance: 6500.0,
             ..default()
@@ -177,12 +203,14 @@ fn setup(
         let point = device.position();
         let material = materials.add(color);
         commands.spawn((
+            layers.parent(Layer::Machine),
             Mesh3d(plate.clone()),
             MeshMaterial3d(base.clone()),
             Transform::from_translation(point),
         ));
         commands
             .spawn((
+                layers.parent(Layer::Machine),
                 Mesh3d(chip.clone()),
                 MeshMaterial3d(material.clone()),
                 Transform::from_translation(point + Vec3::Y * 0.38),
@@ -196,6 +224,7 @@ fn setup(
             );
         if !matches!(device, Device::Adapter) {
             commands.spawn((
+                layers.parent(Layer::Machine),
                 Meter(device),
                 Mesh3d(meter.clone()),
                 MeshMaterial3d(material),
@@ -206,6 +235,7 @@ fn setup(
         }
     }
     commands.spawn((
+        UiTargetCamera(camera),
         Node {
             position_type: PositionType::Absolute,
             top: px(20.0),
@@ -227,7 +257,7 @@ fn setup(
 fn navigate(
     keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<Selected>,
-    mut focus: ResMut<CameraFocus>,
+    mut focus: ResMut<Focus>,
 ) {
     for (key, device) in [
         (KeyCode::Digit1, Device::Cpu),

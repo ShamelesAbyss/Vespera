@@ -12,7 +12,10 @@ use vespera_world::{
     WorldChange, WorldError, WorldFence, WorldStore,
 };
 
+use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
+
+type Focus = CameraFocus<{ Layer::World as usize }>;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -84,6 +87,13 @@ enum Object {
 #[derive(Resource, Default)]
 struct Selected(Option<Object>);
 
+pub(super) fn selected_agent(world: &bevy::prelude::World) -> Option<AgentId> {
+    match world.resource::<Selected>().0 {
+        Some(Object::Resident(id)) => Some(id),
+        _ => None,
+    }
+}
+
 #[derive(Resource)]
 struct Palette {
     depot: Handle<Mesh>,
@@ -96,6 +106,23 @@ struct Palette {
 struct Details;
 
 pub(super) fn run(
+    path: PathBuf,
+    revision: Option<u64>,
+    allow_control: bool,
+    reduced_motion: bool,
+) -> Result<(), WorldError> {
+    let mut app = desktop(
+        "Vespera | World Simulation",
+        Color::srgb(0.04, 0.065, 0.06),
+        Layer::World,
+    );
+    install(&mut app, path, revision, allow_control, reduced_motion)?;
+    app.run();
+    Ok(())
+}
+
+pub(super) fn install(
+    app: &mut App,
     path: PathBuf,
     revision: Option<u64>,
     allow_control: bool,
@@ -122,35 +149,44 @@ pub(super) fn run(
     });
     let (commands, actions) = mpsc::sync_channel(1);
     std::thread::spawn(move || observe(path, observations, actions));
-    desktop("Vespera | World Simulation", Color::srgb(0.04, 0.065, 0.06))
-        .insert_resource(View {
-            updates,
-            commands,
-            allow_control,
-            history,
-            world,
-            status,
-            reasoning,
-            completed_requests: 0,
-            pending: false,
-            scene_dirty: true,
-            playing: false,
-            clock: Timer::from_seconds(0.5, TimerMode::Repeating),
-            entities: BTreeMap::new(),
-        })
-        .insert_resource(CameraFocus {
-            point: None,
-            home_point: Vec3::ZERO,
-            home_distance,
-            reduced_motion,
-        })
-        .init_resource::<Selected>()
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (receive, controls, sync_scene, camera, links, inspect).chain(),
+    register(app, Layer::World);
+    app.insert_resource(View {
+        updates,
+        commands,
+        allow_control,
+        history,
+        world,
+        status,
+        reasoning,
+        completed_requests: 0,
+        pending: false,
+        scene_dirty: true,
+        playing: false,
+        clock: Timer::from_seconds(0.5, TimerMode::Repeating),
+        entities: BTreeMap::new(),
+    })
+    .insert_resource(Focus {
+        point: None,
+        home_point: Vec3::ZERO,
+        home_distance,
+        reduced_motion,
+    })
+    .init_resource::<Selected>()
+    .add_systems(Startup, setup)
+    .add_systems(
+        Update,
+        (
+            controls,
+            sync_scene,
+            camera::<{ Layer::World as usize }>,
+            links,
+            inspect,
         )
-        .run();
+            .chain()
+            .run_if(|layers: Res<Layers>| layers.active == Layer::World)
+            .after(receive),
+    )
+    .add_systems(Update, receive);
     Ok(())
 }
 
@@ -285,7 +321,8 @@ fn commit(path: &Path, command: Command) -> Result<World, WorldError> {
 fn setup(
     mut commands: Commands,
     view: Res<View>,
-    focus: Res<CameraFocus>,
+    focus: Res<Focus>,
+    layers: Res<Layers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -309,13 +346,21 @@ fn setup(
         material: colors.map(|color| materials.add(unlit(color))),
     });
     let state = view.world.snapshot();
+    let camera = commands
+        .spawn((
+            Layer::World,
+            Camera {
+                is_active: layers.active == Layer::World,
+                ..default()
+            },
+            Camera3d::default(),
+            Tonemapping::None,
+            Orbit::with_distance(focus.home_distance),
+            Transform::from_xyz(8.0, 10.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ))
+        .id();
     commands.spawn((
-        Camera3d::default(),
-        Tonemapping::None,
-        Orbit::with_distance(focus.home_distance),
-        Transform::from_xyz(8.0, 10.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
+        layers.parent(Layer::World),
         Mesh3d(meshes.add(Cuboid::new(
             f32::from(state.width),
             0.1,
@@ -326,6 +371,7 @@ fn setup(
         Pickable::IGNORE,
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         Node {
             position_type: PositionType::Absolute,
             top: px(22),
@@ -337,6 +383,7 @@ fn setup(
         TextColor(Color::srgb(0.86, 0.98, 0.90)),
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         Details,
         Node {
             position_type: PositionType::Absolute,
@@ -353,7 +400,10 @@ fn setup(
     ));
 }
 
-fn receive(mut view: ResMut<View>) {
+fn receive(mut view: ResMut<View>, layers: Res<Layers>) {
+    if layers.active != Layer::World && view.playing {
+        view.playing = false;
+    }
     if !view.updates.has_changed().unwrap_or(false) {
         return;
     }
@@ -388,8 +438,9 @@ fn controls(
     time: Res<Time>,
     selected: Res<Selected>,
     mut view: ResMut<View>,
+    layers: Res<Layers>,
 ) {
-    if view.pending {
+    if view.pending || layers.switched {
         return;
     }
     let revision = view.world.revision();
@@ -496,11 +547,22 @@ fn place(position: Position, state: &Snapshot<'_>, height: f32) -> Vec3 {
 fn sync_scene(
     mut commands: Commands,
     mut view: ResMut<View>,
-    selected: Res<Selected>,
+    mut selected: ResMut<Selected>,
     palette: Res<Palette>,
-    mut focus: ResMut<CameraFocus>,
+    mut focus: ResMut<Focus>,
+    layers: Res<Layers>,
     mut objects: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
+    if let Some(id) = layers.incoming
+        && view
+            .world
+            .snapshot()
+            .residents
+            .iter()
+            .any(|resident| resident.id == id)
+    {
+        selected.0 = Some(Object::Resident(id));
+    }
     if !view.scene_dirty && !selected.is_changed() {
         return;
     }
@@ -572,6 +634,7 @@ fn sync_scene(
         } else {
             commands
                 .spawn((
+                    layers.parent(Layer::World),
                     key,
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),

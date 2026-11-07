@@ -8,6 +8,7 @@ use vespera_core::{AgentId, ExternalTaskChange, TaskId, TaskState};
 use vespera_view::Graph;
 
 use crate::Update as BrokerUpdate;
+use crate::atlas::{Layer, Layers, register};
 use crate::task_timeline::Timeline;
 
 #[derive(Resource)]
@@ -45,6 +46,15 @@ enum NodeKey {
 
 #[derive(Resource, Default)]
 struct Selection(Option<NodeKey>);
+
+pub(super) fn selected_agent(world: &World) -> Option<AgentId> {
+    match world.resource::<Selection>().0 {
+        Some(NodeKey::Worker(id)) if world.resource::<Scene>().graph.workers.contains_key(&id) => {
+            Some(id)
+        }
+        _ => None,
+    }
+}
 
 #[derive(Resource, Default)]
 enum Filter {
@@ -118,7 +128,7 @@ impl Orbit {
         }
     }
 
-    pub(super) fn at_home(home: &CameraFocus) -> Self {
+    pub(super) fn at_home<const L: usize>(home: &CameraFocus<L>) -> Self {
         Self {
             focus: home.home_point,
             ..Self::with_distance(home.home_distance)
@@ -127,26 +137,30 @@ impl Orbit {
 }
 
 #[derive(Resource)]
-pub(super) struct CameraFocus {
+pub(super) struct CameraFocus<const L: usize> {
     pub point: Option<Vec3>,
     pub home_point: Vec3,
     pub home_distance: f32,
     pub reduced_motion: bool,
 }
 
-pub(super) fn desktop(title: &str, clear: Color) -> App {
+type Focus = CameraFocus<{ Layer::Network as usize }>;
+
+pub(super) fn desktop(title: &str, clear: Color, layer: Layer) -> App {
     let mut app = App::new();
-    app.insert_resource(ClearColor(clear)).add_plugins((
-        DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: title.into(),
-                resolution: (1200, 800).into(),
+    app.insert_resource(Layers::new(layer))
+        .insert_resource(ClearColor(clear))
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: title.into(),
+                    resolution: (1200, 800).into(),
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }),
-        MeshPickingPlugin,
-    ));
+            MeshPickingPlugin,
+        ));
     app
 }
 
@@ -155,11 +169,23 @@ pub fn run(
     cancel: Option<mpsc::Sender<TaskId>>,
     reduced_motion: bool,
 ) {
-    desktop(
+    let mut app = desktop(
         "Vespera | Intelligence Atlas",
         Color::srgb(0.017, 0.023, 0.043),
-    )
-    .insert_resource(Connection {
+        Layer::Network,
+    );
+    install(&mut app, updates, cancel, reduced_motion);
+    app.run();
+}
+
+pub(super) fn install(
+    app: &mut App,
+    updates: mpsc::Receiver<BrokerUpdate>,
+    cancel: Option<mpsc::Sender<TaskId>>,
+    reduced_motion: bool,
+) {
+    register(app, Layer::Network);
+    app.insert_resource(Connection {
         updates,
         cancel,
         status: "Connecting to broker...",
@@ -169,7 +195,7 @@ pub fn run(
     .init_resource::<Scene>()
     .init_resource::<Selection>()
     .init_resource::<Filter>()
-    .insert_resource(CameraFocus {
+    .insert_resource(Focus {
         point: None,
         home_point: Vec3::new(2.65, 0.0, -1.25),
         home_distance: 25.0,
@@ -179,25 +205,27 @@ pub fn run(
     .add_systems(
         Update,
         (
-            receive,
             navigate,
             sync_scene,
             move_nodes,
             focus_selection,
-            camera,
+            camera::<{ Layer::Network as usize }>,
             draw_links,
             inspect,
         )
-            .chain(),
+            .chain()
+            .run_if(|layers: Res<Layers>| layers.active == Layer::Network)
+            .after(receive),
     )
-    .run();
+    .add_systems(Update, receive);
 }
 
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    focus: Res<CameraFocus>,
+    focus: Res<Focus>,
+    layers: Res<Layers>,
 ) {
     let colors = [
         Color::srgb(0.99, 0.65, 0.27),
@@ -219,16 +247,24 @@ fn setup(
             })
         }),
     });
+    let camera = commands
+        .spawn((
+            Layer::Network,
+            Camera {
+                is_active: layers.active == Layer::Network,
+                ..default()
+            },
+            Camera3d::default(),
+            Tonemapping::None,
+            Orbit {
+                focus: focus.home_point,
+                ..Orbit::with_distance(focus.home_distance)
+            },
+            Transform::from_xyz(8.0, 12.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ))
+        .id();
     commands.spawn((
-        Camera3d::default(),
-        Tonemapping::None,
-        Orbit {
-            focus: focus.home_point,
-            ..Orbit::with_distance(focus.home_distance)
-        },
-        Transform::from_xyz(8.0, 12.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
+        layers.parent(Layer::Network),
         Mesh3d(meshes.add(Cuboid::new(25.0, 0.1, 68.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.038, 0.05, 0.082),
@@ -239,6 +275,7 @@ fn setup(
         Pickable::IGNORE,
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         Node {
             position_type: PositionType::Absolute,
             top: px(22),
@@ -250,6 +287,7 @@ fn setup(
         TextColor(Color::srgb(0.86, 0.92, 1.0)),
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         StatusStrip,
         Node {
             position_type: PositionType::Absolute,
@@ -265,6 +303,7 @@ fn setup(
         TextColor(Color::srgb(0.73, 0.84, 0.98)),
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         Inspector,
         Node {
             position_type: PositionType::Absolute,
@@ -286,10 +325,16 @@ fn receive(
     mut connection: ResMut<Connection>,
     mut selection: ResMut<Selection>,
     keys: Res<ButtonInput<KeyCode>>,
+    layers: Res<Layers>,
 ) {
-    let earlier = keys.just_pressed(KeyCode::BracketLeft);
-    let later = connection.timeline.is_frozen() && keys.just_pressed(KeyCode::BracketRight);
-    let mut refresh = keys.just_pressed(KeyCode::KeyT);
+    let active = layers.active == Layer::Network;
+    if !active && matches!(connection.cancellation, Cancellation::Confirm(_)) {
+        connection.cancellation = Cancellation::Idle;
+    }
+    let earlier = active && keys.just_pressed(KeyCode::BracketLeft);
+    let later =
+        active && connection.timeline.is_frozen() && keys.just_pressed(KeyCode::BracketRight);
+    let mut refresh = active && keys.just_pressed(KeyCode::KeyT);
     if refresh {
         if connection.timeline.source_changed() {
             selection.0 = None;
@@ -353,7 +398,13 @@ fn navigate(
     scene: Res<Scene>,
     mut selection: ResMut<Selection>,
     mut filter: ResMut<Filter>,
+    layers: Res<Layers>,
 ) {
+    if let Some(id) = layers.incoming
+        && scene.graph.workers.contains_key(&id)
+    {
+        selection.0 = Some(NodeKey::Worker(id));
+    }
     if keys.just_pressed(KeyCode::Tab) {
         *filter = match *filter {
             Filter::All => Filter::Work,
@@ -439,6 +490,7 @@ fn sync_scene(
     selection: Res<Selection>,
     filter: Res<Filter>,
     palette: Res<Palette>,
+    layers: Res<Layers>,
     mut existing: Query<(
         &mut MeshMaterial3d<StandardMaterial>,
         &mut LaneTarget,
@@ -486,6 +538,7 @@ fn sync_scene(
         } else {
             let entity = commands
                 .spawn((
+                    layers.parent(Layer::Network),
                     key,
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),
@@ -510,7 +563,7 @@ fn sync_scene(
 
 fn move_nodes(
     time: Res<Time>,
-    focus: Res<CameraFocus>,
+    focus: Res<Focus>,
     connection: Res<Connection>,
     mut nodes: Query<(&LaneTarget, &mut Transform)>,
 ) {
@@ -604,22 +657,26 @@ fn draw_links(
     }
 }
 
-fn focus_selection(graph: Res<Scene>, selection: Res<Selection>, mut focus: ResMut<CameraFocus>) {
+fn focus_selection(graph: Res<Scene>, selection: Res<Selection>, mut focus: ResMut<Focus>) {
     focus.point = selection.0.and_then(|key| graph.layout.get(&key).copied());
 }
 
-pub(super) fn camera(
-    mut camera: Single<(&mut Orbit, &mut Transform)>,
+pub(super) fn camera<const L: usize>(
+    mut cameras: Query<(&Camera, &mut Orbit, &mut Transform)>,
     (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
-    focus: Res<CameraFocus>,
+    focus: Res<CameraFocus<L>>,
 ) {
-    let (orbit, transform) = &mut *camera;
+    let Some((_, mut orbit, mut transform)) =
+        cameras.iter_mut().find(|(camera, ..)| camera.is_active)
+    else {
+        return;
+    };
     if keys.just_pressed(KeyCode::KeyR) {
         let (previous, distance) = (orbit.focus, orbit.distance);
-        **orbit = Orbit::with_distance(distance);
+        *orbit = Orbit::with_distance(distance);
         orbit.focus = previous;
         orbit.transition = Some((focus.home_point, focus.home_distance));
     }
@@ -662,20 +719,21 @@ pub(super) fn camera(
     let rotation = Quat::from_rotation_y(orbit.yaw);
     orbit.focus += rotation * Vec3::new(lateral, 0.0, forward) * time.delta_secs() * 8.0;
     let offset = rotation * Vec3::new(0.0, orbit.pitch.sin(), orbit.pitch.cos()) * orbit.distance;
-    **transform =
-        Transform::from_translation(orbit.focus + offset).looking_at(orbit.focus, Vec3::Y);
+    *transform = Transform::from_translation(orbit.focus + offset).looking_at(orbit.focus, Vec3::Y);
 }
 
 fn inspect(
     scene: Res<Scene>,
     selection: Res<Selection>,
     filter: Res<Filter>,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, layers): (Res<ButtonInput<KeyCode>>, Res<Layers>),
     mut connection: ResMut<Connection>,
     mut inspector: Single<&mut Text, (With<Inspector>, Without<StatusStrip>)>,
     mut status: Single<&mut Text, (With<StatusStrip>, Without<Inspector>)>,
 ) {
-    update_cancellation(&keys, selection.0, &scene.graph, &mut connection);
+    if !layers.switched {
+        update_cancellation(&keys, selection.0, &scene.graph, &mut connection);
+    }
     let mut counts = [0; 5];
     for task in scene.graph.tasks.values() {
         counts[lane(task.state)] += 1;

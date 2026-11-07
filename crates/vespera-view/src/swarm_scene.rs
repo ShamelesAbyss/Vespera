@@ -9,7 +9,10 @@ use vespera_core::{AgentId, EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
 
 use crate::Update;
+use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
+
+type Focus = CameraFocus<{ Layer::Swarm as usize }>;
 
 const MAX_OBSERVATIONS: usize = 128;
 const MAX_AGENTS: usize = 24;
@@ -240,6 +243,11 @@ struct Layout {
     filter: Filter,
 }
 
+pub(super) fn selected_agent(world: &World) -> Option<AgentId> {
+    let layout = world.resource::<Layout>();
+    layout.selected.filter(|id| layout.agents.contains_key(id))
+}
+
 #[derive(Clone, Copy, Default)]
 enum Filter {
     #[default]
@@ -276,6 +284,21 @@ struct AgentMesh(Handle<Mesh>, Handle<StandardMaterial>);
 struct Readout;
 
 pub(super) fn run(path: PathBuf, reduced_motion: bool) -> Result<(), JournalError> {
+    let mut app = desktop(
+        "Vespera | Swarm",
+        Color::srgb(0.018, 0.025, 0.047),
+        Layer::Swarm,
+    );
+    install_journal(&mut app, path, reduced_motion)?;
+    app.run();
+    Ok(())
+}
+
+pub(super) fn install_journal(
+    app: &mut App,
+    path: PathBuf,
+    reduced_motion: bool,
+) -> Result<(), JournalError> {
     Journal::open_reader(&path)?;
     let evidence = Evidence {
         status: "Reading journal",
@@ -283,11 +306,25 @@ pub(super) fn run(path: PathBuf, reduced_motion: bool) -> Result<(), JournalErro
     };
     let (send, input) = watch::channel(evidence.clone());
     std::thread::spawn(move || observe(&path, &send));
-    run_window(input, evidence, reduced_motion);
+    install(app, input, evidence, reduced_motion);
     Ok(())
 }
 
-pub(super) fn run_broker(mut updates: mpsc::Receiver<Update>, reduced_motion: bool) {
+pub(super) fn run_broker(updates: mpsc::Receiver<Update>, reduced_motion: bool) {
+    let mut app = desktop(
+        "Vespera | Swarm",
+        Color::srgb(0.018, 0.025, 0.047),
+        Layer::Swarm,
+    );
+    install_broker(&mut app, updates, reduced_motion);
+    app.run();
+}
+
+pub(super) fn install_broker(
+    app: &mut App,
+    mut updates: mpsc::Receiver<Update>,
+    reduced_motion: bool,
+) {
     let evidence = Evidence {
         status: "Connecting to signed broker feed",
         ..default()
@@ -312,27 +349,42 @@ pub(super) fn run_broker(mut updates: mpsc::Receiver<Update>, reduced_motion: bo
             }
         }
     });
-    run_window(input, evidence, reduced_motion);
+    install(app, input, evidence, reduced_motion);
 }
 
-fn run_window(input: watch::Receiver<Evidence>, evidence: Evidence, reduced_motion: bool) {
-    desktop("Vespera | Swarm", Color::srgb(0.018, 0.025, 0.047))
-        .insert_resource(Feed {
-            input,
-            live: evidence.clone(),
-            evidence,
-            frozen: None,
-        })
-        .init_resource::<Layout>()
-        .insert_resource(CameraFocus {
-            point: None,
-            home_point: Vec3::new(2.0, 0.0, 0.0),
-            home_distance: 19.0,
-            reduced_motion,
-        })
-        .add_systems(Startup, setup)
-        .add_systems(Update, (sync, navigate, camera, draw, inspect).chain())
-        .run();
+fn install(
+    app: &mut App,
+    input: watch::Receiver<Evidence>,
+    evidence: Evidence,
+    reduced_motion: bool,
+) {
+    register(app, Layer::Swarm);
+    app.insert_resource(Feed {
+        input,
+        live: evidence.clone(),
+        evidence,
+        frozen: None,
+    })
+    .init_resource::<Layout>()
+    .insert_resource(Focus {
+        point: None,
+        home_point: Vec3::new(2.0, 0.0, 0.0),
+        home_distance: 19.0,
+        reduced_motion,
+    })
+    .add_systems(Startup, setup)
+    .add_systems(
+        Update,
+        (
+            sync,
+            navigate,
+            camera::<{ Layer::Swarm as usize }>,
+            draw,
+            inspect,
+        )
+            .chain()
+            .run_if(|layers: Res<Layers>| layers.active == Layer::Swarm),
+    );
 }
 
 fn observe(path: &Path, send: &watch::Sender<Evidence>) {
@@ -378,18 +430,27 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    focus: Res<CameraFocus>,
+    focus: Res<Focus>,
+    layers: Res<Layers>,
 ) {
     commands.insert_resource(AgentMesh(
         meshes.add(Sphere::new(0.48)),
         materials.add(Color::srgb(0.51, 0.43, 0.85)),
     ));
+    let camera = commands
+        .spawn((
+            Layer::Swarm,
+            Camera {
+                is_active: layers.active == Layer::Swarm,
+                ..default()
+            },
+            Camera3d::default(),
+            Tonemapping::None,
+            Orbit::at_home(&focus),
+        ))
+        .id();
     commands.spawn((
-        Camera3d::default(),
-        Tonemapping::None,
-        Orbit::at_home(&focus),
-    ));
-    commands.spawn((
+        layers.parent(Layer::Swarm),
         DirectionalLight {
             illuminance: 5500.0,
             ..default()
@@ -397,6 +458,7 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(-0.85)),
     ));
     commands.spawn((
+        UiTargetCamera(camera),
         Node {
             position_type: PositionType::Absolute,
             top: px(20.0),
@@ -421,6 +483,7 @@ fn sync(
     mut layout: ResMut<Layout>,
     mesh: Res<AgentMesh>,
     keys: Res<ButtonInput<KeyCode>>,
+    layers: Res<Layers>,
 ) {
     let changed = feed.input.has_changed().unwrap_or(false);
     let toggle = keys.just_pressed(KeyCode::KeyT);
@@ -484,6 +547,7 @@ fn sync(
         } else {
             let entity = commands
                 .spawn((
+                    layers.parent(Layer::Swarm),
                     Mesh3d(mesh.0.clone()),
                     MeshMaterial3d(mesh.1.clone()),
                     Transform::from_translation(point),
@@ -502,8 +566,14 @@ fn sync(
 fn navigate(
     keys: Res<ButtonInput<KeyCode>>,
     mut layout: ResMut<Layout>,
-    mut focus: ResMut<CameraFocus>,
+    mut focus: ResMut<Focus>,
+    layers: Res<Layers>,
 ) {
+    if let Some(id) = layers.incoming
+        && layout.agents.contains_key(&id)
+    {
+        layout.selected = Some(id);
+    }
     if keys.just_pressed(KeyCode::Tab) {
         layout.filter = match layout.filter {
             Filter::All => Filter::Delegation,

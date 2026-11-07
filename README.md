@@ -2,13 +2,19 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 224 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, unified Atlas navigation and experiments remain roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 224 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry and experiments remain roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
 ## Native 3D client
 
-The optional Bevy executable renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
+The native Bevy/wgpu app opens Machine, Intelligence Network, Swarm, and Living World in one Atlas window. Use **F1–F4** to switch between configured layers. Start with local host measurements and add the broker, journal, or world sources you have configured. [Atlas setup and controls](docs/CLI.md#switch-layers-in-atlas)
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --atlas
+```
+
+The standalone Intelligence Network renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
 
 ```powershell
 cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765

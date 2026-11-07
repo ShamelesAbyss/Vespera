@@ -371,6 +371,26 @@ See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for op
 An optional `message_targets` array on a worker entry grants outbound messaging to those approved worker IDs. [Worker message contract](PROTOCOL.md#worker-messages)
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
+### Switch layers in Atlas
+
+Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --atlas
+cargo run --locked -p vespera-view --features graphics -- --atlas --broker 127.0.0.1:8765 --world data/world.sqlite3
+```
+
+| Key | Layer | Source |
+| --- | --- | --- |
+| F1 | Machine | Local host and optional `--scheduler-telemetry <DIRECTORY>` |
+| F2 | Intelligence Network | `--broker <IP:PORT>` and the operator signing key |
+| F3 | Swarm | `--swarm <JOURNAL>` for local workflow evidence, or the configured broker for accepted messages |
+| F4 | Living World | `--world <DATABASE>` for an initialized world |
+
+The footer marks the active and unavailable layers. Each configured layer keeps its camera, filter and replay position. A selected worker, Swarm participant or world resident transfers to the destination when the same UUID is visible there. Each layer keeps its selection when the destination has no matching identity.
+
+The window observes configured sources in the background. Leaving World pauses window-driven playback, and leaving Intelligence Network dismisses any cancellation confirmation that has yet to be sent. Controls are read-only by default. Use `--allow-cancel` with `--broker` or `--allow-world-control` with `--world` to enable the corresponding live controls. `--world-revision` opens the World layer at a retained revision with read-only controls.
+
 ### Intelligence Network controls
 
 Run `cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765` with the operator key in `VESPERA_OPERATOR_TOKEN`. The view groups the latest observed states into queued, running, complete, failed and cancelled lanes. Violet spheres represent workers that appear in lease events. Cyan links identify running attempts. Selecting a task or worker can reveal its dimmed links to the latest recorded attempts. The activity list shows recent observations and their feed sequences. Counts reflect the loaded observations.
