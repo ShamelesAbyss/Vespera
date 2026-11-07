@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Signed WebSocket event subscriptions
 
+Verified implementation checkpoint `3fedaa938018d3ab77da5dde76efee445d88c1e6` was pushed to the default branch, `main`.
+
 The durable event feed checkpoint `2fb290c2853825e7a43fb473a268cff72bd14bc1` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42339791343). Added signed WebSocket upgrade routes for operator and worker events, using the same scoped cursors as HTTP replay. The proof covers the exact GET target and consumes a fresh nonce. The broker reads one authorized event at a time and releases its state lock before sending. Each connection has bounded frame sizes, write time and lifetime. A separate eight-slot quota leaves room for HTTP actions. The Rust SDK exposes typed live frames and reconnect from a processed cursor.
 
 Windows validation passed 212 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, the workspace release build and optimized broker and worker HTTP tests. Subprocess tests cover operator and worker delivery, scope isolation, reconnect, revocation, signed-query tampering, reused upgrade proofs and quota release. Hyper now closes ordinary HTTP responses explicitly, preserving the upgrade headers on switching-protocol responses. Tokio Tungstenite adds ten locked packages without changing existing versions.
