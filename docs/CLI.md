@@ -294,6 +294,7 @@ Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 ```
 
 See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
+An optional `message_targets` array on a worker entry grants outbound messaging to those approved worker IDs. [Worker message contract](PROTOCOL.md#worker-messages)
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
 ### TLS worker transport

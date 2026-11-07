@@ -100,7 +100,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 
 ## Milestone 10 — External agent interoperability
 
-Extend the [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) with authorized external messaging and verify cross-host deployment.
+The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) support directed, operator-granted external messaging. Cross-host deployment and durable inboxes remain open.
 
 - An authenticated test agent registers with approved authority, receives a task lease, submits a result, and reads authorized events.
 - Reject invalid credentials, expired/revoked leases, stale attempts, duplicate conflicts, auth replay, and unauthorized identity/namespace/permission changes.
@@ -117,6 +117,10 @@ Build a small deterministic world on a reusable contract.
 ## Milestone 12 — 3D intelligence command center
 
 Implement the central native Rust 3D orchestration and world views, evaluating Bevy/wgpu. Rendering remains separate from the authoritative control plane and can be disabled for headless deployments; the 3D product destination is required.
+
+- Develop the graphical client alongside the orchestration and simulation backends. A runnable, integrated 3D application is a release gate.
+- Orchestration Mode shows observed providers, models, agents, task pipelines, communication, memory and resource use. Provide camera navigation, picking, inspection and authorized controls. Label missing measurements.
+- World Simulation Mode renders persistent world state with residents, interactions, goals, relationships and shared changes. Identify simulated state separately from real measurements.
 
 - Show a small observed graph and real task/resource state with useful selection and authorized controls.
 - Disable rendering on CPU-only/headless hosts; document native text/2D fallback and unsupported GPU features.

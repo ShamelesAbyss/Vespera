@@ -39,6 +39,9 @@ The original loopback bearer endpoints under `/v1` have been retired. Use fresh 
 | `/v2/worker` | `renew` | `fence` | 200 with `expires_in_ms` |
 | `/v2/worker` | `complete` | `fence`, `content` | 200 with `worker`, `fence` and `content` |
 | `/v2/worker` | `replay` | `after` (optional cursor), `limit` | 200 with an event page |
+| `/v2/worker` | `send_message` | `recipient`, `message_id`, `content` | 204 |
+| `/v2/worker` | `inbox` | None | 200 with an array of pending messages |
+| `/v2/worker` | `acknowledge_message` | `sender`, `message_id` | 204 |
 
 IDs are UUID strings. Capabilities are strings and capability sets and worker allowlists are JSON arrays. The claimed `task` contains `id`, `prompt`, `required_capabilities` and `state`. Task states are `queued`, `running`, `completed`, `failed` and `cancelled`. A `fence` contains `task_id`, `attempt_id` and integer `generation`. Send the entire returned fence unchanged on renewal or completion. After an uncertain submit, inspect by task ID. After an uncertain completion, retry with the same fence and content while the credential remains valid. After an uncertain claim, the lease can expire and become eligible for reassignment.
 
@@ -50,12 +53,20 @@ Application errors carry `{"error":"code"}`.
 | 401 | `unauthorized` |
 | 404 | `unknown_route`, `unknown_task`, `unknown_worker` |
 | 405 | `expected_get`, `expected_post` |
-| 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict`, `foreign_cursor` |
+| 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict`, `foreign_cursor`, `message_conflict` |
 | 410 | `cursor_expired` |
 | 413 | `body_limit` |
 | 415 | `expected_json` |
 | 429 | `nonce_capacity` |
-| 503 | `capacity`, `storage_unavailable` |
+| 503 | `capacity`, `storage_unavailable`, `inbox_capacity` |
+
+### Worker messages
+
+The access policy can grant a worker outgoing routes through its `message_targets` array of approved worker UUIDs. Omission grants no routes. Grants are directional and self-routes are rejected. The signed principal determines the sender. An inbox entry has `sender`, `message_id` and `content`. Only its recipient can read or acknowledge it.
+
+Clients supply a non-nil message UUID and up to 2,048 UTF-8 bytes of nonblank content. Inboxes retain 32 pending entries in arrival order and return 503 when full. Reading preserves the entry until acknowledgement. Acknowledgement is idempotent. Retrying the same sender, recipient, message ID and content is idempotent while pending or among the last 64 acknowledgements in that inbox. Changing content under a retained ID returns 409.
+
+Messages are process-local, including when the broker database is enabled. Revoking a worker clears messages to and from that worker. Inbox delivery uses polling and message contents do not enter the task event feeds.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
@@ -113,6 +124,8 @@ Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shar
 | --- | --- |
 | `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)`, `replay(Option<BrokerEventCursor>, u32)`, `subscribe(Option<BrokerEventCursor>)` |
 | `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)`, `replay(Option<BrokerEventCursor>, u32)`, `subscribe(Option<BrokerEventCursor>)` |
+
+Workers with a granted route can call `send_message`. Recipients call `inbox` and `acknowledge_message` with the sender and ID from the entry.
 
 Every call fetches the server's session and signs the request with a fresh nonce. The client permits 15 seconds for each HTTP exchange, caps JSON responses at 512 KiB, and disables proxies, redirects and automatic retries. `claim()` returns `Ok(None)` for 204. `ClientError::Rejected` carries the HTTP status and a typed `ErrorCode` when the server sends a known code.
 

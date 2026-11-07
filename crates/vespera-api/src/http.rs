@@ -1,6 +1,7 @@
 //! Bounded HTTP/1 service for approved workers, with opt-in TLS.
 
 mod auth;
+mod mailbox;
 mod subscription;
 mod tls;
 
@@ -79,6 +80,8 @@ struct WorkerAccess {
     id: AgentId,
     capabilities: BTreeSet<Capability>,
     token_env: String,
+    #[serde(default)]
+    message_targets: BTreeSet<AgentId>,
 }
 
 struct Service {
@@ -86,6 +89,7 @@ struct Service {
     broker: LeaseBroker,
     store: Option<Store>,
     storage_failed: bool,
+    mailboxes: mailbox::Mailboxes,
 }
 
 impl Service {
@@ -107,6 +111,7 @@ impl Service {
             broker: LeaseBroker::default(),
             store: None,
             storage_failed: false,
+            mailboxes: mailbox::Mailboxes::default(),
         };
         service
             .auth
@@ -118,7 +123,9 @@ impl Service {
             service
                 .auth
                 .approve(Principal::Worker(worker.id), &worker.token_env)?;
+            service.mailboxes.approve(worker.id, worker.message_targets);
         }
+        service.mailboxes.validate_routes()?;
         Ok(service)
     }
 
@@ -135,7 +142,12 @@ impl Service {
                 }
                 operate(self, operation)
             }
-            Principal::Worker(worker) => work(&mut self.broker, worker, decode(bytes)?),
+            Principal::Worker(worker) => work(
+                &mut self.broker,
+                &mut self.mailboxes,
+                worker,
+                decode(bytes)?,
+            ),
         };
         self.persist(revoked.filter(|_| result.is_ok()))?;
         result
@@ -204,6 +216,7 @@ impl Server {
             let (store, revoked) = Store::open(path, &mut service.broker)?;
             for worker in revoked {
                 service.auth.revoke(worker);
+                service.mailboxes.revoke(worker);
             }
             service.store = Some(store);
         }
@@ -320,6 +333,16 @@ enum WorkerRequest {
     Replay {
         after: Option<BrokerEventCursor>,
         limit: u32,
+    },
+    SendMessage {
+        recipient: AgentId,
+        message_id: uuid::Uuid,
+        content: String,
+    },
+    Inbox {},
+    AcknowledgeMessage {
+        sender: AgentId,
+        message_id: uuid::Uuid,
     },
 }
 
@@ -456,6 +479,7 @@ fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, H
                 .revoke_worker(worker_id)
                 .map_err(|_| HttpError(StatusCode::NOT_FOUND, "unknown_worker"))?;
             service.auth.revoke(worker_id);
+            service.mailboxes.revoke(worker_id);
             reply(StatusCode::NO_CONTENT, &())
         }
         OperatorRequest::Replay { after, limit } => {
@@ -467,6 +491,7 @@ fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, H
 
 fn work(
     broker: &mut LeaseBroker,
+    mailboxes: &mut mailbox::Mailboxes,
     worker: AgentId,
     operation: WorkerRequest,
 ) -> Result<Reply, HttpError> {
@@ -484,6 +509,19 @@ fn work(
         }
         WorkerRequest::Replay { after, limit } => {
             reply(StatusCode::OK, &broker.replay(Some(worker), after, limit)?)
+        }
+        WorkerRequest::SendMessage {
+            recipient,
+            message_id,
+            content,
+        } => {
+            mailboxes.send(worker, recipient, message_id, content)?;
+            reply(StatusCode::NO_CONTENT, &())
+        }
+        WorkerRequest::Inbox {} => reply(StatusCode::OK, mailboxes.inbox(worker)?),
+        WorkerRequest::AcknowledgeMessage { sender, message_id } => {
+            mailboxes.acknowledge(worker, sender, message_id)?;
+            reply(StatusCode::NO_CONTENT, &())
         }
     };
     Ok(reply)

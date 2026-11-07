@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Authorized worker mailboxes
+
+Added optional directional `message_targets` grants and signed SDK actions for sending, reading and acknowledging text. The authenticated principal determines sender and inbox ownership. Pending messages and recent acknowledgements are bounded, and revocation purges messages to and from that worker. Mailboxes are process-local, including in durable task mode.
+
+Windows validation passed the 214-test workspace suite plus the SDK doctest, strict Clippy and rustdoc, and release worker tests. The subprocess test covers directional authorization, private inboxes, acknowledgements, exact retries, conflicting content, capacity and revocation.
+
+The user's updated visualization directive makes an integrated executable 3D application a completion gate. Begin the native Orchestration Mode using observed broker events, and develop World Simulation Mode alongside the authoritative simulation backend. Durable inboxes and cross-host deployment remain open.
+
 ## 2026-11-06 — Opt-in TLS worker transport
 
 Verified implementation checkpoint `6ebf89c06b6972ab08f679d66b4df1af1fe1cb48` was pushed to the default branch, `main`.

@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded single-agent inference through Ollama and OpenAI-compatible HTTP adapters and serves an authenticated task broker for approved external workers. The twelve-crate workspace has 213 passing offline tests plus the SDK doctest, and Windows release validation. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, external messaging, simulation, native 3D and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded single-agent inference through Ollama and OpenAI-compatible HTTP adapters and serves an authenticated task and messaging broker for approved external workers. The twelve-crate workspace has 214 passing offline tests plus the SDK doctest, and Windows release validation. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, simulation, native 3D and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 

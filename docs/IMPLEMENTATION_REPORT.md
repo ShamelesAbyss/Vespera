@@ -10,7 +10,7 @@ inference. The application library composes these services. The CLI implements
 `run-workflow`, `memory`, `events` and `serve`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-213-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+214-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
 workspace build, and optimized worker HTTP subprocess tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
@@ -25,6 +25,8 @@ The worker API and SDK replay broker transitions from scoped feeds. Cursor valid
 Signed WebSocket handshakes use the same principal and cursor rules as replay. Subprocess tests cover live delivery, reconnect, isolation, revocation, upgrade replay rejection and subscription quota behavior.
 
 The broker and SDK support TLS 1.3 for HTTPS and secure WebSockets. A loopback client exercised both against an explicitly enabled wildcard listener. The subprocess test also checked rejection without remote opt-in, plaintext on a TLS port, untrusted roots and an IP identity mismatch. Cross-host deployment remains untested.
+
+Approved external workers can exchange text over explicitly granted directional routes. Subprocess tests cover private inboxes, acknowledgement, bounded retention, idempotent retries and revocation. Message contents remain process-local.
 
 The optional exclusive broker database stores tasks, generations, results and revocations before HTTP responses. A forced subprocess restart verified recovery, same-result retries, fencing, queue order and revocation. A fault-injected transaction verified rollback and a simulated clock rollback verified conservative expiry.
 

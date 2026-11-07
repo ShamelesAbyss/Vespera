@@ -123,6 +123,8 @@ pub enum ErrorCode {
     InvalidUpgrade,
     InvalidCursor,
     SubscriptionCapacity,
+    MessageConflict,
+    InboxCapacity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +171,13 @@ pub struct SubmittedTask {
     pub state: TaskState,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WorkerMessage {
+    pub message_id: Uuid,
+    pub sender: AgentId,
+    pub content: String,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum OperatorRequest<'a> {
@@ -202,6 +211,16 @@ enum WorkerRequest<'a> {
     Replay {
         after: Option<BrokerEventCursor>,
         limit: u32,
+    },
+    SendMessage {
+        recipient: AgentId,
+        message_id: Uuid,
+        content: &'a str,
+    },
+    Inbox {},
+    AcknowledgeMessage {
+        sender: AgentId,
+        message_id: Uuid,
     },
 }
 
@@ -289,6 +308,45 @@ impl OperatorClient {
 pub struct WorkerClient(Transport);
 
 impl WorkerClient {
+    /// Deliver text on an operator-approved route using a caller-generated message ID.
+    pub async fn send_message(
+        &self,
+        recipient: AgentId,
+        message_id: Uuid,
+        content: &str,
+    ) -> Result<(), ClientError> {
+        self.0
+            .post(&WorkerRequest::SendMessage {
+                recipient,
+                message_id,
+                content,
+            })
+            .await?
+            .no_content()
+            .await
+    }
+
+    /// Read this worker's unacknowledged messages in arrival order.
+    pub async fn inbox(&self) -> Result<Vec<WorkerMessage>, ClientError> {
+        self.0
+            .post(&WorkerRequest::Inbox {})
+            .await?
+            .json(StatusCode::OK)
+            .await
+    }
+
+    /// Acknowledge an inbox entry using the sender and ID from that entry.
+    pub async fn acknowledge_message(
+        &self,
+        sender: AgentId,
+        message_id: Uuid,
+    ) -> Result<(), ClientError> {
+        self.0
+            .post(&WorkerRequest::AcknowledgeMessage { sender, message_id })
+            .await?
+            .no_content()
+            .await
+    }
     /// Connect over TLS using only the supplied PEM trust roots and the endpoint IP as identity.
     pub fn new_tls(
         address: SocketAddr,

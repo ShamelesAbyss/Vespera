@@ -212,6 +212,73 @@ fn fresh_token() -> String {
 }
 
 #[tokio::test]
+async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let policy = create_policy(first, second);
+    let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
+    access["workers"][0]["message_targets"] = json!([second]);
+    std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
+    let (_process, base) = launch_command(server_command(&policy, None), policy);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let recipient =
+        WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let id = Uuid::new_v4();
+    assert!(matches!(
+        recipient.send_message(first, id, "denied").await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+    sender.send_message(second, id, "hello").await.unwrap();
+    sender.send_message(second, id, "hello").await.unwrap();
+    assert!(matches!(
+        sender.send_message(second, id, "changed").await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::MessageConflict),
+            ..
+        })
+    ));
+    sender.acknowledge_message(first, id).await.unwrap();
+    assert!(sender.inbox().await.unwrap().is_empty());
+    let inbox = recipient.inbox().await.unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(
+        (
+            inbox[0].sender,
+            inbox[0].message_id,
+            inbox[0].content.as_str()
+        ),
+        (first, id, "hello")
+    );
+    recipient.acknowledge_message(first, id).await.unwrap();
+    sender.send_message(second, id, "hello").await.unwrap();
+    assert!(recipient.inbox().await.unwrap().is_empty());
+    for _ in 0..32 {
+        sender
+            .send_message(second, Uuid::new_v4(), "queued")
+            .await
+            .unwrap();
+    }
+    assert!(matches!(
+        sender
+            .send_message(second, Uuid::new_v4(), "overflow")
+            .await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::InboxCapacity),
+            ..
+        })
+    ));
+    assert_eq!(recipient.inbox().await.unwrap().len(), 32);
+    operator.revoke(first).await.unwrap();
+    assert!(recipient.inbox().await.unwrap().is_empty());
+    assert!(matches!(
+        sender.inbox().await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+}
+
+#[tokio::test]
 async fn tls_broker_requires_opt_in_and_verifies_trust_for_http_and_websocket() {
     let first = AgentId::new();
     let second = AgentId::new();
