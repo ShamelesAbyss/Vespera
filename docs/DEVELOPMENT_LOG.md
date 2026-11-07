@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Authorized worker mailboxes
 
+Verified implementation checkpoint `0c0e57ac26503679190726e6c2a93a0862066e15` was pushed to `main`.
+
 Added optional directional `message_targets` grants and signed SDK actions for sending, reading and acknowledging text. The authenticated principal determines sender and inbox ownership. Pending messages and recent acknowledgements are bounded, and revocation purges messages to and from that worker. Mailboxes are process-local, including in durable task mode.
 
 Windows validation passed the 214-test workspace suite plus the SDK doctest, strict Clippy and rustdoc, and release worker tests. The subprocess test covers directional authorization, private inboxes, acknowledgements, exact retries, conflicting content, capacity and revocation.
