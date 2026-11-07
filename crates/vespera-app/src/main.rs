@@ -58,6 +58,12 @@ enum Command {
         model_catalog: Option<PathBuf>,
         #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
         timeout_seconds: u64,
+        /// Wait this many seconds between health rounds until Ctrl+C.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        watch_seconds: Option<u64>,
+        /// Stop after this many health rounds when watching.
+        #[arg(long, requires = "watch_seconds", value_parser = clap::value_parser!(u64).range(1..=1000))]
+        samples: Option<u64>,
         #[arg(long)]
         json: bool,
     },
@@ -253,6 +259,8 @@ enum AppError {
     InvalidPrompt,
     #[error("one or more configured providers are not freshly healthy")]
     UnhealthyProviders,
+    #[error("could not write provider health output: {0}")]
+    HealthOutput(std::io::Error),
     #[error("inference completed but requested cleanup was not fully confirmed")]
     CleanupFailed,
     #[error("{0}")]
@@ -312,14 +320,24 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             config,
             model_catalog,
             timeout_seconds,
+            watch_seconds,
+            samples,
             json,
         } => {
-            commands::provider_health(
-                catalog_commands::load(&config, model_catalog.as_deref())?,
-                std::time::Duration::from_secs(timeout_seconds),
-                json,
-            )
-            .await?
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
+            let timeout = std::time::Duration::from_secs(timeout_seconds);
+            if let Some(seconds) = watch_seconds {
+                commands::watch_provider_health(
+                    config,
+                    timeout,
+                    std::time::Duration::from_secs(seconds),
+                    samples,
+                    json,
+                )
+                .await?;
+            } else {
+                commands::provider_health(config, timeout, json).await?;
+            }
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,

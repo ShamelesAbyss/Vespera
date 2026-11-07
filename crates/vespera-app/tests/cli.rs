@@ -197,6 +197,7 @@ struct HttpFixture {
     lifecycle_delay_ms: std::sync::Arc<AtomicU64>,
     hold_health: std::sync::Arc<AtomicBool>,
     hold_inference: std::sync::Arc<AtomicBool>,
+    deny_health: std::sync::Arc<AtomicBool>,
 }
 impl HttpFixture {
     fn new(health_denied: bool) -> Self {
@@ -225,6 +226,8 @@ impl HttpFixture {
         let hold_inference = std::sync::Arc::new(AtomicBool::new(false));
         let health_gate = hold_health.clone();
         let inference_gate = hold_inference.clone();
+        let deny_health = std::sync::Arc::new(AtomicBool::new(health_denied));
+        let denied = deny_health.clone();
         let worker = std::thread::spawn(move || {
             while !stopped.load(Ordering::SeqCst) {
                 let (mut socket, _) = match listener.accept() {
@@ -284,7 +287,7 @@ impl HttpFixture {
                 let Some(request) = request else {
                     continue;
                 };
-                let (status, body) = if health_denied
+                let (status, body) = if denied.load(Ordering::SeqCst)
                     && matches!(request.path.as_str(), "/api/version" | "/v1/models")
                 {
                     ("401 Unauthorized", "fixture-private-error-body")
@@ -342,6 +345,7 @@ impl HttpFixture {
             lifecycle_delay_ms,
             hold_health,
             hold_inference,
+            deny_health,
         }
     }
     fn captured(&self) -> Vec<CapturedRequest> {
@@ -2118,6 +2122,70 @@ fn offline_model_and_agent_inventory_do_not_resolve_credentials_or_connect() {
         );
     }
     assert!(fixture.captured().is_empty());
+}
+
+#[test]
+fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = HttpFixture::new(true);
+    fixture.hold_health.store(true, Ordering::SeqCst);
+    let scratch = ScratchDirectory::new();
+    let config = scratch.write_config(&runtime_config(&fixture, false, true));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "provider-health",
+            "--config",
+            config.to_str().unwrap(),
+            "--watch-seconds",
+            "1",
+            "--timeout-seconds",
+            "1",
+            "--samples",
+            "3",
+            "--json",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let first = lines.next();
+    fixture.hold_health.store(false, Ordering::SeqCst);
+    let second = lines.next();
+    fixture.deny_health.store(false, Ordering::SeqCst);
+    let third = lines.next();
+    assert!(lines.next().is_none());
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for (index, (line, timeout, state)) in [
+        (first, true, "unknown"),
+        (second, false, "unreachable"),
+        (third, false, "healthy"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let line = line.expect("health round").unwrap();
+        let report: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(report["round"], index + 1);
+        assert_eq!(report["timed_out"], timeout);
+        assert_eq!(report["providers"][0]["state"], state);
+        assert!(!line.contains("fixture-private-error-body"));
+        assert!(!line.contains("http://"));
+    }
+    let requests = fixture.captured();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.path == "/api/version")
+    );
 }
 
 #[test]

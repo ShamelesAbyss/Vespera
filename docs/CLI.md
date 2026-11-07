@@ -15,7 +15,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `doctor` | Read host evidence, preserving unknown measurements | None |
 | `models` | List declared model metadata | None |
 | `agents` | List declared identities, status, policy and permissions | None |
-| `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
+| `provider-health` | Poll once or watch configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
 | `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
 | `world` | Initialize, inspect and advance a persistent simulation or request a model decision | Local SQLite access. Decisions also require a configured agent and provider. |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |

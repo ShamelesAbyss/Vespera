@@ -5,11 +5,14 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::future::Future;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::time::Duration;
 use vespera_agents::{ExecutionOptions, MemoryContext, TaskExecutionResult};
 use vespera_app::memory::configured_authorizer;
-use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime, check_providers};
+use vespera_app::runtime::{
+    CleanupReport, ProviderCheck, RuntimeError, VesperaRuntime, check_providers,
+    configured_registry, observed_provider_checks,
+};
 use vespera_config::AppConfig;
 use vespera_core::{
     EventKind, MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId, TaskState,
@@ -192,6 +195,96 @@ pub(crate) async fn provider_health(
         return Err(AppError::UnhealthyProviders);
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct HealthRound {
+    round: u64,
+    timed_out: bool,
+    providers: Vec<ProviderCheck>,
+}
+
+pub(crate) async fn watch_provider_health(
+    config: AppConfig,
+    timeout: Duration,
+    interval: Duration,
+    samples: Option<u64>,
+    json: bool,
+) -> Result<(), AppError> {
+    let registry = configured_registry(&config).await?;
+    let signal = tokio::signal::ctrl_c();
+    tokio::pin!(signal);
+    let mut round = 0_u64;
+    loop {
+        let cancel = CancellationToken::new();
+        let poll = registry.health_check_all(cancel.clone());
+        let timed_out = tokio::select! {
+            biased;
+            result = &mut signal => {
+                cancel.cancel();
+                return result.map_err(AppError::ShutdownSignal);
+            }
+            result = tokio::time::timeout(timeout, poll) => result.is_err(),
+        };
+        if timed_out {
+            cancel.cancel();
+        }
+        round = round.saturating_add(1);
+        let report = HealthRound {
+            round,
+            timed_out,
+            providers: observed_provider_checks(&config, &registry).await?,
+        };
+        write_health_round(&report, json)?;
+        if samples == Some(round) {
+            if timed_out {
+                return Err(RuntimeError::Deadline.into());
+            }
+            return if report
+                .providers
+                .iter()
+                .all(|provider| provider.state == ProviderHealthState::Healthy)
+            {
+                Ok(())
+            } else {
+                Err(AppError::UnhealthyProviders)
+            };
+        }
+        tokio::select! {
+            biased;
+            result = &mut signal => return result.map_err(AppError::ShutdownSignal),
+            () = tokio::time::sleep(interval) => {}
+        }
+    }
+}
+
+fn write_health_round(report: &HealthRound, json: bool) -> Result<(), AppError> {
+    let mut output = io::stdout().lock();
+    if json {
+        let line = serde_json::to_string(report)?;
+        writeln!(output, "{line}").map_err(AppError::HealthOutput)?;
+    } else {
+        writeln!(
+            output,
+            "Health round {}{}",
+            report.round,
+            if report.timed_out {
+                " (deadline reached)"
+            } else {
+                ""
+            },
+        )
+        .map_err(AppError::HealthOutput)?;
+        for provider in &report.providers {
+            writeln!(
+                output,
+                "{}: {:?} (observation age {:?} ms)",
+                provider.provider_id, provider.state, provider.checked_age_ms,
+            )
+            .map_err(AppError::HealthOutput)?;
+        }
+    }
+    output.flush().map_err(AppError::HealthOutput)
 }
 
 #[derive(Serialize)]

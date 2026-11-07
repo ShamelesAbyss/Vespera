@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Continuous provider health monitoring
+
+The durable catalog checkpoint `963533e2aa604f126a0c3a39b136633b0307b0ee` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42424232656). The CLI can now keep one registry alive across health rounds, bound each round by a deadline, and stream JSON observations until Ctrl+C or a sample limit. A timeout marks the round incomplete and does not replace unfinished observations with a fabricated failure.
+
+The Windows subprocess regression observed a timed-out round with unknown health, a subsequent unreachable state, and recovery to healthy in the same process. The fixture received exactly three health requests. A separate live Ollama check reported three healthy rounds, with zero resident models both before and after. Formatting, strict workspace Clippy and offline workspace tests passed.
+
+The monitor reads its configuration at startup and keeps its health observations local to the process. Startup lifecycle reconciliation remains separate from health monitoring.
+
 ## 2026-11-07 — Durable model catalog
 
 Verified implementation checkpoint `963533e2aa604f126a0c3a39b136633b0307b0ee` was pushed to `main`. The Windows offline workspace suite, formatting, strict Clippy and Rustdoc with warnings denied passed.

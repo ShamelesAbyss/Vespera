@@ -61,6 +61,18 @@ commands explicitly schedule refreshes. Each poll is cancellable
 and bounded. Cancellation preserves previous evidence until it expires; a
 failed/timed-out poll or mismatched response identity records unreachable.
 
+### Watch provider health
+
+Run an independent headless monitor against configured providers. Add `--model-catalog` if your runtime loads its model declarations from SQLite.
+
+```powershell
+cargo run --locked -p vespera-app -- provider-health --config config/local.toml --watch-seconds 1 --timeout-seconds 5 --samples 3 --json
+```
+
+The first round starts immediately. `--watch-seconds <1..3600>` sets the wait after each round. `--timeout-seconds <1..3600>` caps the whole round. `--samples <1..1000>` is optional in watch mode. Without it, stop with Ctrl+C. The monitor keeps polling after a failed round so a provider can recover. A finite run exits successfully when its final round finishes within budget and all providers are healthy.
+
+JSON watch output is one object per line, with `round`, `timed_out` and `providers`. Provider entries give the effective state and age of their last observation. A timed-out round can carry earlier observations until they expire. The monitor polls the registry it created at startup. Other processes keep their own health evidence.
+
 No registry lock spans provider I/O. Newer poll generations and replacement
 provider instances fence out delayed results. Timestamps are in-process Tokio
 monotonic instants, not restart-persistent audit timestamps.

@@ -88,6 +88,14 @@ pub async fn check_providers(
     if cancel.is_cancelled() {
         return Err(RuntimeError::Cancelled);
     }
+    observed_provider_checks(config, &registry).await
+}
+
+/// Read current registry evidence in configured order without provider I/O.
+pub async fn observed_provider_checks(
+    config: &AppConfig,
+    registry: &ModelRegistry,
+) -> Result<Vec<ProviderCheck>, RuntimeError> {
     let mut checks = Vec::new();
     for provider in &config.providers {
         let observation = registry.provider_health(provider.id).await?;
