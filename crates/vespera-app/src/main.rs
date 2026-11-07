@@ -4,6 +4,7 @@ mod commands;
 mod doctor;
 mod event_commands;
 mod memory_commands;
+mod world_commands;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -60,6 +61,8 @@ enum Command {
     Memory(memory_commands::MemoryArgs),
     /// Initialize, replay or follow a local event journal.
     Events(event_commands::EventArgs),
+    /// Initialize, inspect and advance a persistent simulated world.
+    World(world_commands::WorldArgs),
     /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {
         /// Strict JSON access policy with environment variable references.
@@ -173,6 +176,8 @@ struct ConfigReport {
 #[derive(Debug, Error)]
 enum AppError {
     #[error(transparent)]
+    World(#[from] vespera_world::WorldError),
+    #[error(transparent)]
     BrokerServer(#[from] vespera_api::http::ServerError),
     #[error("could not monitor shutdown signal: {0}")]
     ShutdownSignal(std::io::Error),
@@ -267,6 +272,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::Memory(args) => memory_commands::run(args).await?,
         Command::Events(args) => event_commands::run(args).await?,
+        Command::World(args) => world_commands::run(args)?,
         Command::Serve {
             access_file,
             listen,

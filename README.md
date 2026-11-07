@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and renders observed broker activity in a native 3D window. The thirteen-crate workspace has 215 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. The full orchestration view, persistent World Simulation Mode and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, renders observed broker activity in a native 3D window, and persists deterministic simulation state. The fourteen-crate workspace has 216 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. The full orchestration view, graphical World Simulation Mode and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -57,8 +57,9 @@ flowchart TD
 | `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
 | `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
 | `vespera-view` | Observed broker graph and optional native 3D executable |
+| `vespera-world` | Deterministic resident actions, shared resources, relationships and transactional SQLite worlds |
 | `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
-| `vespera-app` | Runtime composition, diagnostics and ten top-level CLI commands |
+| `vespera-app` | Runtime composition, diagnostics and eleven top-level CLI commands |
 
 `config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/local.private.toml` are ignored. No database, server listener or graphical application starts automatically.
 
@@ -138,7 +139,11 @@ Configure agents in TOML with stable independent UUIDs, identity/personality/goa
 
 Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [durable memory](docs/MEMORY.md). The separate `vespera-memory` library now provides permission-checked SQLite persistence, bounded structured/phrase search and atomic consolidation lineage. Its real agent authorization adapter survives model rebinding and supports reopening under a fresh runtime. The explicit `memory` CLI opens storage for operator requests. Use `run-agent --memory-query-file` to attach authorized durable records and `--remember-result` to save an accepted response. Both are explicit options. See the [CLI reference](docs/CLI.md#opt-in-memory-during-inference).
 
-The orchestrator executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan. Automatic decomposition, deterministic simulation and rendering native workflow events remain roadmap work. [Orchestrator reference](docs/ORCHESTRATION.md)
+The orchestrator executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan. Automatic decomposition and rendering native workflow events remain roadmap work. [Orchestrator reference](docs/ORCHESTRATION.md)
+
+## Persistent simulation
+
+The headless `world` command runs a configurable, seeded grid with resident foragers, builders, regenerating resource sites and a shared depot. Committed state includes positions, goals, resources, shelters, encounters and owned action memories. The simulation advances by explicit ticks and requires no provider. [World setup and controls](docs/CLI.md#persistent-world-simulation)
 
 ## External workers
 

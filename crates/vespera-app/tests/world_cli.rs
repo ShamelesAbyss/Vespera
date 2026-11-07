@@ -1,0 +1,114 @@
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use serde_json::Value;
+use vespera_core::TaskId;
+
+struct Database(PathBuf);
+
+impl Database {
+    fn new() -> Self {
+        Self(std::env::temp_dir().join(format!("vespera-world-{}.sqlite3", TaskId::new())))
+    }
+}
+
+impl Drop for Database {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn world(database: &Database, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args(["world", "--database"])
+        .arg(&database.0)
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+fn json(output: Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn persists_deterministic_world_and_fences_stale_resident_controls() {
+    let first = Database::new();
+    let second = Database::new();
+    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/world.example.json");
+    let spec = spec.to_str().unwrap();
+    let init = ["init", "--spec", spec];
+    assert_eq!(json(world(&first, &init)), json(world(&second, &init)));
+    assert!(!world(&first, &init).status.success());
+
+    let first_snapshot = json(world(&first, &["advance", "--ticks", "60"]));
+    for _ in 0..3 {
+        json(world(&second, &["advance", "--ticks", "20"]));
+    }
+    assert_eq!(first_snapshot, json(world(&second, &["inspect"])));
+    assert_eq!(first_snapshot["tick"], 60);
+    assert!(first_snapshot["shelters"].as_u64().unwrap() > 0);
+    let resident = first_snapshot["residents"][0]["id"].as_str().unwrap();
+    assert!(first_snapshot["residents"][0].get("memory").is_none());
+    assert!(
+        !first_snapshot["residents"][0]["relationships"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let memories = json(world(&first, &["memory", "--resident", resident]));
+    assert_eq!(
+        memories,
+        json(world(&second, &["memory", "--resident", resident]))
+    );
+    assert!((1..=24).contains(&memories.as_array().unwrap().len()));
+
+    let moved = &first_snapshot["residents"][0]["position"];
+    let x = moved["x"].as_u64().unwrap();
+    let next_x = if x == 0 { 1 } else { x - 1 };
+    let next_x = next_x.to_string();
+    let z = moved["z"].as_u64().unwrap().to_string();
+    let move_args = [
+        "move",
+        "--resident",
+        resident,
+        "--x",
+        &next_x,
+        "--z",
+        &z,
+        "--revision",
+        "60",
+    ];
+    let moved = json(world(&first, &move_args));
+    assert_eq!(moved["tick"], 60);
+    assert_eq!(moved["revision"], 61);
+    let stale = world(&first, &move_args);
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("world changed"));
+    assert_eq!(json(world(&first, &["inspect"])), moved);
+
+    json(world(
+        &first,
+        &[
+            "set-active",
+            "--resident",
+            resident,
+            "--active",
+            "false",
+            "--revision",
+            "61",
+        ],
+    ));
+    let advanced = json(world(&first, &["advance", "--ticks", "5"]));
+    assert_eq!(advanced["tick"], 65);
+    assert_eq!(advanced["residents"][0]["active"], false);
+    assert_eq!(
+        advanced["residents"][0]["position"],
+        moved["residents"][0]["position"]
+    );
+}

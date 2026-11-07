@@ -2,15 +2,15 @@
 
 ## Current recovery implementation — 2026-11-06
 
-The thirteen-crate workspace now integrates real provider adapters, effective-health
+The fourteen-crate workspace now integrates real provider adapters, effective-health
 registry operations, conservative model reservations/lifecycle, bounded priority
 admission, owned inference leases, bounded independent agents and actual task
 inference. The application library composes these services. The CLI implements
 `validate-config`, `doctor`, `models`, `agents`, `provider-health`, `run-agent`,
-`run-workflow`, `memory`, `events` and `serve`. See the [CLI reference](CLI.md).
+`run-workflow`, `memory`, `events`, `serve` and `world`. See the [CLI reference](CLI.md).
 
 Current Windows validation passes formatting, all-target compilation, the full
-215-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
+216-test offline suite and SDK doctest (one live health test and one child-only crash helper ignored as standalone tests), strict Clippy, rustdoc, optimized
 workspace build, and optimized worker HTTP subprocess tests. HTTP end-to-end
 fixtures exercise both adapters, load/infer/opt-in unload, deadline cleanup,
 unknown-resource rejection, credential isolation and supported command behavior.
@@ -29,6 +29,8 @@ The broker and SDK support TLS 1.3 for HTTPS and secure WebSockets. A loopback c
 Approved external workers can exchange text over explicitly granted directional routes. Subprocess tests cover private inboxes, acknowledgement, bounded retention, idempotent retries and revocation. Message contents remain process-local.
 
 The optional Bevy orchestration window reads signed broker subscriptions. A Windows desktop smoke test rendered real lease and task transitions, selected objects, focused and reset the camera, and sent a cancellation that independent broker inspection confirmed. The graphics build was validated in the development profile. Full telemetry and World Simulation Mode remain open.
+
+The deterministic world engine persists residents, their actions and shared resources in SQLite. The CLI subprocess test compared independent worlds at the same logical tick, reopened state across invocations, and verified revision-fenced movement and resident suspension. Model-driven decision integration and graphical World Simulation Mode remain open.
 
 The optional exclusive broker database stores tasks, generations, results and revocations before HTTP responses. A forced subprocess restart verified recovery, same-result retries, fencing, queue order and revocation. A fault-injected transaction verified rollback and a simulated clock rollback verified conservative expiry.
 

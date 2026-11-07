@@ -14,6 +14,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `agents` | List declared identities, status, policy and permissions | None |
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
 | `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
+| `world` | Initialize, inspect and advance a persistent simulation | Local file and SQLite access |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
@@ -217,6 +218,30 @@ Use these options on `run-agent` after initializing a database with `memory init
 Retrieval examines the first eight matches in namespace order. Whole records that fit within an 8 KiB serialized JSON message are sent as untrusted user content before the original task prompt. This is a byte limit. Provider tokenization and context handling still apply. The JSON execution report lists included IDs in `memory_context_ids` when at least one record is attached. The stored task snapshot keeps the original prompt.
 
 A retained response carries the accepted task ID and appears as `stored_memory_id` in the JSON report. Storage failure returns nonzero with `memory_error` and preserves the completed execution evidence. File and database preparation and post-inference persistence run on blocking workers outside the inference deadline.
+
+## Persistent world simulation
+
+Each command takes `world --database <path>` before its subcommand. Create the database's parent directory first. Initialization rejects a database that already contains a world.
+
+```powershell
+New-Item -ItemType Directory -Force data | Out-Null
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 init --spec config/world.example.json
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 advance --ticks 60
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 inspect
+```
+
+| Subcommand | Inputs and behavior |
+| --- | --- |
+| `init` | `--spec <path>` reads a strict JSON world up to 64 KiB |
+| `inspect` | Returns committed public world state as JSON |
+| `advance` | `--ticks <1..1000>` defaults to one. All requested ticks commit together |
+| `set-active` | `--resident <UUID> --active <true/false> --revision <n>` suspends or reactivates a resident |
+| `move` | `--resident <UUID> --x <n> --z <n> --revision <n>` moves an active resident to an adjacent cell |
+| `memory` | `--resident <UUID>` reads that resident's last 24 recorded actions or encounters as the local database operator |
+
+The specification sets a seed, grid dimensions of 2 to 64 cells per axis, one depot, 1 to 32 residents and up to 64 resource sites. Roles are `forager` and `builder`. Seed and tick determine a rotating resident turn order. Foragers gather from the nearest stocked site, carry up to four units and deliver to the depot. Builders spend six depot units per shelter. Active residents within one cell of each other accumulate encounter counts. Sites regenerate per tick. [Example world specification](../config/world.example.json)
+
+Logical ticks are independent of wall time. A control increments the revision without advancing the tick. Controls reject stale revisions, and an inactive resident stays in place while the rest of the world advances. Public snapshots omit resident memories. The local database is operator-owned and its filesystem permissions govern access. Model-driven resident actions and the graphical world mode remain in development.
 
 ## External worker service
 

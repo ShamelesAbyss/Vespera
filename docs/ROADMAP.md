@@ -14,7 +14,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 8: memory | Authorized SQLite library with FTS, lineage, quotas, transactional initialization and process-exit recovery tested; real agent adapter/rebind/reopen verified. Offline CLI initialization/inspection/write/consolidation/deletion verified across processes. Opt-in retrieval and generated-result persistence verified through single-agent inference. Backup, restore and durable task sources remain. See [MEMORY.md](MEMORY.md). |
 | 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
 | 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls and scoped events. Optional SQLite recovers work, revocations and feeds. Opt-in TLS 1.3 supports remote binding. Cross-host deployment and broader authorized messaging remain. |
-| 11: simulation | Pending; independent deterministic world engine required. |
+| 11: simulation | Persistent deterministic grid engine and native CLI run foragers, builders, shared stock, shelters, encounters and owned action memories. Subprocess tests cover reproducibility and revision fences. Model-driven resident actions and graphical integration remain. |
 | 12: 3D command center | The optional Bevy executable projects real broker task and worker events into a selectable 3D graph with camera and cancellation controls. Full orchestration telemetry, World Simulation Mode and hardware validation remain release gates. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
 
@@ -108,7 +108,7 @@ The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK]
 
 ## Milestone 11 — Simulation and artificial civilization
 
-Build a small deterministic world on a reusable contract.
+Extend the [deterministic world engine](CLI.md#persistent-world-simulation) with model-driven resident actions and the graphical simulation view.
 
 - Reproduce a fixed number of ticks with a recorded seed/inputs, without inference access.
 - Pause/stall inference while world state stays valid; reject or explicitly reconcile late results by world version.

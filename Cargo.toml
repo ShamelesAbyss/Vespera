@@ -13,6 +13,7 @@ members = [
     "crates/vespera-api",
     "crates/vespera-sdk",
     "crates/vespera-view",
+    "crates/vespera-world",
     "crates/vespera-app"
 ]
 

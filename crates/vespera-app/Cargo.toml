@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 vespera-core.workspace = true
 vespera-api = { path = "../vespera-api" }
+vespera-world = { path = "../vespera-world" }
 vespera-events = { path = "../vespera-events" }
 vespera-memory = { path = "../vespera-memory" }
 vespera-config.workspace = true

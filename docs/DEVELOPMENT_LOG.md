@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Persistent deterministic world engine
+
+The native orchestration view checkpoint `8609bbb5704080372d9164c183550bd8f52266fa` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42342384565). Added `vespera-world` and native `world` commands. The configurable simulation persists independently of providers and graphics. Residents follow role goals, gather and deliver resources, build shelters, record encounters and retain bounded action memories. The SQLite store serializes writers and commits each batch of ticks together. Movement and activation controls require an observed revision. Public observations omit memories.
+
+Windows validation passed 216 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, the optimized workspace build and the optimized world subprocess test. The test compared two independently initialized worlds after 60 ticks and across different commit batch sizes. It also checked persistent memories, relationship evidence, stale movement rejection and continued simulation while a resident is suspended.
+
+Residents currently use deterministic role policies. The native 3D World Simulation Mode and model-driven resident actions remain required work. Next wire the Bevy view to committed world snapshots and revision-checked controls.
+
 ## 2026-11-06 — Native 3D orchestration client
 
 Verified implementation checkpoint `8609bbb5704080372d9164c183550bd8f52266fa` was pushed to `main`.

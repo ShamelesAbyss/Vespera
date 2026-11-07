@@ -1,0 +1,15 @@
+{
+  "seed": 42,
+  "width": 12,
+  "depth": 10,
+  "depot": { "x": 5, "z": 5 },
+  "residents": [
+    { "id": "3510be17-235a-4493-83ab-99d2ebf11ad4", "name": "Aster", "role": "forager", "position": { "x": 4, "z": 5 } },
+    { "id": "f8208843-4766-4e6b-986f-18b6ce0b7496", "name": "Rowan", "role": "builder", "position": { "x": 5, "z": 5 } },
+    { "id": "91b28e58-f40a-411a-8521-812c26c5b774", "name": "Lark", "role": "forager", "position": { "x": 6, "z": 5 } }
+  ],
+  "sites": [
+    { "position": { "x": 2, "z": 5 }, "stock": 10, "capacity": 12, "regeneration": 1 },
+    { "position": { "x": 9, "z": 5 }, "stock": 10, "capacity": 12, "regeneration": 1 }
+  ]
+}
