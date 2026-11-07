@@ -34,21 +34,27 @@ A synchronous transition guard marks interrupted lifecycle operations unknown.
 During an interrupted load it also releases the local inference slot. It never
 assumes that dropping a request stopped remote work or freed provider memory.
 
-## Startup residency reconciliation
+## Startup and admission residency reconciliation
 
 Before its first admission, a new scheduler can call `reconcile_startup` to
-observe residency from every provider in its scoped registry. It rejects
-unsupported telemetry, inconsistent snapshots and cancelled observations before
-installing a baseline. Ollama reads [running model residency](https://docs.ollama.com/api/ps).
+enable residency reconciliation and capture a baseline. Every subsequent
+admission takes a fresh snapshot across the same provider scope. Unsupported
+telemetry, inconsistent snapshots and cancelled probes fail before activation.
+Ollama reads [running model residency](https://docs.ollama.com/api/ps).
 
-Models already resident at startup stay under external ownership. Admission
-charges their reported RAM and VRAM against available headroom and rejects
-requests for those same model names, including equivalent Ollama names.
-Eviction and shutdown cleanup operate only on local reservations. The startup
-report keeps provider observations separate from local accounting.
+Admission charges RAM and VRAM reported for externally resident models
+against available headroom. It rejects requests for those names, including
+equivalent Ollama names. A locally acknowledged load on the same provider
+and model name keeps its local estimate. A second registry identity cannot
+claim that reservation. Uncertain reservations stay charged and reconciliation
+mode excludes them from automatic unload. After the provider operator resolves
+uncertain residency, start a new runtime to resample it. Reports keep observed
+pressure separate from local accounting.
 
-The baseline is a point-in-time observation held in process memory. Provider
-changes after sampling can invalidate its assumptions. Shared backends reached
+Opt-in preparation and unload are serialized around the probe and lifecycle
+transition. Inference can continue concurrently. Observations are held in
+process memory. They cannot identify a separate client replacing a model under
+the same name or detect changes between samples. Shared backends reached
 through multiple provider registrations may be counted more than once. Use a
 single registration per backend for meaningful aggregate memory.
 
@@ -56,8 +62,8 @@ single registration per backend for meaningful aggregate memory.
 
 Both estimate dimensions must be known. CPU-only models use explicit zero VRAM.
 Supply estimates for memory that can remain resident and leave room for
-system overhead. Automatic KV-cache estimation, continuous telemetry
-reconciliation and automatic shutdown unloading remain open.
+system overhead. Automatic KV-cache estimation, observation during active
+requests and automatic shutdown unloading remain open.
 
 ## Per-inference memory allowance
 

@@ -7,7 +7,7 @@ The optional SQLite catalog stores declared model metadata across CLI invocation
 After reopening a catalog, execution can separately reconcile the scoped
 providers' startup residency with `--reconcile-residency`. The scheduler
 handles the observation and leaves catalog declarations intact. See
-[startup residency reconciliation](SCHEDULER.md#startup-residency-reconciliation).
+[startup and admission residency reconciliation](SCHEDULER.md#startup-and-admission-residency-reconciliation).
 
 ```powershell
 $db = 'data/models.sqlite3'

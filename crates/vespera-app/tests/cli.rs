@@ -1833,6 +1833,82 @@ fn workflow_cli_executes_dependencies_and_reports_provenance_and_cleanup() {
 }
 
 #[test]
+fn workflow_rechecks_external_pressure_without_double_charging_local_residency() {
+    use std::time::{Duration, Instant};
+
+    for (external_bytes, completes) in [(10, true), (90, false)] {
+        let fixture = HttpFixture::new(false);
+        fixture.hold_inference.store(true, Ordering::SeqCst);
+        let directory = ScratchDirectory::new();
+        let config = runtime_config(&fixture, false, true)
+            .replace("permissions = []", "permissions = [\"delegate\"]")
+            .replace("ram_bytes = 4294967296", "ram_bytes = 120");
+        let output = std::thread::scope(|scope| {
+            let child = scope.spawn(|| {
+                run_fixture_workflow(
+                    &directory,
+                    &config,
+                    &workflow_value().to_string(),
+                    &["--resume", "--reconcile-residency", "--unload-after"],
+                )
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !fixture
+                .captured()
+                .iter()
+                .any(|request| request.path == "/api/chat")
+                && !child.is_finished()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            *fixture.residency.lock().unwrap() = serde_json::json!({
+                "models": [
+                    {"name": "fixture-model:latest", "size": 100, "size_vram": 0},
+                    {"name": "external-model", "size": external_bytes, "size_vram": 0}
+                ]
+            })
+            .to_string();
+            fixture.hold_inference.store(false, Ordering::SeqCst);
+            child.join().unwrap()
+        });
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.success(), completes, "{report}");
+        assert_eq!(
+            report["startup_residency"]["external_models"], 0,
+            "{report}"
+        );
+        assert_eq!(
+            report["admission_residency"]["external_models"], 1,
+            "{report}"
+        );
+        assert_eq!(
+            report["admission_residency"]["ram_bytes"], external_bytes,
+            "{report}"
+        );
+        assert_eq!(report["workflow"]["attempts"][0]["task_state"], "completed");
+        let requests = fixture.captured();
+        let count = |path| {
+            requests
+                .iter()
+                .filter(|request| request.path == path)
+                .count()
+        };
+        assert_eq!(count("/api/ps"), 3);
+        assert_eq!(count("/api/chat"), if completes { 2 } else { 1 });
+        let lifecycle: Vec<_> = requests
+            .iter()
+            .filter(|request| request.path == "/api/generate")
+            .collect();
+        assert_eq!(lifecycle.len(), 2);
+        assert!(lifecycle.iter().all(|request| {
+            serde_json::from_str::<serde_json::Value>(&request.body).unwrap()["model"]
+                == "fixture-model"
+        }));
+    }
+}
+
+#[test]
 fn workflow_denied_activation_permissions_and_unknown_agents_never_contact_providers() {
     for case in [0, 1, 2] {
         let fixture = HttpFixture::new(false);

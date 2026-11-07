@@ -32,11 +32,17 @@ pub enum SchedulerError {
     #[error("scheduler startup residency can only be reconciled once before admission")]
     StartupAlreadyUsed,
     /// Provider residency data is malformed or no longer identifies the active adapter.
-    #[error("startup residency evidence is invalid for provider {provider_id}")]
+    #[error("residency evidence is invalid for provider {provider_id}")]
     InvalidStartupResidency { provider_id: ProviderId },
     /// The selected provider model is already loaded outside local ownership.
     #[error("model {model_id} is externally resident and cannot be activated by this scheduler")]
     ExternallyResident { model_id: ModelId },
+    /// A provider model is already reserved under a different registry identity.
+    #[error("model {model_id} aliases a reservation held by model {reserved_model_id}")]
+    ResidencyAlias {
+        model_id: ModelId,
+        reserved_model_id: ModelId,
+    },
     /// Inventory differs from a validated request or an existing reservation.
     #[error("model {model_id} binding differs from the request or reservation")]
     RegistrationChanged {
@@ -257,17 +263,18 @@ enum Preparation {
     Evict(ModelId),
 }
 
-struct StartupResidency {
-    providers: BTreeMap<ProviderId, ObservedProvider>,
+struct ResidencyObservation {
+    external_models: BTreeMap<ProviderId, BTreeSet<String>>,
     report: StartupResidencyReport,
 }
 
-struct ObservedProvider {
-    adapter: Arc<dyn InferenceProvider>,
-    models: BTreeSet<String>,
+struct StartupResidency {
+    adapters: BTreeMap<ProviderId, Arc<dyn InferenceProvider>>,
+    report: StartupResidencyReport,
+    latest_admission: Option<StartupResidencyReport>,
 }
 
-/// Aggregate provider observations used as external startup pressure.
+/// Aggregate provider observations used as external pressure.
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StartupResidencyReport {
     /// Number of scoped providers successfully queried.
@@ -361,6 +368,7 @@ pub struct ResourceScheduler {
     overhead: InferenceOverhead,
     state: Arc<Mutex<SchedulerState>>,
     gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
+    residency_gate: Arc<AsyncMutex<()>>,
 }
 impl fmt::Debug for ResourceScheduler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -390,6 +398,7 @@ impl ResourceScheduler {
             overhead,
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
+            residency_gate: Arc::new(AsyncMutex::new(())),
         }
     }
     /// Snapshot waiting and granted local admissions.
@@ -398,8 +407,7 @@ impl ResourceScheduler {
         self.queue.snapshot()
     }
 
-    /// Read residency before the first local admission. Observed models are
-    /// charged as external pressure and never become owned reservations.
+    /// Enable live residency checks and capture the baseline before the first admission.
     pub async fn reconcile_startup(&self, cancel: CancellationToken) -> Result<(), SchedulerError> {
         {
             let state = lock(&self.state);
@@ -414,12 +422,40 @@ impl ResourceScheduler {
             .into_iter()
             .map(|model| model.provider_id)
             .collect();
-        let mut startup = StartupResidency {
-            providers: BTreeMap::new(),
+        let mut adapters = BTreeMap::new();
+        for id in providers {
+            adapters.insert(id, self.registry.get_provider(id).await?);
+        }
+        let report = self
+            .observe_residency(&adapters, &BTreeMap::new(), &cancel)
+            .await?
+            .report;
+        let mut state = lock(&self.state);
+        if cancel.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
+        }
+        if state.admission_started || state.startup.is_some() {
+            return Err(SchedulerError::StartupAlreadyUsed);
+        }
+        state.startup = Some(StartupResidency {
+            adapters,
+            report,
+            latest_admission: None,
+        });
+        Ok(())
+    }
+
+    async fn observe_residency(
+        &self,
+        providers: &BTreeMap<ProviderId, Arc<dyn InferenceProvider>>,
+        owned: &BTreeMap<ProviderId, BTreeSet<String>>,
+        cancel: &CancellationToken,
+    ) -> Result<ResidencyObservation, SchedulerError> {
+        let mut observation = ResidencyObservation {
+            external_models: BTreeMap::new(),
             report: StartupResidencyReport::default(),
         };
-        for provider_id in providers {
-            let provider = self.registry.get_provider(provider_id).await?;
+        for (&provider_id, provider) in providers {
             let snapshot = tokio::select! {
                 biased;
                 () = cancel.cancelled() => return Err(SchedulerError::Cancelled),
@@ -429,49 +465,135 @@ impl ResourceScheduler {
                 return Err(SchedulerError::InvalidStartupResidency { provider_id });
             }
             let mut names = BTreeSet::new();
+            let mut external = BTreeSet::new();
             let mut ram = 0;
             let mut vram = 0;
             for model in snapshot.resident_models {
+                let key = provider.residency_model_key(&model.provider_model_name);
                 if model.provider_model_name.trim().is_empty()
                     || model
                         .ram_resident_bytes
                         .checked_add(model.vram_resident_bytes)
                         != Some(model.total_resident_bytes)
-                    || !names.insert(provider.residency_model_key(&model.provider_model_name))
+                    || !names.insert(key.clone())
                 {
                     return Err(SchedulerError::InvalidStartupResidency { provider_id });
                 }
                 ram = add_memory(ram, model.ram_resident_bytes, ResourceKind::Ram)?;
                 vram = add_memory(vram, model.vram_resident_bytes, ResourceKind::Vram)?;
+                if !owned
+                    .get(&provider_id)
+                    .is_some_and(|names| names.contains(&key))
+                {
+                    external.insert(key);
+                    observation.report.ram_bytes = add_memory(
+                        observation.report.ram_bytes,
+                        model.ram_resident_bytes,
+                        ResourceKind::Ram,
+                    )?;
+                    observation.report.vram_bytes = add_memory(
+                        observation.report.vram_bytes,
+                        model.vram_resident_bytes,
+                        ResourceKind::Vram,
+                    )?;
+                }
             }
             if ram != snapshot.total_provider_ram_bytes
                 || vram != snapshot.total_provider_vram_bytes
             {
                 return Err(SchedulerError::InvalidStartupResidency { provider_id });
             }
-            startup.report.ram_bytes =
-                add_memory(startup.report.ram_bytes, ram, ResourceKind::Ram)?;
-            startup.report.vram_bytes =
-                add_memory(startup.report.vram_bytes, vram, ResourceKind::Vram)?;
-            startup.report.external_models += names.len();
-            startup.report.providers_observed += 1;
-            startup.providers.insert(
-                provider_id,
-                ObservedProvider {
-                    adapter: provider,
-                    models: names,
-                },
-            );
+            observation.report.external_models += external.len();
+            observation.report.providers_observed += 1;
+            observation.external_models.insert(provider_id, external);
         }
-        let mut state = lock(&self.state);
+        Ok(observation)
+    }
+
+    async fn refresh_residency(
+        &self,
+        model_id: ModelId,
+        provider: &Arc<dyn InferenceProvider>,
+        model_name: &str,
+        cancel: &CancellationToken,
+    ) -> Result<StartupResidencyReport, SchedulerError> {
+        let provider_id = provider.provider_id();
+        let model_key = provider.residency_model_key(model_name);
+        let (adapters, reserved) = {
+            let state = lock(&self.state);
+            let startup = state
+                .startup
+                .as_ref()
+                .expect("residency checking is enabled");
+            let adapters = startup.adapters.clone();
+            let reserved: Vec<_> = state
+                .resident_models
+                .values()
+                .filter_map(|entry| {
+                    let binding = state.bindings.get(&entry.model_id)?;
+                    Some((entry.clone(), binding.provider.clone()))
+                })
+                .collect();
+            (adapters, reserved)
+        };
+        if !adapters
+            .get(&provider_id)
+            .is_some_and(|adapter| Arc::ptr_eq(adapter, provider))
+        {
+            return Err(SchedulerError::InvalidStartupResidency { provider_id });
+        }
+        for (&id, adapter) in &adapters {
+            if !Arc::ptr_eq(adapter, &self.registry.get_provider(id).await?) {
+                return Err(SchedulerError::InvalidStartupResidency { provider_id: id });
+            }
+        }
+        let mut owned = BTreeMap::<ProviderId, BTreeSet<String>>::new();
+        for (entry, adapter) in reserved {
+            if !adapters
+                .get(&entry.provider_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &adapter))
+            {
+                continue;
+            }
+            let key = adapter.residency_model_key(&entry.provider_model_identifier);
+            if entry.provider_id == provider_id && entry.model_id != model_id && key == model_key {
+                return Err(SchedulerError::ResidencyAlias {
+                    model_id,
+                    reserved_model_id: entry.model_id,
+                });
+            }
+            if entry.residency == ResidencyState::Loaded {
+                owned.entry(entry.provider_id).or_default().insert(key);
+            }
+        }
+        let observation = self.observe_residency(&adapters, &owned, cancel).await?;
         if cancel.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
-        if state.admission_started || state.startup.is_some() {
-            return Err(SchedulerError::StartupAlreadyUsed);
+        lock(&self.state)
+            .startup
+            .as_mut()
+            .expect("residency checking is enabled")
+            .latest_admission = Some(observation.report);
+        if observation.external_models[&provider_id].contains(&model_key) {
+            return Err(SchedulerError::ExternallyResident { model_id });
         }
-        state.startup = Some(startup);
-        Ok(())
+        Ok(observation.report)
+    }
+
+    async fn lock_residency(
+        &self,
+        enabled: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Option<tokio::sync::MutexGuard<'_, ()>>, SchedulerError> {
+        if !enabled {
+            return Ok(None);
+        }
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(SchedulerError::Cancelled),
+            guard = self.residency_gate.lock() => Ok(Some(guard)),
+        }
     }
 
     /// Observed startup pressure, separate from this runtime's reservations.
@@ -480,6 +602,14 @@ impl ResourceScheduler {
             .startup
             .as_ref()
             .map(|startup| startup.report)
+    }
+
+    /// External pressure from the most recent complete admission probe.
+    pub fn admission_residency(&self) -> Option<StartupResidencyReport> {
+        lock(&self.state)
+            .startup
+            .as_ref()
+            .and_then(|startup| startup.latest_admission)
     }
 
     /// Capture reservation counters and model states under one accounting lock.
@@ -634,7 +764,11 @@ impl ResourceScheduler {
         expected_model_name: Option<&str>,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
-        lock(&self.state).admission_started = true;
+        let check_residency = {
+            let mut state = lock(&self.state);
+            state.admission_started = true;
+            state.startup.is_some()
+        };
         let permit = self
             .queue
             .acquire(priority, &cancel)
@@ -643,6 +777,7 @@ impl ResourceScheduler {
                 QueueError::Cancelled => SchedulerError::Cancelled,
                 error => SchedulerError::Queue(error),
             })?;
+        let _residency_guard = self.lock_residency(check_residency, &cancel).await?;
         let gate = self.gate(model_id);
         let _model_guard = tokio::select! {
             biased;
@@ -689,6 +824,17 @@ impl ResourceScheduler {
             vram_bytes: add_memory(vram_bytes, inference_memory.vram_bytes, ResourceKind::Vram)?,
             context_tokens,
         };
+        let external = if check_residency {
+            self.refresh_residency(
+                model_id,
+                &provider,
+                &model.provider_model_identifier,
+                &cancel,
+            )
+            .await?
+        } else {
+            StartupResidencyReport::default()
+        };
         let mut attempted = std::collections::BTreeSet::new();
         let needs_load = loop {
             if cancel.is_cancelled() {
@@ -696,27 +842,6 @@ impl ResourceScheduler {
             }
             let decision = 'admission: {
                 let mut state = lock(&self.state);
-                let external = if let Some(startup) = &state.startup {
-                    let Some(observed) = startup.providers.get(&model.provider_id) else {
-                        return Err(SchedulerError::InvalidStartupResidency {
-                            provider_id: model.provider_id,
-                        });
-                    };
-                    if !Arc::ptr_eq(&observed.adapter, &provider) {
-                        return Err(SchedulerError::InvalidStartupResidency {
-                            provider_id: model.provider_id,
-                        });
-                    }
-                    if observed
-                        .models
-                        .contains(&provider.residency_model_key(&model.provider_model_identifier))
-                    {
-                        return Err(SchedulerError::ExternallyResident { model_id });
-                    }
-                    startup.report
-                } else {
-                    StartupResidencyReport::default()
-                };
                 let existing = state.resident_models.get(&model_id);
                 let binding = state.bindings.get(&model_id);
                 if existing.is_some_and(|entry| {
@@ -831,6 +956,8 @@ impl ResourceScheduler {
                                     entry.active_inferences == 0
                                         && entry.model_id != model_id
                                         && !attempted.contains(&entry.model_id)
+                                        && !(check_residency
+                                            && entry.residency == ResidencyState::Unknown)
                                         && !matches!(
                                             entry.residency,
                                             ResidencyState::Loading | ResidencyState::Unloading
@@ -928,6 +1055,8 @@ impl ResourceScheduler {
         model_id: ModelId,
         cancel: CancellationToken,
     ) -> Result<bool, SchedulerError> {
+        let check_residency = lock(&self.state).startup.is_some();
+        let _residency_guard = self.lock_residency(check_residency, &cancel).await?;
         let gate = self.gate(model_id);
         let _guard = tokio::select! {
             biased;
@@ -948,6 +1077,11 @@ impl ResourceScheduler {
         let model = {
             let state = lock(&self.state);
             match state.resident_models.get(&model_id) {
+                Some(entry)
+                    if state.startup.is_some() && entry.residency == ResidencyState::Unknown =>
+                {
+                    return Err(SchedulerError::UncertainResidency { model_id });
+                }
                 Some(entry) if entry.active_inferences == 0 => entry.clone(),
                 _ => return Ok(false),
             }

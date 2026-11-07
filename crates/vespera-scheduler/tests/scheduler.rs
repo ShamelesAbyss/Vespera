@@ -143,7 +143,7 @@ impl InferenceProvider for MockProvider {
             } else {
                 LifecycleCapabilityState::Supported
             },
-            residency_telemetry: LifecycleCapabilityState::Unsupported,
+            residency_telemetry: LifecycleCapabilityState::Supported,
         }
     }
     fn health_check<'a>(
@@ -194,9 +194,11 @@ impl InferenceProvider for MockProvider {
         Result<ProviderTelemetrySnapshot, vespera_providers::ProviderError>,
     > {
         Box::pin(async move {
-            Err(vespera_providers::ProviderError::UnsupportedOperation {
+            Ok(ProviderTelemetrySnapshot {
                 provider_id: self.id,
-                operation: "query_residency",
+                resident_models: vec![],
+                total_provider_ram_bytes: 0,
+                total_provider_vram_bytes: 0,
             })
         })
     }
@@ -557,6 +559,36 @@ async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
         assert_eq!(provider.loads.load(Ordering::SeqCst), 1);
         assert_eq!(provider.unloads.load(Ordering::SeqCst), 0);
     }
+}
+
+#[tokio::test]
+async fn reconciliation_retains_uncertain_reservations_without_unloading_them() {
+    use vespera_scheduler::SchedulerError;
+
+    let (scheduler, provider, model, other) = fixture().await;
+    scheduler
+        .reconcile_startup(CancellationToken::new())
+        .await
+        .unwrap();
+    provider.load_mode.store(2, Ordering::SeqCst);
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(model, None, CancellationToken::new())
+            .await,
+        Err(SchedulerError::UnacknowledgedLifecycle { .. })
+    ));
+    assert!(matches!(
+        scheduler.evict_model(model, CancellationToken::new()).await,
+        Err(SchedulerError::UncertainResidency { .. })
+    ));
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(other, None, CancellationToken::new())
+            .await,
+        Err(SchedulerError::BudgetExceeded(_))
+    ));
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+    assert_eq!(provider.unloads.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

@@ -32,6 +32,8 @@ struct WorkflowRunReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     startup_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    admission_residency: Option<StartupResidencyReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
 }
 
@@ -118,6 +120,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .as_ref()
         .is_some_and(event_commands::Publication::failed);
     let startup_residency = runtime.scheduler().startup_residency();
+    let admission_residency = runtime.scheduler().admission_residency();
     if args.json {
         println!(
             "{}",
@@ -127,11 +130,13 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 error: error.as_ref().map(ToString::to_string),
                 cleanup,
                 startup_residency,
+                admission_residency,
                 event_publication
             })?
         );
     } else {
-        print_startup_residency(startup_residency);
+        print_residency("startup", startup_residency);
+        print_residency("latest admission", admission_residency);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }
@@ -310,6 +315,8 @@ struct RunReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     startup_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    admission_residency: Option<StartupResidencyReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stored_memory_id: Option<MemoryId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_error: Option<String>,
@@ -317,10 +324,10 @@ struct RunReport {
     event_publication: Option<event_commands::Publication>,
 }
 
-fn print_startup_residency(report: Option<StartupResidencyReport>) {
+fn print_residency(phase: &str, report: Option<StartupResidencyReport>) {
     if let Some(report) = report {
         println!(
-            "External startup residency: {} models across {} providers, {} RAM bytes, {} VRAM bytes",
+            "External {phase} residency: {} models across {} providers, {} RAM bytes, {} VRAM bytes",
             report.external_models, report.providers_observed, report.ram_bytes, report.vram_bytes,
         );
     }
@@ -467,6 +474,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Err(error) => (None, Some(error)),
     };
     let startup_residency = runtime.scheduler().startup_residency();
+    let admission_residency = runtime.scheduler().admission_residency();
     if args.json {
         let report = RunReport {
             task_id,
@@ -475,13 +483,15 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             execution,
             cleanup,
             startup_residency,
+            admission_residency,
             stored_memory_id,
             memory_error: memory_error.as_ref().map(ToString::to_string),
             event_publication,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print_startup_residency(startup_residency);
+        print_residency("startup", startup_residency);
+        print_residency("latest admission", admission_residency);
         if let Some(publication) = &event_publication {
             publication.report_failure();
         }
