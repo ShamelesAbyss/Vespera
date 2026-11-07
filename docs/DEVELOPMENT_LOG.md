@@ -2,6 +2,8 @@
 
 ## 2026-11-07 — Durable model catalog
 
+Verified implementation checkpoint `963533e2aa604f126a0c3a39b136633b0307b0ee` was pushed to `main`. The Windows offline workspace suite, formatting, strict Clippy and Rustdoc with warnings denied passed.
+
 The Bionic compatibility checkpoint `f186bbc350c54797d054760e820bbd62a6c46bef` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42423469770). Added an opt-in SQLite catalog for model metadata. CLI edits validate the effective provider and agent references and commit behind a revision check. Retired UUIDs keep their original provider binding. Runtime commands load a committed catalog snapshot before building adapters.
 
 The Windows CLI regression covered restart, concurrent edits, rejection of a foreign database, references that prevent removal, stale revisions and failed rebinding after removal. It also ran a local HTTP inference fixture using resource metadata supplied by the reopened catalog. In a separate live test, Ollama 0.40.13 and `hermes3:8b` returned `OK` using catalog revision 1 and the same model UUID. Acknowledged unload left zero resident models.
