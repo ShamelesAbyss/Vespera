@@ -16,8 +16,8 @@ use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 pub use vespera_core::ReservationState as ResidencyState;
 use vespera_core::{
-    DomainError, ModelId, ModelReservationSample, ProviderId, ResourceBudget, ResourceKind,
-    ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
+    DomainError, InferenceOverhead, ModelId, ModelReservationSample, ProviderId, ResourceBudget,
+    ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
@@ -165,6 +165,7 @@ impl ScheduledInference {
 
 struct InferenceLease {
     id: uuid::Uuid,
+    memory: InferenceMemory,
     state: Arc<Mutex<SchedulerState>>,
     permit: QueuePermit,
 }
@@ -174,10 +175,7 @@ impl InferenceLease {
         let Some(model_id) = state.leases.remove(&self.id) else {
             return false;
         };
-        if let Some(model) = state.resident_models.get_mut(&model_id) {
-            model.active_inferences -= 1;
-            state.usage.active_inferences -= 1;
-        }
+        state.finish_inference(model_id, self.memory);
         drop(state);
         self.permit.release();
         true
@@ -216,6 +214,43 @@ struct ModelBinding {
     context_tokens: u32,
 }
 
+#[derive(Clone, Copy)]
+struct InferenceMemory {
+    ram_bytes: u64,
+    vram_bytes: u64,
+}
+
+impl InferenceMemory {
+    fn for_context(overhead: InferenceOverhead, tokens: u32) -> Result<Self, SchedulerError> {
+        fn cost(
+            fixed: u64,
+            per_token: u64,
+            tokens: u32,
+            resource: ResourceKind,
+        ) -> Result<u64, SchedulerError> {
+            let scaled = per_token
+                .checked_mul(u64::from(tokens))
+                .ok_or(DomainError::ResourceOverflow { resource })?;
+            add_memory(fixed, scaled, resource)
+        }
+
+        Ok(Self {
+            ram_bytes: cost(
+                overhead.ram_bytes,
+                overhead.ram_bytes_per_context_token,
+                tokens,
+                ResourceKind::Ram,
+            )?,
+            vram_bytes: cost(
+                overhead.vram_bytes,
+                overhead.vram_bytes_per_context_token,
+                tokens,
+                ResourceKind::Vram,
+            )?,
+        })
+    }
+}
+
 enum Preparation {
     Ready { needs_load: bool },
     ReloadContext,
@@ -246,6 +281,16 @@ pub struct StartupResidencyReport {
 }
 
 impl SchedulerState {
+    fn finish_inference(&mut self, model_id: ModelId, memory: InferenceMemory) {
+        self.resident_models
+            .get_mut(&model_id)
+            .expect("inference retains its model reservation")
+            .active_inferences -= 1;
+        self.usage.active_inferences -= 1;
+        self.usage.ram_bytes -= memory.ram_bytes;
+        self.usage.vram_bytes -= memory.vram_bytes;
+    }
+
     fn reservation_counts(&self) -> (usize, usize) {
         let uncertain = self
             .resident_models
@@ -280,7 +325,7 @@ impl fmt::Debug for SchedulerState {
 struct TransitionGuard {
     state: Arc<Mutex<SchedulerState>>,
     model_id: ModelId,
-    loading: bool,
+    inference_memory: Option<InferenceMemory>,
     armed: bool,
 }
 impl Drop for TransitionGuard {
@@ -291,10 +336,9 @@ impl Drop for TransitionGuard {
         let mut state = lock(&self.state);
         if let Some(model) = state.resident_models.get_mut(&self.model_id) {
             model.residency = ResidencyState::Unknown;
-            if self.loading {
-                model.active_inferences -= 1;
-                state.usage.active_inferences -= 1;
-            }
+        }
+        if let Some(memory) = self.inference_memory {
+            state.finish_inference(self.model_id, memory);
         }
     }
 }
@@ -314,6 +358,7 @@ pub struct ResourceScheduler {
     queue: AdmissionQueue,
     registry: Arc<ModelRegistry>,
     policy: SchedulingPolicy,
+    overhead: InferenceOverhead,
     state: Arc<Mutex<SchedulerState>>,
     gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
 }
@@ -328,10 +373,21 @@ impl ResourceScheduler {
     /// Create an empty scheduler without activating models.
     #[must_use]
     pub fn new(registry: Arc<ModelRegistry>, policy: SchedulingPolicy) -> Self {
+        Self::new_with_overhead(registry, policy, InferenceOverhead::default())
+    }
+
+    /// Create a scheduler that accounts for configured transient memory on every admission.
+    #[must_use]
+    pub fn new_with_overhead(
+        registry: Arc<ModelRegistry>,
+        policy: SchedulingPolicy,
+        overhead: InferenceOverhead,
+    ) -> Self {
         Self {
             queue: AdmissionQueue::new(policy.budget.max_concurrent_inferences, policy.queue),
             registry,
             policy,
+            overhead,
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -627,6 +683,12 @@ impl ResourceScheduler {
         ) else {
             return Err(SchedulerError::UnknownResources { model_id });
         };
+        let inference_memory = InferenceMemory::for_context(self.overhead, context_tokens)?;
+        let cold_request = ResourceRequest {
+            ram_bytes: add_memory(ram_bytes, inference_memory.ram_bytes, ResourceKind::Ram)?,
+            vram_bytes: add_memory(vram_bytes, inference_memory.vram_bytes, ResourceKind::Vram)?,
+            context_tokens,
+        };
         let mut attempted = std::collections::BTreeSet::new();
         let needs_load = loop {
             if cancel.is_cancelled() {
@@ -679,17 +741,12 @@ impl ResourceScheduler {
                         && bound.context_tokens != context_tokens
                 });
                 let reuse = existing.is_some() && changed_context.is_none();
-                let request = ResourceRequest {
-                    ram_bytes: if reuse { 0 } else { ram_bytes },
-                    vram_bytes: if reuse { 0 } else { vram_bytes },
-                    context_tokens,
-                };
                 let external_usage = ResourceUsage {
                     ram_bytes: external.ram_bytes,
                     vram_bytes: external.vram_bytes,
                     active_inferences: 0,
                 };
-                self.policy.budget.admit(&external_usage, &request)?;
+                self.policy.budget.admit(&external_usage, &cold_request)?;
                 if let Some((entry, bound)) = changed_context {
                     if entry.active_inferences != 0 {
                         return Err(SchedulerError::ContextInUse {
@@ -700,6 +757,15 @@ impl ResourceScheduler {
                     }
                     break 'admission Preparation::ReloadContext;
                 }
+                let request = if reuse {
+                    ResourceRequest {
+                        ram_bytes: inference_memory.ram_bytes,
+                        vram_bytes: inference_memory.vram_bytes,
+                        context_tokens,
+                    }
+                } else {
+                    cold_request
+                };
                 let accounted = ResourceUsage {
                     ram_bytes: add_memory(
                         state.usage.ram_bytes,
@@ -786,7 +852,12 @@ impl ResourceScheduler {
                 }
                 Preparation::Evict(candidate) => {
                     attempted.insert(candidate);
-                    self.evict_model(candidate, cancel.clone()).await?;
+                    let gate = self.gate(candidate);
+                    // Another preparation may be holding this gate while selecting
+                    // our own model for eviction. Never wait for a second gate.
+                    if let Ok(_guard) = gate.try_lock() {
+                        self.evict_with_gate_held(candidate, cancel.clone()).await?;
+                    }
                 }
             }
         };
@@ -795,7 +866,7 @@ impl ResourceScheduler {
             let mut transition = TransitionGuard {
                 state: self.state.clone(),
                 model_id,
-                loading: true,
+                inference_memory: Some(inference_memory),
                 armed: true,
             };
             let explicit = provider.lifecycle_support().explicit_model_load
@@ -835,6 +906,7 @@ impl ResourceScheduler {
             model_name: model.provider_model_identifier.clone(),
             lease: Arc::new(InferenceLease {
                 id,
+                memory: inference_memory,
                 state: self.state.clone(),
                 permit,
             }),
@@ -902,7 +974,7 @@ impl ResourceScheduler {
         let mut transition = TransitionGuard {
             state: self.state.clone(),
             model_id,
-            loading: false,
+            inference_memory: None,
             armed: true,
         };
         let outcome = provider

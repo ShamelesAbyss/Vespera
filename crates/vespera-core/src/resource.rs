@@ -42,6 +42,16 @@ impl ResourceEstimate {
     }
 }
 
+/// Operator-supplied transient memory allowances for each local inference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InferenceOverhead {
+    pub ram_bytes: u64,
+    pub vram_bytes: u64,
+    pub ram_bytes_per_context_token: u64,
+    pub vram_bytes_per_context_token: u64,
+}
+
 /// User-specified arithmetic limits, not measured available hardware.
 ///
 /// Context is a per-request limit, not an aggregate across active requests.

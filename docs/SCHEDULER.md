@@ -54,11 +54,39 @@ single registration per backend for meaningful aggregate memory.
 
 ## Current limits
 
-Both estimate dimensions must be known; CPU-only models use explicit zero VRAM.
-The caller must include overhead and headroom in supplied estimates. There is
-no automatic per-request KV-cache costing, hardware discovery, continuous
-telemetry reconciliation, or automatic shutdown unloading yet. See the development log for
-checkpoint validation and the roadmap for the complete acceptance gates.
+Both estimate dimensions must be known. CPU-only models use explicit zero VRAM.
+Supply estimates for memory that can remain resident and leave room for
+system overhead. Automatic KV-cache estimation, continuous telemetry
+reconciliation and automatic shutdown unloading remain open.
+
+## Per-inference memory allowance
+
+The optional `[inference_overhead]` table supplies fixed and per-context-token
+RAM and VRAM allowances. Every field defaults to zero. The same policy applies
+to all providers composed from that configuration.
+
+```toml
+[inference_overhead]
+ram_bytes = 33554432
+ram_bytes_per_context_token = 0
+vram_bytes = 0
+vram_bytes_per_context_token = 65536
+```
+
+These values illustrate the units. Use values established for the deployed
+provider, model and concurrency limits. Each admission adds the fixed
+allowance plus the per-token allowance multiplied by the request's context
+ceiling. This charge applies during preparation and while the local lease is
+held, including model reuse. Release, cancellation and failed preparation
+return the transient allowance once. Keep memory that may remain allocated
+after local execution ends in the model estimate, including persistent KV
+allocation. The allowance does not measure backend memory or prove that
+remote computation has stopped.
+
+Scheduler telemetry includes active allowances in aggregate reserved RAM
+and VRAM. Individual model rows show the model reservation estimate. Under
+memory pressure, eviction skips candidate models whose lifecycle gate is
+already held by another operation.
 
 ## Inference lease ownership
 
@@ -114,7 +142,7 @@ An explicitly loaded reservation can be reused at the same requested context.
 A different context requires an idle reservation and an acknowledged unload
 before preload. A context change during an active local lease returns a typed
 error. Failed unloads retain the reservation. Provider-managed reservations
-continue to have unverified allocation. Supply model estimates that include
-the maximum permitted context and provider concurrency overhead.
+continue to have unverified allocation. Include any retained context allocation
+in the model estimate and account separately for transient inference overhead.
 
 The request-aware admission API accepts a validated bounded request, checks its native model name against current inventory, and admits exactly its context. A mismatch or context/budget rejection occurs before model load. Managed agents use this path after preflight; manual admission does not itself validate a future inference payload.

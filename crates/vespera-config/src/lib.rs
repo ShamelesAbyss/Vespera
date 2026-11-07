@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
 use vespera_core::{
-    AgentDefinition, AgentId, ModelDescriptor, ModelId, ModelSelectionPolicy, ProviderId,
-    ProviderKind, ResourceBudget,
+    AgentDefinition, AgentId, InferenceOverhead, ModelDescriptor, ModelId, ModelSelectionPolicy,
+    ProviderId, ProviderKind, ResourceBudget,
 };
 
 /// Maximum configuration input size, independent of the number of models.
@@ -60,6 +60,8 @@ pub struct AppConfig {
     pub network: NetworkPolicy,
     #[serde(default)]
     pub resources: ResourceBudget,
+    #[serde(default)]
+    pub inference_overhead: InferenceOverhead,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]

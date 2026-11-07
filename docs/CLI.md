@@ -68,7 +68,10 @@ This command checks all configured providers and initializes their adapters;
 
 Prepare an operator configuration with an installed provider-native model
 identifier, advertised capabilities, known RAM/VRAM estimates and appropriate
-budgets. Estimates must include context-dependent overhead and headroom. A zero
+budgets. Estimates must include retained context allocation and headroom.
+Configure temporary per-request memory in the optional
+[`[inference_overhead]` table](SCHEDULER.md#per-inference-memory-allowance).
+A zero
 VRAM estimate means an explicit CPU-only estimate; it does not force a provider
 onto the CPU. Provider setup must match the estimate. Do not infer RAM residency
 from model disk size. The shipped unknown estimates intentionally block loading.
@@ -151,7 +154,7 @@ matrix. See [PROVIDERS.md](PROVIDERS.md), [AGENTS.md](AGENTS.md),
 
 Two bounded release CLI tasks against Ollama 0.40.13 / hermes3:8b returned `OK`: native and compatible `/v1`. See the [sanitized artifact](../artifacts/live-ollama-2026-11-06.json). This is one backend/model version and nonstreaming execution, not universal compatibility or a benchmark. Native unload was acknowledged. Compatible residency was cleaned up by a separate explicit native operator request, not by the compatible adapter.
 
-A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting; scheduler context is a logical constraint rather than proof of actual backend allocation. At the recorded source checkpoint native preload could initially allocate the backend default; scheduler-driven native preload now sends the admitted context too. Estimates must account for backend behavior; external/startup allocations and per-request overhead remain unreconciled.
+A compatible task admitted at 512 tokens resulted in provider-reported context allocation of 65,536 tokens. Compatible chat has no portable allocation setting. Scheduler context bounds the local request. Native Ollama preload sends the admitted context, and compatible allocations still require independent provider evidence.
 
 ## Execute a workflow
 

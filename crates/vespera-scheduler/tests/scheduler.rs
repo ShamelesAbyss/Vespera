@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use vespera_core::ResourceEstimate;
+use vespera_core::{InferenceOverhead, ResourceEstimate};
 use vespera_core::{ModelId, ProviderId};
 use vespera_model_registry::{ModelRegistration, ModelRegistry};
 use vespera_providers::{
@@ -280,6 +280,19 @@ async fn fixture() -> (
     ModelId,
     ModelId,
 ) {
+    fixture_with_limits(100, 0, InferenceOverhead::default()).await
+}
+
+async fn fixture_with_limits(
+    ram_bytes: u64,
+    vram_bytes: u64,
+    overhead: InferenceOverhead,
+) -> (
+    Arc<vespera_scheduler::ResourceScheduler>,
+    Arc<MockProvider>,
+    ModelId,
+    ModelId,
+) {
     use std::time::Duration;
     use vespera_core::ResourceBudget;
     use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
@@ -310,19 +323,20 @@ async fn fixture() -> (
             .unwrap();
     }
     (
-        Arc::new(ResourceScheduler::new(
+        Arc::new(ResourceScheduler::new_with_overhead(
             registry,
             SchedulingPolicy {
                 queue: vespera_scheduler::QueuePolicy::default(),
                 budget: ResourceBudget {
-                    ram_bytes: 100,
-                    vram_bytes: 0,
+                    ram_bytes,
+                    vram_bytes,
                     max_concurrent_inferences: 2,
                     max_context_tokens: 512,
                 },
                 default_keep_alive: Duration::from_secs(30),
                 evict_idle_on_pressure: true,
             },
+            overhead,
         )),
         provider,
         a,
@@ -500,14 +514,65 @@ async fn concurrent_requests_wait_for_one_load_without_blocking_accounting() {
 }
 
 #[tokio::test]
+async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
+    use vespera_core::{DomainError, ResourceKind};
+    use vespera_scheduler::SchedulerError;
+
+    let overhead = InferenceOverhead {
+        ram_bytes: 10,
+        vram_bytes_per_context_token: 1,
+        ..InferenceOverhead::default()
+    };
+    for (ram, vram, resource) in [
+        (115, 512, ResourceKind::Ram),
+        (120, 511, ResourceKind::Vram),
+    ] {
+        let (scheduler, provider, model, _) = fixture_with_limits(ram, vram, overhead).await;
+        let admit = || scheduler.admit_and_prepare(model, Some(256), CancellationToken::new());
+        let first = admit().await.unwrap();
+        assert!(matches!(
+            admit().await,
+            Err(SchedulerError::BudgetExceeded(DomainError::ResourceLimitExceeded {
+                resource: actual,
+                ..
+            })) if actual == resource
+        ));
+        let usage = scheduler.usage_snapshot().await;
+        assert_eq!(
+            (usage.ram_bytes, usage.vram_bytes, usage.active_inferences),
+            (110, 256, 1)
+        );
+
+        let clone = first.clone();
+        assert!(first.release());
+        assert!(!clone.release());
+        let second = admit().await.unwrap();
+        assert!(!second.loaded_on_demand);
+        drop(second);
+        let usage = scheduler.usage_snapshot().await;
+        assert_eq!(
+            (usage.ram_bytes, usage.vram_bytes, usage.active_inferences),
+            (100, 0, 0)
+        );
+        assert_eq!(provider.loads.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.unloads.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
 async fn interrupted_load_retains_unknown_memory_and_releases_slot() {
     use vespera_scheduler::{ResidencyState, SchedulerError};
-    let (scheduler, provider, a, _) = fixture().await;
+    let overhead = InferenceOverhead {
+        ram_bytes: 20,
+        ..InferenceOverhead::default()
+    };
+    let (scheduler, provider, a, _) = fixture_with_limits(120, 0, overhead).await;
     provider.load_mode.store(4, Ordering::SeqCst);
     let s = scheduler.clone();
     let loading =
         tokio::spawn(async move { s.admit_and_prepare(a, None, CancellationToken::new()).await });
     provider.entered.notified().await;
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 120);
     loading.abort();
     assert!(loading.await.unwrap_err().is_cancelled());
     let usage = scheduler.usage_snapshot().await;

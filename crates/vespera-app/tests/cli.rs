@@ -980,7 +980,10 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     let directory = ScratchDirectory::new();
     let target = directory.0.join("observation");
     let path = target.join(SchedulerSample::FILE_NAME);
-    let config = runtime_config(&fixture, false, true);
+    let config = format!(
+        "{}\n[inference_overhead]\nram_bytes = 20\nram_bytes_per_context_token = 2\n",
+        runtime_config(&fixture, false, true)
+    );
     let output = std::thread::scope(|scope| {
         let child = scope.spawn(|| {
             run_fixture_agent(
@@ -989,6 +992,8 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
                 &[
                     "--resume",
                     "--unload-after",
+                    "--context-tokens",
+                    "512",
                     "--scheduler-telemetry",
                     target.to_str().unwrap(),
                 ],
@@ -1003,6 +1008,7 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
                 assert!(sample.is_supported());
                 if let Some(model) = sample.models.as_ref().and_then(|models| models.first()) {
                     if model.state == ReservationState::Loading {
+                        assert_eq!(sample.reserved.ram_bytes, 1144);
                         assert_eq!(model.charged_slots, 1);
                         assert_eq!(model.issued_leases, 0);
                         assert!(sample.tasks.as_ref().unwrap().is_empty());
@@ -1042,7 +1048,7 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     assert_eq!(active.schema_version, SchedulerSample::SCHEMA_VERSION);
     assert!(!active.finished);
     assert_eq!(active.admitted, 1);
-    assert_eq!(active.reserved.ram_bytes, 100);
+    assert_eq!(active.reserved.ram_bytes, 1144);
     assert_eq!(active.model_reservations, 1);
     assert_eq!(active.provider_health.healthy, 1);
     let model = active.models.as_ref().unwrap()[0];

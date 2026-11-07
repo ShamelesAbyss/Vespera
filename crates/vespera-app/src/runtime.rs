@@ -355,7 +355,7 @@ impl VesperaRuntime {
     /// Construct without network requests or model activation.
     pub async fn from_config(config: &AppConfig) -> Result<Self, RuntimeError> {
         let registry = configured_registry(config).await?;
-        let scheduler = Arc::new(ResourceScheduler::new(
+        let scheduler = Arc::new(ResourceScheduler::new_with_overhead(
             registry.clone(),
             SchedulingPolicy {
                 queue: Default::default(),
@@ -363,6 +363,7 @@ impl VesperaRuntime {
                 default_keep_alive: Duration::from_secs(300),
                 evict_idle_on_pressure: true,
             },
+            config.inference_overhead,
         ));
         let agents = AgentRuntime::new(registry.clone(), scheduler.clone());
         for agent in &config.agents {
