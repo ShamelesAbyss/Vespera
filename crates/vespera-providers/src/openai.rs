@@ -43,6 +43,8 @@ pub struct OpenAiConfig {
     pub request_timeout: Duration,
     /// Maximum idle gap between consecutive SSE chunks before aborting with `Timeout`.
     pub stream_idle_timeout: Duration,
+    /// Total lifetime limit for streaming transport, including connection and consumption.
+    pub stream_total_timeout: Duration,
 }
 
 impl OpenAiConfig {
@@ -57,6 +59,7 @@ impl OpenAiConfig {
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(60),
             stream_idle_timeout: Duration::from_secs(30),
+            stream_total_timeout: Duration::from_secs(300),
         })
     }
 }
@@ -68,6 +71,7 @@ pub struct OpenAiCompatibleProvider {
     client: reqwest::Client,
     request_timeout: Duration,
     stream_idle_timeout: Duration,
+    stream_total_timeout: Duration,
 }
 
 impl std::fmt::Debug for OpenAiCompatibleProvider {
@@ -83,6 +87,12 @@ impl std::fmt::Debug for OpenAiCompatibleProvider {
 impl OpenAiCompatibleProvider {
     /// Initializes a new [`OpenAiCompatibleProvider`].
     pub fn new(config: OpenAiConfig) -> Result<Self, ProviderError> {
+        crate::http::validate_timeouts(&[
+            config.connect_timeout,
+            config.request_timeout,
+            config.stream_idle_timeout,
+            config.stream_total_timeout,
+        ])?;
         let mut default_headers = HeaderMap::new();
         default_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -105,7 +115,9 @@ impl OpenAiCompatibleProvider {
             default_headers.insert(AUTHORIZATION, header_val);
         }
 
-        let client = reqwest::Client::builder()
+        let client = config
+            .endpoint
+            .configure_client(reqwest::Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(config.connect_timeout)
             .default_headers(default_headers)
@@ -121,6 +133,7 @@ impl OpenAiCompatibleProvider {
             client,
             request_timeout: config.request_timeout,
             stream_idle_timeout: config.stream_idle_timeout,
+            stream_total_timeout: config.stream_total_timeout,
         })
     }
 
@@ -132,116 +145,17 @@ impl OpenAiCompatibleProvider {
         model_hint: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<(Resp, u64), ProviderError> {
-        if cancel.is_cancelled() {
-            return Err(ProviderError::Cancelled {
-                provider_id: self.provider_id,
-                phase,
-            });
-        }
-
-        let started = Instant::now();
-        let timeout_dur = self.request_timeout;
-
-        let response = tokio::select! {
-            biased;
-            () = cancel.cancelled() => {
-                return Err(ProviderError::Cancelled {
-                    provider_id: self.provider_id,
-                    phase,
-                });
-            }
-            res = tokio::time::timeout(timeout_dur, request_builder.send()) => {
-                match res {
-                    Ok(Ok(resp)) => resp,
-                    Ok(Err(err)) => return Err(self.map_reqwest_error(&err, phase, started)),
-                    Err(_) => {
-                        return Err(ProviderError::Timeout {
-                            provider_id: self.provider_id,
-                            phase,
-                            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        });
-                    }
-                }
-            }
-        };
-
-        self.check_http_status(&response, model_hint).await?;
-
-        let body_bytes = tokio::select! {
-            biased;
-            () = cancel.cancelled() => {
-                return Err(ProviderError::Cancelled {
-                    provider_id: self.provider_id,
-                    phase,
-                });
-            }
-            res = tokio::time::timeout(timeout_dur, response.bytes()) => {
-                match res {
-                    Ok(Ok(bytes)) => bytes,
-                    Ok(Err(err)) => return Err(self.map_reqwest_error(&err, phase, started)),
-                    Err(_) => {
-                        return Err(ProviderError::Timeout {
-                            provider_id: self.provider_id,
-                            phase,
-                            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        });
-                    }
-                }
-            }
-        };
-
-        let parsed: Resp =
-            serde_json::from_slice(&body_bytes).map_err(|e| ProviderError::MalformedPayload {
-                provider_id: self.provider_id,
-                context,
-                reason: ProviderError::sanitize_diagnostic(&e.to_string()),
-            })?;
-
-        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        Ok((parsed, elapsed_ms))
+        crate::http::execute_json(
+            self.provider_id,
+            request_builder,
+            self.request_timeout,
+            phase,
+            context,
+            model_hint,
+            cancel,
+        )
+        .await
     }
-
-    async fn check_http_status(
-        &self,
-        response: &reqwest::Response,
-        model_hint: Option<&str>,
-    ) -> Result<(), ProviderError> {
-        let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-
-        let code = status.as_u16();
-        if status.is_redirection() {
-            return Err(ProviderError::TransportPolicyViolation {
-                provider_id: self.provider_id,
-                reason: format!("HTTP redirect (status {code}) is forbidden by transport policy"),
-            });
-        }
-
-        if code == 401 || code == 403 {
-            return Err(ProviderError::AuthenticationFailed {
-                provider_id: self.provider_id,
-                status_code: code,
-            });
-        }
-
-        if code == 404
-            && let Some(model_name) = model_hint
-        {
-            return Err(ProviderError::ModelNotFound {
-                provider_id: self.provider_id,
-                model_name: model_name.to_string(),
-            });
-        }
-
-        Err(ProviderError::HttpStatus {
-            provider_id: self.provider_id,
-            status_code: code,
-            sanitized_summary: format!("unexpected HTTP status {code}"),
-        })
-    }
-
     fn map_reqwest_error(
         &self,
         err: &reqwest::Error,
@@ -425,7 +339,7 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                         reason: "response contained zero choices".to_string(),
                     })?;
 
-            let content = choice.message.content;
+            let content = choice.message.content.unwrap_or_default();
             let finish_reason =
                 map_finish_reason(choice.finish_reason.as_deref().unwrap_or("unknown"));
             let metrics = InferenceMetrics {
@@ -476,7 +390,7 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                         phase: "infer_stream_connect",
                     });
                 }
-                res = tokio::time::timeout(self.request_timeout, req.send()) => {
+                res = tokio::time::timeout(self.request_timeout.min(self.stream_total_timeout), req.send()) => {
                     match res {
                         Ok(Ok(resp)) => resp,
                         Ok(Err(err)) => return Err(self.map_reqwest_error(&err, "infer_stream_connect", started)),
@@ -491,8 +405,7 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                 }
             };
 
-            self.check_http_status(&response, Some(request.model_name()))
-                .await?;
+            crate::http::check_status(self.provider_id, &response, Some(request.model_name()))?;
 
             let byte_stream = response.bytes_stream();
             let provider_id = self.provider_id;
@@ -507,6 +420,8 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                     idle_timeout,
                     started,
                     finished: false,
+                    deadline: started + self.stream_total_timeout,
+                    received_bytes: 0,
                     event_data: String::new(),
                     finish_reason: None,
                     usage: None,
@@ -545,6 +460,8 @@ struct SseStreamState<S> {
     idle_timeout: Duration,
     started: Instant,
     finished: bool,
+    deadline: Instant,
+    received_bytes: usize,
     finish_reason: Option<InferenceFinishReason>,
     usage: Option<OpenAiUsage>,
 }
@@ -562,6 +479,14 @@ where
     }
     async fn next_chunk(&mut self) -> Result<Option<StreamChunk>, ProviderError> {
         loop {
+            if Instant::now() >= self.deadline {
+                return Err(ProviderError::Timeout {
+                    provider_id: self.provider_id,
+                    phase: "stream_total",
+                    elapsed_ms: u64::try_from(self.started.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                });
+            }
             if self.cancel.is_cancelled() {
                 return Err(ProviderError::Cancelled {
                     provider_id: self.provider_id,
@@ -606,13 +531,17 @@ where
             let next_bytes = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => return Err(ProviderError::Cancelled { provider_id: self.provider_id, phase: "sse_stream_chunk" }),
-                result = tokio::time::timeout(self.idle_timeout, self.byte_stream.next()) => match result {
+                result = tokio::time::timeout_at(self.deadline.min(chunk_start + self.idle_timeout), self.byte_stream.next()) => match result {
                     Ok(Some(Ok(bytes))) => bytes,
                     Ok(Some(Err(error))) => return Err(ProviderError::ConnectionFailed { provider_id: self.provider_id, sanitized_message: ProviderError::sanitize_diagnostic(&error.to_string()) }),
                     Ok(None) => return Err(ProviderError::StreamInterrupted { provider_id: self.provider_id, reason: "SSE stream ended before [DONE] event".into() }),
-                    Err(_) => return Err(ProviderError::Timeout { provider_id: self.provider_id, phase: "sse_stream_chunk", elapsed_ms: u64::try_from(chunk_start.elapsed().as_millis()).unwrap_or(u64::MAX) }),
+                    Err(_) => return Err(ProviderError::Timeout { provider_id: self.provider_id, phase: if Instant::now() >= self.deadline { "stream_total" } else { "sse_stream_chunk" }, elapsed_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX) }),
                 },
             };
+            if next_bytes.len() > crate::http::MAX_STREAM_BYTES - self.received_bytes {
+                return Err(self.malformed("stream exceeded sixteen MiB aggregate limit"));
+            }
+            self.received_bytes += next_bytes.len();
             self.buffer.extend_from_slice(&next_bytes);
         }
     }
@@ -665,7 +594,6 @@ fn map_finish_reason(reason: &str) -> InferenceFinishReason {
 
 #[derive(Deserialize)]
 struct OpenAiModelsResponse {
-    #[serde(default)]
     data: Vec<OpenAiModelItem>,
 }
 
@@ -707,7 +635,7 @@ struct OpenAiChatResponse {
 
 #[derive(Deserialize)]
 struct OpenAiChoice {
-    message: ChatMessage,
+    message: crate::http::ResponseMessage,
     finish_reason: Option<String>,
 }
 

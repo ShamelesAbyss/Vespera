@@ -41,6 +41,8 @@ pub struct OllamaConfig {
     pub request_timeout: Duration,
     /// Maximum idle gap between consecutive streaming chunks before aborting with `Timeout`.
     pub stream_idle_timeout: Duration,
+    /// Total lifetime limit for streaming transport, including connection and consumption.
+    pub stream_total_timeout: Duration,
 }
 
 impl OllamaConfig {
@@ -55,6 +57,7 @@ impl OllamaConfig {
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(60),
             stream_idle_timeout: Duration::from_secs(30),
+            stream_total_timeout: Duration::from_secs(300),
         })
     }
 }
@@ -66,6 +69,7 @@ pub struct OllamaProvider {
     client: reqwest::Client,
     request_timeout: Duration,
     stream_idle_timeout: Duration,
+    stream_total_timeout: Duration,
 }
 
 impl std::fmt::Debug for OllamaProvider {
@@ -82,6 +86,12 @@ impl std::fmt::Debug for OllamaProvider {
 impl OllamaProvider {
     /// Initializes a new [`OllamaProvider`], enforcing redirect prohibition and resolving any configured secret.
     pub fn new(config: OllamaConfig) -> Result<Self, ProviderError> {
+        crate::http::validate_timeouts(&[
+            config.connect_timeout,
+            config.request_timeout,
+            config.stream_idle_timeout,
+            config.stream_total_timeout,
+        ])?;
         let mut default_headers = HeaderMap::new();
 
         let resolved_secret = match (config.pre_resolved_secret, config.auth_secret_ref) {
@@ -104,7 +114,9 @@ impl OllamaProvider {
         }
 
         // Security invariant: redirects are strictly disabled to prevent SSRF and credential leakage.
-        let client = reqwest::Client::builder()
+        let client = config
+            .endpoint
+            .configure_client(reqwest::Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(config.connect_timeout)
             .default_headers(default_headers)
@@ -120,6 +132,7 @@ impl OllamaProvider {
             client,
             request_timeout: config.request_timeout,
             stream_idle_timeout: config.stream_idle_timeout,
+            stream_total_timeout: config.stream_total_timeout,
         })
     }
 
@@ -131,116 +144,17 @@ impl OllamaProvider {
         model_hint: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<(Resp, u64), ProviderError> {
-        if cancel.is_cancelled() {
-            return Err(ProviderError::Cancelled {
-                provider_id: self.provider_id,
-                phase,
-            });
-        }
-
-        let started = Instant::now();
-        let timeout_dur = self.request_timeout;
-
-        let response = tokio::select! {
-            biased;
-            () = cancel.cancelled() => {
-                return Err(ProviderError::Cancelled {
-                    provider_id: self.provider_id,
-                    phase,
-                });
-            }
-            res = tokio::time::timeout(timeout_dur, request_builder.send()) => {
-                match res {
-                    Ok(Ok(resp)) => resp,
-                    Ok(Err(err)) => return Err(self.map_reqwest_error(&err, phase, started)),
-                    Err(_) => {
-                        return Err(ProviderError::Timeout {
-                            provider_id: self.provider_id,
-                            phase,
-                            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        });
-                    }
-                }
-            }
-        };
-
-        self.check_http_status(&response, model_hint)?;
-
-        let body_bytes = tokio::select! {
-            biased;
-            () = cancel.cancelled() => {
-                return Err(ProviderError::Cancelled {
-                    provider_id: self.provider_id,
-                    phase,
-                });
-            }
-            res = tokio::time::timeout(timeout_dur, response.bytes()) => {
-                match res {
-                    Ok(Ok(bytes)) => bytes,
-                    Ok(Err(err)) => return Err(self.map_reqwest_error(&err, phase, started)),
-                    Err(_) => {
-                        return Err(ProviderError::Timeout {
-                            provider_id: self.provider_id,
-                            phase,
-                            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        });
-                    }
-                }
-            }
-        };
-
-        let parsed: Resp =
-            serde_json::from_slice(&body_bytes).map_err(|e| ProviderError::MalformedPayload {
-                provider_id: self.provider_id,
-                context,
-                reason: ProviderError::sanitize_diagnostic(&e.to_string()),
-            })?;
-
-        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        Ok((parsed, elapsed_ms))
+        crate::http::execute_json(
+            self.provider_id,
+            request_builder,
+            self.request_timeout,
+            phase,
+            context,
+            model_hint,
+            cancel,
+        )
+        .await
     }
-
-    fn check_http_status(
-        &self,
-        response: &reqwest::Response,
-        model_hint: Option<&str>,
-    ) -> Result<(), ProviderError> {
-        let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-
-        let code = status.as_u16();
-        if status.is_redirection() {
-            return Err(ProviderError::TransportPolicyViolation {
-                provider_id: self.provider_id,
-                reason: format!("HTTP redirect (status {code}) is forbidden by transport policy"),
-            });
-        }
-
-        if code == 401 || code == 403 {
-            return Err(ProviderError::AuthenticationFailed {
-                provider_id: self.provider_id,
-                status_code: code,
-            });
-        }
-
-        if code == 404
-            && let Some(model_name) = model_hint
-        {
-            return Err(ProviderError::ModelNotFound {
-                provider_id: self.provider_id,
-                model_name: model_name.to_string(),
-            });
-        }
-
-        Err(ProviderError::HttpStatus {
-            provider_id: self.provider_id,
-            status_code: code,
-            sanitized_summary: format!("unexpected HTTP status {code}"),
-        })
-    }
-
     fn map_reqwest_error(
         &self,
         err: &reqwest::Error,
@@ -511,7 +425,7 @@ impl InferenceProvider for OllamaProvider {
 
             let finish_reason = map_done_reason(resp.done_reason.as_deref());
             let metrics = build_metrics(elapsed_ms, &resp);
-            let content = resp.message.map(|m| m.content).unwrap_or_default();
+            let content = resp.message.and_then(|m| m.content).unwrap_or_default();
 
             Ok(InferenceResponse {
                 provider_id: self.provider_id,
@@ -549,7 +463,7 @@ impl InferenceProvider for OllamaProvider {
                         phase: "infer_stream_connect",
                     });
                 }
-                res = tokio::time::timeout(self.request_timeout, req.send()) => {
+                res = tokio::time::timeout(self.request_timeout.min(self.stream_total_timeout), req.send()) => {
                     match res {
                         Ok(Ok(resp)) => resp,
                         Ok(Err(err)) => return Err(self.map_reqwest_error(&err, "infer_stream_connect", started)),
@@ -564,7 +478,7 @@ impl InferenceProvider for OllamaProvider {
                 }
             };
 
-            self.check_http_status(&response, Some(request.model_name()))?;
+            crate::http::check_status(self.provider_id, &response, Some(request.model_name()))?;
 
             let byte_stream = response.bytes_stream();
             let provider_id = self.provider_id;
@@ -579,6 +493,8 @@ impl InferenceProvider for OllamaProvider {
                     idle_timeout,
                     started,
                     finished: false,
+                    deadline: started + self.stream_total_timeout,
+                    received_bytes: 0,
                 },
                 |mut state| async move {
                     if state.finished {
@@ -654,6 +570,8 @@ struct NdjsonStreamState<S> {
     idle_timeout: Duration,
     started: Instant,
     finished: bool,
+    deadline: Instant,
+    received_bytes: usize,
 }
 
 impl<S> NdjsonStreamState<S>
@@ -662,6 +580,14 @@ where
 {
     async fn next_chunk(&mut self) -> Result<Option<StreamChunk>, ProviderError> {
         loop {
+            if Instant::now() >= self.deadline {
+                return Err(ProviderError::Timeout {
+                    provider_id: self.provider_id,
+                    phase: "stream_total",
+                    elapsed_ms: u64::try_from(self.started.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                });
+            }
             if self.cancel.is_cancelled() {
                 return Err(ProviderError::Cancelled {
                     provider_id: self.provider_id,
@@ -702,7 +628,7 @@ where
                         phase: "stream_chunk",
                     });
                 }
-                res = tokio::time::timeout(self.idle_timeout, self.byte_stream.next()) => {
+                res = tokio::time::timeout_at(self.deadline.min(chunk_start + self.idle_timeout), self.byte_stream.next()) => {
                     match res {
                         Ok(Some(Ok(bytes))) => Some(bytes),
                         Ok(Some(Err(err))) => {
@@ -715,7 +641,7 @@ where
                         Err(_) => {
                             return Err(ProviderError::Timeout {
                                 provider_id: self.provider_id,
-                                phase: "stream_chunk",
+                                phase: if Instant::now() >= self.deadline { "stream_total" } else { "stream_chunk" },
                                 elapsed_ms: u64::try_from(chunk_start.elapsed().as_millis()).unwrap_or(u64::MAX),
                             });
                         }
@@ -725,6 +651,14 @@ where
 
             match next_bytes {
                 Some(bytes) => {
+                    if bytes.len() > crate::http::MAX_STREAM_BYTES - self.received_bytes {
+                        return Err(ProviderError::MalformedPayload {
+                            provider_id: self.provider_id,
+                            context: "ndjson_stream",
+                            reason: "stream exceeded sixteen MiB aggregate limit".into(),
+                        });
+                    }
+                    self.received_bytes += bytes.len();
                     self.buffer.extend_from_slice(&bytes);
                 }
                 None => {
@@ -778,7 +712,7 @@ where
         } else {
             None
         };
-        let delta = frame.message.map(|m| m.content).unwrap_or_default();
+        let delta = frame.message.and_then(|m| m.content).unwrap_or_default();
 
         Ok(StreamChunk {
             delta,
@@ -842,7 +776,6 @@ struct OllamaVersionResponse {
 
 #[derive(Deserialize)]
 struct OllamaTagsResponse {
-    #[serde(default)]
     models: Vec<OllamaTagModel>,
 }
 
@@ -877,7 +810,6 @@ struct OllamaShowResponse {
 
 #[derive(Deserialize)]
 struct OllamaPsResponse {
-    #[serde(default)]
     models: Vec<OllamaPsModel>,
 }
 
@@ -941,7 +873,7 @@ impl<'a> OllamaChatRequest<'a> {
 #[derive(Deserialize)]
 struct OllamaChatFrame {
     #[serde(default)]
-    message: Option<ChatMessage>,
+    message: Option<crate::http::ResponseMessage>,
     #[serde(default)]
     done: bool,
     #[serde(default)]
@@ -977,6 +909,8 @@ mod stream_limits {
             idle_timeout: Duration::from_secs(1),
             started: Instant::now(),
             finished: false,
+            deadline: Instant::now() + Duration::from_secs(1),
+            received_bytes: 0,
         };
         assert!(matches!(
             state.next_chunk().await,

@@ -32,13 +32,20 @@ a successful result or a verified capability declaration.
 ## Bounded request and stream behavior
 
 `BoundedInferenceRequest::new` validates nonempty model/messages, output-token
-limits, a context ceiling, and finite optional temperature. Ollama receives its
+limits, a context ceiling, finite optional temperature, a 512-byte model name,
+at most 256 messages, and at most one MiB of combined message content.
+Deserialization uses the same validation and rejects unknown request/message
+fields. Ingress transports must still bound serialized input before decoding it.
+Ollama receives its
 native context option. The OpenAI-compatible protocol has no portable context
 allocation field; the scheduler must enforce its own declared context ceiling.
 The provider is still responsible for actually honoring generation limits.
 
-Both adapters expose connection/request/stream-idle timeouts and cooperative
-cancellation. Cancellation stops local I/O/consumption; it does not prove remote
+Both adapters expose connection/request/stream-idle/stream-total timeouts and
+cooperative cancellation. All durations must be positive and at most one hour.
+The JSON deadline covers connection, headers and body together (default 60 seconds).
+Streaming has a separate absolute lifetime (default five minutes) in addition to
+the idle bound (default 30 seconds). Cancellation stops local I/O/consumption; it does not prove remote
 compute stopped. Non-streaming Ollama responses must be terminal. OpenAI SSE
 supports CRLF, comments/ignored event fields, multiline data, trailing usage and
 TCP fragmentation. Finish reasons are retained until `[DONE]`; EOF without it is
@@ -46,10 +53,11 @@ an interruption. Missing finish reason stays unknown rather than becoming an
 invented natural stop.
 
 NDJSON lines and SSE lines/events have 256-KiB bounds, including already complete
-newline-terminated lines. This is not yet a total response or total stream budget:
-aggregate JSON-body size, whole-request deadlines, aggregate stream limits, and
-connection-boundary policy need further hardening before claiming the complete
-transport acceptance gate.
+newline-terminated lines. JSON response bodies are capped at eight MiB, checked
+both against declared content length and incrementally while reading. Streams
+have a sixteen-MiB aggregate wire-body limit, including ignored keep-alives.
+Periodic small chunks cannot extend the absolute stream deadline. Unrelated JSON
+objects cannot become healthy model lists or empty residency measurements.
 
 ## Resource observations and lifecycle
 
@@ -71,11 +79,14 @@ process's accounting.
 `ValidatedEndpoint` defaults to loopback-only HTTP/HTTPS. URL credentials, query
 strings and fragments are rejected. Remote HTTPS requires explicit
 `EndpointPolicy.allow_remote_https`; remote plaintext HTTP additionally requires
-`allow_insecure_remote_http`. Redirects are prohibited in both clients. Further
-connection-boundary DNS/proxy enforcement remains pending; offline endpoint
-validation alone is not that guarantee.
+`allow_insecure_remote_http`. Redirects are prohibited in both clients. Clients
+disable inherited proxies and pin `localhost` resolution to literal IPv4/IPv6
+loopback addresses, preserving the configured port and HTTP/TLS hostname.
+Literal loopback endpoints need no DNS. Other DNS names require remote opt-in;
+proxy transport is not currently configurable.
 
-Library configs accept an environment credential reference or a pre-resolved
+Library configs accept a case-preserving environment credential reference
+(`[A-Za-z_][A-Za-z0-9_]*`, at most 128 bytes) or a pre-resolved
 `SecretString`. Secret wrappers redact formatting and authorization headers are
 marked sensitive. Arbitrary upstream diagnostic text is suppressed rather than
 passed through incomplete token heuristics; typed errors retain provider ID,
@@ -105,7 +116,9 @@ residency correctness or end-to-end agent execution.
 Fixture coverage includes enumeration/lifecycle, advertised metadata, telemetry
 arithmetic, bounded payload fields, endpoint prefixes, streaming framing and
 completion, malformed/oversized data, cancellation, idle timeout, redirects,
-auth errors and diagnostic suppression. None of this establishes a live
+auth errors, diagnostic suppression, request deserialization, aggregate bounds,
+whole deadlines and proxy isolation using subprocess-local environment fixtures.
+None of this establishes a live
 compatibility matrix for Ollama, LM Studio, llama.cpp, vLLM or hosted services.
 
 **Bionic remains blocked** on exact product, version, deployment and authoritative

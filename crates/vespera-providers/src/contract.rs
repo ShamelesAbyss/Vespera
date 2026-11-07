@@ -222,6 +222,7 @@ pub enum ChatRole {
 
 /// Single message in an inference conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChatMessage {
     /// Participant role.
     pub role: ChatRole,
@@ -231,6 +232,7 @@ pub struct ChatMessage {
 
 /// Validated, resource-bounded inference request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawBoundedInferenceRequest")]
 pub struct BoundedInferenceRequest {
     /// Target provider-specific model name.
     model_name: String,
@@ -246,6 +248,30 @@ pub struct BoundedInferenceRequest {
     keep_alive_secs: Option<u64>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBoundedInferenceRequest {
+    model_name: String,
+    messages: Vec<ChatMessage>,
+    max_output_tokens: u32,
+    context_window_limit: u32,
+    temperature: Option<f32>,
+    keep_alive_secs: Option<u64>,
+}
+impl TryFrom<RawBoundedInferenceRequest> for BoundedInferenceRequest {
+    type Error = ProviderError;
+    fn try_from(raw: RawBoundedInferenceRequest) -> Result<Self, Self::Error> {
+        Self::new(
+            raw.model_name,
+            raw.messages,
+            raw.max_output_tokens,
+            raw.context_window_limit,
+            raw.temperature,
+            raw.keep_alive_secs,
+        )
+    }
+}
+
 impl BoundedInferenceRequest {
     /// Constructs and validates a bounded inference request.
     pub fn new(
@@ -257,6 +283,24 @@ impl BoundedInferenceRequest {
         keep_alive_secs: Option<u64>,
     ) -> Result<Self, ProviderError> {
         let model_name = model_name.into();
+        if model_name.len() > 512 || messages.len() > 256 {
+            return Err(ProviderError::RequestValidation {
+                reason: "model name exceeds 512 bytes or conversation exceeds 256 messages".into(),
+            });
+        }
+        let mut input_bytes = 0usize;
+        for message in &messages {
+            input_bytes = input_bytes
+                .checked_add(message.content.len())
+                .ok_or_else(|| ProviderError::RequestValidation {
+                    reason: "conversation byte count overflow".into(),
+                })?;
+            if input_bytes > 1024 * 1024 {
+                return Err(ProviderError::RequestValidation {
+                    reason: "conversation exceeds one MiB of content".into(),
+                });
+            }
+        }
         if model_name.trim().is_empty() {
             return Err(ProviderError::RequestValidation {
                 reason: "model_name must not be empty".to_string(),

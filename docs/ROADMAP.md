@@ -5,7 +5,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | Milestone | Current status and remaining evidence |
 | --- | --- |
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
-| 2: provider contract and Ollama | Adapter and discovered offline protocol fixtures pass; framing, terminal completion, metadata and residency arithmetic hardened. Whole-transport bounds/policy and live-version interoperability remain. |
+| 2: provider contract and Ollama | Adapter and offline protocol/transport fixtures pass; framing, completion, metadata, residency arithmetic, aggregate bounds, whole deadlines and direct loopback transport implemented. Live-version interoperability remains unverified. |
 | 3: additional providers | OpenAI-compatible SSE/payload/prefix/auth/error fixtures pass. Live engine compatibility remains unverified. Bionic blocked on exact product/version and authoritative protocol. |
 | 4: registry | In-process identity/update/removal and effective-health behavior implemented with deterministic expiry, recovery, timeout, cancellation and stale-result fencing tests. Live provider interoperability and continuous application polling remain unverified/unwired. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |

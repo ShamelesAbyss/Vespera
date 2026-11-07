@@ -1,7 +1,7 @@
 //! Transport security policy, endpoint validation, and secret redaction primitives.
 
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use url::Url;
 
 use crate::core_bridge::ProviderId;
@@ -80,7 +80,7 @@ impl ValidatedEndpoint {
             });
         }
 
-        if raw_url.contains(":0/") || raw_url.ends_with(":0") {
+        if parsed.port() == Some(0) {
             return Err(ProviderError::TransportPolicyViolation {
                 provider_id,
                 reason: "port 0 is forbidden".to_string(),
@@ -170,6 +170,30 @@ impl ValidatedEndpoint {
     pub const fn is_loopback(&self) -> bool {
         self.is_loopback
     }
+
+    /// Enforce direct transport and pin the only permitted loopback hostname.
+    /// Literal loopback IPs need no DNS; remote DNS is allowed only by parse-time opt-in.
+    pub(crate) fn configure_client(
+        &self,
+        builder: reqwest::ClientBuilder,
+    ) -> reqwest::ClientBuilder {
+        let builder = builder.no_proxy();
+        if self
+            .url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("localhost"))
+        {
+            builder.resolve_to_addrs(
+                "localhost",
+                &[
+                    SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                    SocketAddr::from((Ipv6Addr::LOCALHOST, 0)),
+                ],
+            )
+        } else {
+            builder
+        }
+    }
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -190,7 +214,7 @@ pub struct SecretRef {
 }
 
 impl SecretRef {
-    /// Validates and constructs an environment variable reference (`[A-Z_][A-Z0-9_]*`).
+    /// Validates an environment reference (`[A-Za-z_][A-Za-z0-9_]*`), preserving case.
     pub fn new(
         provider_id: ProviderId,
         env_var_name: impl Into<String>,
@@ -198,16 +222,15 @@ impl SecretRef {
         let name = env_var_name.into();
         let valid = !name.is_empty()
             && name.len() <= 128
-            && name
-                .bytes()
-                .enumerate()
-                .all(|(i, b)| b.is_ascii_uppercase() || b == b'_' || (i > 0 && b.is_ascii_digit()));
+            && name.bytes().enumerate().all(|(i, b)| {
+                b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit())
+            });
 
         if !valid {
             return Err(ProviderError::SecretResolutionFailed {
                 provider_id,
                 env_var: "<invalid-identifier>".to_string(),
-                reason: "environment variable name must match [A-Z_][A-Z0-9_]*".to_string(),
+                reason: "environment variable name must match [A-Za-z_][A-Za-z0-9_]*".to_string(),
             });
         }
         Ok(Self { env_var_name: name })

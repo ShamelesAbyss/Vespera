@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-11-06 — Bounded transport and validated request deserialization
+
+Previous verified checkpoint: `497c924b6130b39880c2ed26df6ef7c5f7164a1e`, pushed to the recovery branch.
+
+Provider JSON operations now share a transport helper with an eight-MiB response cap and one absolute request deadline across connection, headers and body. Declared and undeclared body lengths are bounded incrementally. Streaming has a sixteen-MiB aggregate wire-body cap and a separate absolute lifetime (default five minutes), so keep-alive traffic cannot evade the existing idle timeout. Timeout settings are positive and at most one hour. A provider response message DTO accepts extra server fields while retaining only public content; request messages remain strict. Required enumeration/residency arrays prevent unrelated JSON from fabricating health or empty measurements.
+
+Both clients disable inherited proxy settings and pin `localhost` to literal IPv4/IPv6 loopback addresses while preserving the configured port/hostname. The validated local-only endpoint cannot escape through system DNS or proxy inheritance; remote DNS remains explicit opt-in and redirects remain disabled. Port-zero validation now checks the parsed port rather than matching arbitrary URL path text. Credential references preserve valid mixed/lower-case names in agreement with configuration parsing.
+
+`BoundedInferenceRequest` deserialization now calls its validated constructor. Unknown fields, invalid generation/context/temperature settings, model names over 512 bytes, conversations over 256 messages or one MiB of combined content are rejected before transport. Ingress must still bound serialized data before decoding it; these limits do not supply a tokenizer or prove prompt fit.
+
+New tests exercise constructor/deserialization parity, declared/streamed response caps, shared header/body deadlines, continuous keep-alives, aggregate small-frame limits, unrelated JSON and proxy isolation. Proxy tests set environment variables only on child processes, with no unsafe process-global mutation. Validation passed: 31 offline provider tests and 115 full-workspace tests, with the single live Ollama health test ignored; formatting, all-target check, strict workspace Clippy, rustdoc and optimized workspace build also passed.
+
+Remaining limitations: no live provider/version matrix, no vendor-specific context/tokenizer guarantee for compatible endpoints, no automatic telemetry reconciliation or OS credential store. The next integration task is bounded actual inference through owned agent task execution.
+
 ## 2026-11-06 — Discovered provider fixtures and truthful protocol completion
 
 Previous verified checkpoint: `f98c8d6f1a392898669b5f1146ece916b2ed4cc5`, pushed to the recovery branch.

@@ -9,6 +9,7 @@
 
 pub mod contract;
 pub mod error;
+mod http;
 pub mod ollama;
 pub mod openai;
 pub mod policy;
