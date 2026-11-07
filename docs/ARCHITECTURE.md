@@ -31,6 +31,7 @@ flowchart TD
     SDK[vespera-sdk] --> Core
     View[vespera-view] --> Core
     View -. graphics feature .-> SDK
+    View -. graphics feature .-> World
     App --> World[vespera-world]
     World --> Core
     Orchestrator[vespera-orchestrator] --> Agents
@@ -62,7 +63,7 @@ flowchart TD
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-api` | Bounded HTTP service with role-separated credentials, fenced task attempts and optional TLS |
 | `vespera-sdk` | Async client for v2 operator and worker actions, scoped event replay and WebSocket subscriptions |
-| `vespera-view` | Bounded event projection and optional Bevy window with task and worker picking |
+| `vespera-view` | Optional Bevy orchestration and simulation modes with picking, inspection and backend controls |
 | `vespera-world` | Deterministic simulation domain and SQLite state independent of graphics and providers |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |

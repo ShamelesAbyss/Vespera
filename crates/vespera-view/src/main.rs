@@ -1,6 +1,8 @@
 mod scene;
+mod world_scene;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -12,12 +14,18 @@ use vespera_sdk::{
 };
 
 #[derive(Parser)]
-#[command(about = "Vespera native 3D orchestration view")]
+#[command(about = "Vespera native 3D orchestration and simulation")]
 struct Options {
     #[arg(long, default_value = "127.0.0.1:8765")]
     broker: SocketAddr,
     #[arg(long)]
     allow_cancel: bool,
+    /// Open a persistent simulation world instead of the broker view.
+    #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
+    world: Option<PathBuf>,
+    /// Allow the World Mode window to commit simulation controls.
+    #[arg(long, requires = "world")]
+    allow_world_control: bool,
 }
 
 enum Update {
@@ -29,6 +37,15 @@ enum Update {
 
 fn main() -> ExitCode {
     let options = Options::parse();
+    if let Some(path) = options.world {
+        return match world_scene::run(path, options.allow_world_control) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let Ok(key) = std::env::var("VESPERA_OPERATOR_TOKEN") else {
         eprintln!("Set VESPERA_OPERATOR_TOKEN to the broker operator signing key.");
         return ExitCode::FAILURE;

@@ -241,7 +241,13 @@ cargo run --locked -p vespera-app -- world --database data/world.sqlite3 inspect
 
 The specification sets a seed, grid dimensions of 2 to 64 cells per axis, one depot, 1 to 32 residents and up to 64 resource sites. Roles are `forager` and `builder`. Seed and tick determine a rotating resident turn order. Foragers gather from the nearest stocked site, carry up to four units and deliver to the depot. Builders spend six depot units per shelter. Active residents within one cell of each other accumulate encounter counts. Sites regenerate per tick. [Example world specification](../config/world.example.json)
 
-Logical ticks are independent of wall time. A control increments the revision without advancing the tick. Controls reject stale revisions, and an inactive resident stays in place while the rest of the world advances. Public snapshots omit resident memories. The local database is operator-owned and its filesystem permissions govern access. Model-driven resident actions and the graphical world mode remain in development.
+Logical ticks are independent of wall time. A control increments the revision without advancing the tick. Controls reject stale revisions, and an inactive resident stays in place while the rest of the world advances. Public snapshots omit resident memories. The local database is operator-owned and its filesystem permissions govern access. Model-driven resident actions remain in development.
+
+### Graphical world controls
+
+Launch `cargo run --locked -p vespera-view --features graphics -- --world data/world.sqlite3` after initialization. The window is read-only by default and reads committed state from the same database used by the headless CLI. Changes from another local process appear on refresh. Append `--allow-world-control` to enable writes. Space commits a tick and P toggles one requested tick every half second while the database keeps up. A failed storage operation stops playback. The UI uses the last observed revision for writes and reports stale controls.
+
+Left-click a capsule to inspect the resident's role, goal, activity, position, inventory and encounter counts. Green cylinders show resource sites. The depot block reflects the number of shelters, with its display height capped at 20 shelters. Residents on occupied cells use display offsets to remain visible. The inspector reports their actual grid coordinates and counts. Encounter links appear for the selected resident. Press Enter to toggle its activity or use IJKL for a one-cell move. The graphical view omits resident memories.
 
 ## External worker service
 

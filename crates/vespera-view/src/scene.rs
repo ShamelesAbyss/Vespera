@@ -42,7 +42,7 @@ struct Palette {
 struct Inspector;
 
 #[derive(Component)]
-struct Orbit {
+pub(super) struct Orbit {
     focus: Vec3,
     yaw: f32,
     pitch: f32,
@@ -60,9 +60,39 @@ impl Default for Orbit {
     }
 }
 
+impl Orbit {
+    pub(super) fn with_distance(distance: f32) -> Self {
+        Self {
+            distance,
+            ..default()
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(super) struct CameraFocus {
+    pub point: Option<Vec3>,
+    pub home_distance: f32,
+}
+
+pub(super) fn desktop(title: &str, clear: Color) -> App {
+    let mut app = App::new();
+    app.insert_resource(ClearColor(clear)).add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: title.into(),
+                resolution: (1200, 800).into(),
+                ..default()
+            }),
+            ..default()
+        }),
+        MeshPickingPlugin,
+    ));
+    app
+}
+
 pub fn run(updates: mpsc::Receiver<BrokerUpdate>, cancel: Option<mpsc::Sender<TaskId>>) {
-    App::new()
-        .insert_resource(ClearColor(Color::srgb(0.035, 0.055, 0.09)))
+    desktop("Vespera | Orchestration", Color::srgb(0.035, 0.055, 0.09))
         .insert_resource(Connection {
             updates,
             cancel,
@@ -70,21 +100,22 @@ pub fn run(updates: mpsc::Receiver<BrokerUpdate>, cancel: Option<mpsc::Sender<Ta
         })
         .init_resource::<Scene>()
         .init_resource::<Selection>()
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Vespera | Orchestration".into(),
-                    resolution: (1200, 800).into(),
-                    ..default()
-                }),
-                ..default()
-            }),
-            MeshPickingPlugin,
-        ))
+        .insert_resource(CameraFocus {
+            point: None,
+            home_distance: 17.0,
+        })
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (receive, sync_scene, camera, draw_links, inspect).chain(),
+            (
+                receive,
+                sync_scene,
+                focus_selection,
+                camera,
+                draw_links,
+                inspect,
+            )
+                .chain(),
         )
         .run();
 }
@@ -287,21 +318,24 @@ fn draw_links(scene: Res<Scene>, mut gizmos: Gizmos) {
     }
 }
 
-fn camera(
+fn focus_selection(graph: Res<Scene>, selection: Res<Selection>, mut focus: ResMut<CameraFocus>) {
+    focus.point = selection.0.and_then(|key| position(key, &graph.graph));
+}
+
+pub(super) fn camera(
     mut camera: Single<(&mut Orbit, &mut Transform)>,
     (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
-    graph: Res<Scene>,
-    selection: Res<Selection>,
+    focus: Res<CameraFocus>,
 ) {
     let (orbit, transform) = &mut *camera;
     if keys.just_pressed(KeyCode::KeyR) {
-        **orbit = Orbit::default();
+        **orbit = Orbit::with_distance(focus.home_distance);
     }
     if keys.just_pressed(KeyCode::KeyF)
-        && let Some(focus) = selection.0.and_then(|key| position(key, &graph.graph))
+        && let Some(focus) = focus.point
     {
         orbit.focus = focus;
         orbit.distance = 9.0;

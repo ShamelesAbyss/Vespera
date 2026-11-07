@@ -14,8 +14,8 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 8: memory | Authorized SQLite library with FTS, lineage, quotas, transactional initialization and process-exit recovery tested; real agent adapter/rebind/reopen verified. Offline CLI initialization/inspection/write/consolidation/deletion verified across processes. Opt-in retrieval and generated-result persistence verified through single-agent inference. Backup, restore and durable task sources remain. See [MEMORY.md](MEMORY.md). |
 | 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
 | 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls and scoped events. Optional SQLite recovers work, revocations and feeds. Opt-in TLS 1.3 supports remote binding. Cross-host deployment and broader authorized messaging remain. |
-| 11: simulation | Persistent deterministic grid engine and native CLI run foragers, builders, shared stock, shelters, encounters and owned action memories. Subprocess tests cover reproducibility and revision fences. Model-driven resident actions and graphical integration remain. |
-| 12: 3D command center | The optional Bevy executable projects real broker task and worker events into a selectable 3D graph with camera and cancellation controls. Full orchestration telemetry, World Simulation Mode and hardware validation remain release gates. |
+| 11: simulation | Persistent deterministic world, native CLI and graphical inspection and controls are integrated. Subprocess tests cover reproducibility and revision fences. Model-driven resident actions remain. |
+| 12: 3D command center | The optional Bevy executable opens an observed broker graph or a persistent simulated world with selection, inspection and controls. Full orchestration telemetry, model-driven world behavior and hardware validation remain release gates. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
 
 ## Milestone 0 — Repository inspection and architecture
@@ -108,7 +108,7 @@ The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK]
 
 ## Milestone 11 — Simulation and artificial civilization
 
-Extend the [deterministic world engine](CLI.md#persistent-world-simulation) with model-driven resident actions and the graphical simulation view.
+Extend the [deterministic world engine and graphical view](CLI.md#persistent-world-simulation) with model-driven resident actions.
 
 - Reproduce a fixed number of ticks with a recorded seed/inputs, without inference access.
 - Pause/stall inference while world state stays valid; reject or explicitly reconcile late results by world version.
@@ -125,6 +125,16 @@ Implement the central native Rust 3D orchestration and world views, evaluating B
 - Show a small observed graph and real task/resource state with useful selection and authorized controls.
 - Disable rendering on CPU-only/headless hosts; document native text/2D fallback and unsupported GPU features.
 - Measure responsiveness and renderer memory on stated hardware; meaningful controls work without decorative animation.
+
+### Living Intelligence Atlas sequence
+
+1. Evolve the current Intelligence Network scene with consistent color, useful grouping, clear selection, a focused inspector and transitions driven by observed events.
+2. Add the Machine layer using real hardware observations and scheduler evidence. Distinguish estimates, measurements and unavailable data.
+3. Add a Swarm Perspective backed by actual delegation, authorized communication and workflow relationships.
+4. Extend the existing persistent Living World with model-driven decisions routed through the scheduler and fenced by the world revision.
+5. Connect the layers through shared navigation and retained selection context. Add replay and timeline controls with explicit retention gaps.
+
+Keep read-only operation as the default, require explicit authorization for controls, and show pending and committed outcomes. Preserve headless operation. Validate interactive graphics and performance on the RTX 4070 Laptop GPU, and label measurements and simulation state separately.
 
 ## Milestone 13 — Experimentation and analytics
 

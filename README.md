@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, renders observed broker activity in a native 3D window, and persists deterministic simulation state. The fourteen-crate workspace has 216 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. The full orchestration view, graphical World Simulation Mode and experiments remain required roadmap work.
+**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of broker activity and persistent simulation state. The fourteen-crate workspace has 216 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry, model-driven residents and experiments remain required roadmap work.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -14,7 +14,15 @@ The optional Bevy executable renders observed broker tasks and workers in 3D. Us
 cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765
 ```
 
-Left-click a task cube or worker sphere to inspect it. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus on the selected object or R to reset the camera. Launch with `--allow-cancel` to enable C on a selected task. Cancellation uses the signed broker API. The view shows retained observations and labels resource measurements as unavailable. Providers, models, memory and richer orchestration telemetry still need integration. World Simulation Mode remains an explicit release requirement. [Broker setup](docs/CLI.md#external-worker-service)
+Left-click a task cube or worker sphere to inspect it. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus on the selected object or R to reset the camera. Launch with `--allow-cancel` to enable C on a selected task. Cancellation uses the signed broker API. The view shows retained observations and labels resource measurements as unavailable. Providers, models, memory and richer orchestration telemetry still need integration. [Broker setup](docs/CLI.md#external-worker-service)
+
+Open the same executable in World Simulation Mode with an initialized database.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --world data/world.sqlite3
+```
+
+Pick residents, the depot or resource sites to inspect their committed state. World Mode is read-only by default. Add `--allow-world-control` to enable Space for a tick, P for playback, Enter for resident activity and IJKL for one-cell movement. The view labels its state as simulated and uses the same camera controls. It requires no broker or provider. [World setup](docs/CLI.md#persistent-world-simulation)
 
 ## Architecture and workspace
 
@@ -56,7 +64,7 @@ flowchart TD
 | `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
 | `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
 | `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
-| `vespera-view` | Observed broker graph and optional native 3D executable |
+| `vespera-view` | Optional native 3D orchestration and persistent simulation modes |
 | `vespera-world` | Deterministic resident actions, shared resources, relationships and transactional SQLite worlds |
 | `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
 | `vespera-app` | Runtime composition, diagnostics and eleven top-level CLI commands |

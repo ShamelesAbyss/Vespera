@@ -28,9 +28,9 @@ The broker and SDK support TLS 1.3 for HTTPS and secure WebSockets. A loopback c
 
 Approved external workers can exchange text over explicitly granted directional routes. Subprocess tests cover private inboxes, acknowledgement, bounded retention, idempotent retries and revocation. Message contents remain process-local.
 
-The optional Bevy orchestration window reads signed broker subscriptions. A Windows desktop smoke test rendered real lease and task transitions, selected objects, focused and reset the camera, and sent a cancellation that independent broker inspection confirmed. The graphics build was validated in the development profile. Full telemetry and World Simulation Mode remain open.
+The optional Bevy orchestration window reads signed broker subscriptions. A Windows desktop smoke test rendered real lease and task transitions, selected objects, focused and reset the camera, and sent a cancellation that independent broker inspection confirmed. The graphics build was validated in the development profile. Full orchestration telemetry remains open.
 
-The deterministic world engine persists residents, their actions and shared resources in SQLite. The CLI subprocess test compared independent worlds at the same logical tick, reopened state across invocations, and verified revision-fenced movement and resident suspension. Model-driven decision integration and graphical World Simulation Mode remain open.
+The deterministic world engine persists residents, their actions and shared resources in SQLite. The CLI subprocess test compared independent worlds at the same logical tick, reopened state across invocations, and verified revision-fenced movement and resident suspension. Bevy World Simulation Mode renders committed world state and sends controls through the same engine. Model-driven decision integration remains open.
 
 The optional exclusive broker database stores tasks, generations, results and revocations before HTTP responses. A forced subprocess restart verified recovery, same-result retries, fencing, queue order and revocation. A fault-injected transaction verified rollback and a simulated clock rollback verified conservative expiry.
 
