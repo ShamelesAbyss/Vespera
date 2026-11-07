@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Context-aware scheduler reuse
+
+Verified implementation checkpoint `680f9d839726a88c43038c08ac70e32a90ddf225` was pushed to `main`. The startup residency checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42425220762).
+
+An explicitly loaded model now retains its requested context with its reservation. An active lease fences a context change. An idle change requires an acknowledged unload before reloading. An impossible request fails before any pressure eviction. The scheduler regression exercised active rejection, idle replacement and an unacknowledged unload that retained memory without loading a replacement. Formatting, strict workspace Clippy and the Windows offline workspace suite passed.
+
+On Windows with Ollama 0.40.13 and `hermes3:8b`, a single workflow completed both steps at requested contexts of 512 and 1,024 tokens. A provider query after the workflow reported a 1,024-token allocation and 4,614,782,975 VRAM bytes. Operator cleanup left the residency list empty. This sample verifies the mixed-context path and final allocation. Automatic KV-cache costing and provider-managed context verification remain open.
+
 ## 2026-11-07 — Startup provider residency reconciliation
 
 Verified implementation checkpoint `aa38cf6a09ebc033781c4637d35b6bdc7cdd4d1d` was pushed to `main`. The preceding provider health watch passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42424520669).
