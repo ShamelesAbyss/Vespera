@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Native Machine hardware view
 
+Verified implementation checkpoint `14d0aba58fad681fe8be5163265ad600089e2239` was pushed to `main`.
+
 The Intelligence Atlas checkpoint `9af4c56df09cb03813af604198ea17ff4e5bb794` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42344484673). The native client adds a read-only `--machine` view that opens without a broker or operator key. It samples host CPU utilization and physical memory off the render thread, displays logical parallelism available to the process, and shows the wgpu render adapter. CPU and RAM meters follow the observed values. Expired and missing samples are labeled unavailable.
 
 Windows validation passed the headless workspace suite, the SDK doctest, graphics tests, strict graphics Clippy and the graphics build. The desktop fixture verified mouse picking, keyboard selection, reduced-motion focus and reset, and changing CPU readings. The memory inspector matched the OS at 31.78 GiB total, and wgpu reported the RTX 4070 Laptop GPU and Vulkan backend. The parser rejected an explicit broker address combined with Machine mode.
