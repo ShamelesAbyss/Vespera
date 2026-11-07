@@ -197,7 +197,16 @@ struct HttpFixture {
 }
 impl HttpFixture {
     fn new(health_denied: bool) -> Self {
+        Self::with_ollama_answer(health_denied, "fixture integrated answer")
+    }
+
+    fn with_ollama_answer(health_denied: bool, answer: &str) -> Self {
         use std::io::{Read, Write};
+        let chat_response = serde_json::json!({
+            "message": {"role": "assistant", "content": answer},
+            "done": true, "done_reason": "stop", "prompt_eval_count": 10, "eval_count": 3
+        })
+        .to_string();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -274,10 +283,7 @@ impl HttpFixture {
                     match request.path.as_str() {
                         "/api/version" => ("200 OK", r#"{"version":"fixture-v1"}"#),
                         "/api/generate" => ("200 OK", r#"{"done":true}"#),
-                        "/api/chat" => (
-                            "200 OK",
-                            r#"{"message":{"role":"assistant","content":"fixture integrated answer"},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":3}"#,
-                        ),
+                        "/api/chat" => ("200 OK", chat_response.as_str()),
                         "/v1/models" => ("200 OK", r#"{"data":[{"id":"fixture-model"}]}"#),
                         "/v1/chat/completions" => (
                             "200 OK",
@@ -338,6 +344,125 @@ fn runtime_config(fixture: &HttpFixture, openai: bool, known_costs: bool) -> Str
         sample
     }
 }
+#[test]
+fn world_model_choices_are_authorized_bounded_and_revision_fenced() {
+    use std::time::{Duration, Instant};
+    use vespera_world::{Position, ResidentSpec, Role, World, WorldSpec, WorldStore};
+
+    let provider = HttpFixture::with_ollama_answer(false, r#"{"choice":1}"#);
+    let directory = ScratchDirectory::new();
+    let database = directory.0.join("world.sqlite3");
+    let resident = AGENT.parse().unwrap();
+    let initial = World::new(WorldSpec {
+        seed: 0,
+        width: 5,
+        depth: 5,
+        depot: Position { x: 0, z: 0 },
+        residents: vec![ResidentSpec {
+            id: resident,
+            name: "private resident label".into(),
+            role: Role::Forager,
+            position: Position { x: 2, z: 2 },
+        }],
+        sites: vec![],
+    })
+    .unwrap();
+    WorldStore::initialize(&database, &initial).unwrap();
+    let invoke = |config: &Path, revision: &str, apply: bool| {
+        let mut flags = vec![
+            "world",
+            "--database",
+            database.to_str().unwrap(),
+            "decide",
+            "--config",
+            config.to_str().unwrap(),
+            "--resident",
+            AGENT,
+            "--revision",
+            revision,
+            "--resume",
+            "--unload-after",
+        ];
+        if apply {
+            flags.push("--apply");
+        }
+        execute(&flags)
+    };
+    let config = runtime_config(&provider, false, true);
+    let denied = directory.write_config(&config);
+    assert!(!invoke(&denied, "0", true).status.success());
+    assert!(provider.captured().is_empty());
+    let allowed = config.replace("permissions = []", "permissions = [\"simulation_act\"]");
+    let config_path = directory.write_config(&allowed);
+    assert!(!invoke(&config_path, "1", true).status.success());
+    assert!(provider.captured().is_empty());
+
+    let preview = invoke(&config_path, "0", false);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert!(preview["committed_revision"].is_null());
+    assert_eq!(WorldStore::read(&database).unwrap(), initial);
+    let prompt = provider
+        .captured()
+        .into_iter()
+        .find(|request| request.path == "/api/chat")
+        .unwrap();
+    assert!(!prompt.body.contains("private resident label"));
+    assert!(prompt.body.contains("choices_in_index_order"));
+    let applied = invoke(&config_path, "0", true);
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(report["committed_revision"], 1);
+    let committed = WorldStore::read(&database).unwrap();
+    let state = committed.snapshot();
+    assert_eq!(state.tick, 0);
+    assert_eq!(state.residents[0].position, Position { x: 1, z: 2 });
+    let provenance = state.residents[0].last_model_decision.unwrap();
+    assert_eq!(
+        report["source"]["task_id"],
+        provenance.source.task_id.to_string()
+    );
+
+    let invalid =
+        HttpFixture::with_ollama_answer(false, r#"{"choice":0,"extra":"private response"}"#);
+    let invalid_path = directory.write_config(
+        &runtime_config(&invalid, false, true)
+            .replace("permissions = []", "permissions = [\"simulation_act\"]"),
+    );
+    let rejected = invoke(&invalid_path, "1", true);
+    assert!(!rejected.status.success());
+    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("private response"));
+    assert_eq!(WorldStore::read(&database).unwrap(), committed);
+
+    let config_path = directory.write_config(&allowed);
+    let before = provider.captured().len();
+    provider.inference_delay_ms.store(1600, Ordering::SeqCst);
+    std::thread::scope(|scope| {
+        let pending = scope.spawn(|| invoke(&config_path, "1", true));
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !provider.captured()[before..]
+            .iter()
+            .any(|request| request.path == "/api/chat")
+        {
+            assert!(!pending.is_finished() && Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let advanced = WorldStore::update(&database, World::advance).unwrap();
+        let rejected = pending.join().unwrap();
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("world changed"));
+        assert_eq!(WorldStore::read(&database).unwrap(), advanced);
+    });
+}
+
 fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str]) -> Output {
     let config = directory.write_config(config);
     let prompt = directory.0.join("prompt.txt");

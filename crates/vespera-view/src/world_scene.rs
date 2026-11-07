@@ -477,11 +477,26 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
     let detail = match selected.0 {
         Some(Object::Resident(id)) => state.residents.iter().find(|resident| resident.id == id).map_or_else(
             || "Resident is absent from the current world".into(),
-            |resident| format!("{} / {:?}\n{} | Goal: {:?}\nCell {}, {} | Carrying {}\n{} relationships\n{}",
-                resident.name, resident.role, if resident.active { "Active" } else { "Suspended" }, resident.goal,
-                resident.position.x, resident.position.z, resident.carried, resident.relationships.len(),
-                state.residents.iter().filter_map(|other| resident.relationships.get(&other.id).map(|count| format!("{}: {count} encounters", other.name))).take(4).collect::<Vec<_>>().join("\n")
-            )
+            |resident| {
+                let mut detail = format!("{} / {:?}\n{} | Goal: {:?}\nCell {}, {} | Carrying {}\n{} relationships\n{}",
+                    resident.name, resident.role, if resident.active { "Active" } else { "Suspended" }, resident.goal,
+                    resident.position.x, resident.position.z, resident.carried, resident.relationships.len(),
+                    state.residents.iter().filter_map(|other| resident.relationships.get(&other.id).map(|count| format!("{}: {count} encounters", other.name))).take(4).collect::<Vec<_>>().join("\n")
+                );
+                if let Some(committed) = resident.last_model_decision {
+                    use vespera_world::Decision;
+                    let action = match committed.decision {
+                        Decision::Move { to } => format!("Move to {}, {}", to.x, to.z),
+                        Decision::Wait {} => "Wait".into(),
+                        Decision::Gather {} => "Gather".into(),
+                        Decision::Deliver {} => "Deliver".into(),
+                        Decision::Build {} => "Build".into(),
+                    };
+                    let model = committed.source.model_id.to_string();
+                    detail.push_str(&format!("\n\nLAST MODEL CHOICE\n{action} | Revision {}\nModel {}", committed.revision, &model[..8]));
+                }
+                detail
+            }
         ),
         Some(Object::Site(position)) => state.sites.iter().find(|site| site.position == position).map_or_else(
             || "Site is absent from the current world".into(),

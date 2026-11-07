@@ -14,7 +14,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `agents` | List declared identities, status, policy and permissions | None |
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
 | `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
-| `world` | Initialize, inspect and advance a persistent simulation | Local file and SQLite access |
+| `world` | Initialize, inspect and advance a persistent simulation or request a model decision | Local SQLite access. Decisions also require a configured agent and provider. |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
@@ -248,6 +248,21 @@ Logical ticks are independent of wall time. A control increments the revision wi
 Launch `cargo run --locked -p vespera-view --features graphics -- --world data/world.sqlite3` after initialization. The window is read-only by default and reads committed state from the same database used by the headless CLI. Changes from another local process appear on refresh. Append `--allow-world-control` to enable writes. Space commits a tick and P toggles one requested tick every half second while the database keeps up. A failed storage operation stops playback. The UI uses the last observed revision for writes and reports stale controls.
 
 Left-click a capsule to inspect the resident's role, goal, activity, position, inventory and encounter counts. Green cylinders show resource sites. The depot block reflects the number of shelters, with its display height capped at 20 shelters. Residents on occupied cells use display offsets to remain visible. The inspector reports their actual grid coordinates and counts. Encounter links appear for the selected resident. Press Enter to toggle its activity or use IJKL for a one-cell move. The graphical view omits resident memories.
+
+### Model-assisted resident decisions
+
+Set up a model with known scheduler resource estimates and a configured agent whose UUID matches the world resident. Grant that agent `simulation_act` in its configuration. The resident must be active in the world. Read the current revision with `world inspect` or the 3D view.
+
+```powershell
+$world = 'data/world.sqlite3'
+$state = cargo run --quiet --locked -p vespera-app -- world --database $world inspect | ConvertFrom-Json
+$resident = $state.residents[0].id
+cargo run --locked -p vespera-app -- world --database $world decide --resident $resident --revision $state.revision --config config/local.toml
+```
+
+The command previews by default. Add `--apply` to commit the choice from that invocation. If an inference preview is followed by a separate apply invocation, the model runs again. `--resume` activates a suspended or failed runtime agent for this invocation. `--timeout-seconds` accepts 1–120 and defaults to 30. `--unload-after` requests cleanup of idle provider reservations after execution. Review `committed_revision` in the JSON report if cleanup fails after a committed action.
+
+The model receives a small set of simulation facts and a legal action menu. It returns one zero-based JSON choice. The engine validates that choice and commits it against the same world revision. An intervening tick, movement or activity change makes the choice stale. Successful application advances the revision by one and preserves the tick. The world records the latest choice with task, model and provider provenance. Raw generated text and owned memories stay out of this report and the 3D inspector. Deterministic ticks can continue independently. Older Vespera builds can read unchanged worlds and require an update to read worlds containing committed model decisions.
 
 ## External worker service
 

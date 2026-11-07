@@ -5,7 +5,7 @@ mod storage;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-use vespera_core::AgentId;
+use vespera_core::{AgentId, ModelId, ProviderId, TaskId};
 
 pub use storage::WorldStore;
 
@@ -126,6 +126,35 @@ pub enum Action {
     Met { other: AgentId },
 }
 
+/// An action the engine can offer to a model for one resident and revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Decision {
+    Wait {},
+    Move { to: Position },
+    Gather {},
+    Deliver {},
+    Build {},
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionSource {
+    pub task_id: TaskId,
+    pub model_id: ModelId,
+    pub provider_id: ProviderId,
+}
+
+/// The last committed model choice, independent of subsequent deterministic ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelDecision {
+    pub decision: Decision,
+    pub source: DecisionSource,
+    pub tick: u64,
+    pub revision: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Memory {
@@ -145,6 +174,8 @@ pub struct Resident {
     pub active: bool,
     pub relationships: BTreeMap<AgentId, u16>,
     memory: VecDeque<Memory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_model_decision: Option<ModelDecision>,
 }
 
 impl Resident {
@@ -196,6 +227,8 @@ pub struct ResidentView<'a> {
     pub carried: u16,
     pub active: bool,
     pub relationships: &'a BTreeMap<AgentId, u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_model_decision: Option<ModelDecision>,
 }
 
 impl World {
@@ -222,6 +255,7 @@ impl World {
                     active: true,
                     relationships: BTreeMap::new(),
                     memory: VecDeque::new(),
+                    last_model_decision: None,
                 })
                 .collect(),
             sites: spec.sites,
@@ -252,6 +286,7 @@ impl World {
                     carried: resident.carried,
                     active: resident.active,
                     relationships: &resident.relationships,
+                    last_model_decision: resident.last_model_decision,
                 })
                 .collect(),
             sites: &self.sites,
@@ -329,6 +364,127 @@ impl World {
         }
         self.socialize();
         Ok(())
+    }
+
+    /// Build the finite action menu from committed state, without provider access.
+    pub fn decision_options(
+        &self,
+        id: AgentId,
+        revision: u64,
+    ) -> Result<Vec<Decision>, WorldError> {
+        self.next_revision(revision)?;
+        let resident = self
+            .residents
+            .iter()
+            .find(|resident| resident.id == id)
+            .ok_or(WorldError::UnknownResident)?;
+        if !resident.active {
+            return Err(WorldError::Invalid(
+                "model decision requires an active resident",
+            ));
+        }
+        let Position { x, z } = resident.position;
+        let mut options = vec![Decision::Wait {}];
+        for (x, z) in [
+            (x.checked_sub(1), Some(z)),
+            (x.checked_add(1), Some(z)),
+            (Some(x), z.checked_sub(1)),
+            (Some(x), z.checked_add(1)),
+        ] {
+            if let (Some(x), Some(z)) = (x, z) {
+                let to = Position { x, z };
+                if self.contains(to) {
+                    options.push(Decision::Move { to });
+                }
+            }
+        }
+        match resident.role {
+            Role::Forager => {
+                if resident.carried < MAX_CARRIED
+                    && self
+                        .sites
+                        .iter()
+                        .any(|site| site.position == resident.position && site.stock > 0)
+                {
+                    options.push(Decision::Gather {});
+                }
+                if resident.position == self.depot
+                    && resident.carried > 0
+                    && self.shared_stock < MAX_SHARED
+                {
+                    options.push(Decision::Deliver {});
+                }
+            }
+            Role::Builder
+                if resident.position == self.depot
+                    && self.shared_stock >= BUILD_COST
+                    && self.shelters < MAX_SHELTERS =>
+            {
+                options.push(Decision::Build {});
+            }
+            Role::Builder => {}
+        }
+        Ok(options)
+    }
+
+    /// Commit one choice against the same revision that generated its menu.
+    /// The caller authorizes the resident and supplies observed inference provenance.
+    pub fn apply_model_decision(
+        &mut self,
+        id: AgentId,
+        revision: u64,
+        decision: Decision,
+        source: DecisionSource,
+    ) -> Result<ModelDecision, WorldError> {
+        if !self.decision_options(id, revision)?.contains(&decision) {
+            return Err(WorldError::Invalid("choice is unavailable to the resident"));
+        }
+        let next = self.next_revision(revision)?;
+        let resident = self
+            .residents
+            .iter_mut()
+            .find(|resident| resident.id == id)
+            .expect("validated resident");
+        let action = match decision {
+            Decision::Wait {} => {
+                resident.goal = Goal::Wait;
+                None
+            }
+            Decision::Move { to } => {
+                resident.position = to;
+                Some(Action::Moved { to })
+            }
+            Decision::Gather {} => {
+                let site = self
+                    .sites
+                    .iter_mut()
+                    .find(|site| site.position == resident.position)
+                    .expect("validated resource site");
+                site.stock -= 1;
+                resident.carried += 1;
+                resident.goal = Goal::Gather;
+                Some(Action::Gathered { at: site.position })
+            }
+            Decision::Deliver {} => deliver(resident, self.depot, &mut self.shared_stock),
+            Decision::Build {} => {
+                self.shared_stock -= BUILD_COST;
+                self.shelters += 1;
+                resident.goal = Goal::Build;
+                Some(Action::Built {})
+            }
+        };
+        if let Some(action) = action {
+            resident.remember(self.tick, action);
+        }
+        let committed = ModelDecision {
+            decision,
+            source,
+            tick: self.tick,
+            revision: next,
+        };
+        resident.last_model_decision = Some(committed);
+        self.revision = next;
+        Ok(committed)
     }
 
     fn act(&mut self, index: usize) {
@@ -427,15 +583,22 @@ impl World {
         if ids.len() != self.residents.len()
             || self.residents.iter().any(|resident| {
                 resident.name.trim().is_empty()
-                    || resident.name.len() > 64
-                    || !self.contains(resident.position)
-                    || resident.carried > MAX_CARRIED
-                    || resident.memory.len() > MAX_MEMORY
-                    || resident.memory.iter().any(|memory| memory.tick > self.tick)
-                    || resident
-                        .relationships
-                        .keys()
-                        .any(|id| *id == resident.id || !ids.contains(id))
+                || resident.name.len() > 64
+                || !self.contains(resident.position)
+                || resident.carried > MAX_CARRIED
+                || resident.memory.len() > MAX_MEMORY
+                || resident.memory.iter().any(|memory| memory.tick > self.tick)
+                || resident.last_model_decision.is_some_and(|decision| {
+                    decision.tick > self.tick
+                        || decision.revision == 0
+                        || decision.revision > self.revision
+                        || decision.tick >= decision.revision
+                        || matches!(decision.decision, Decision::Move { to } if !self.contains(to))
+                })
+                || resident
+                    .relationships
+                    .keys()
+                    .any(|id| *id == resident.id || !ids.contains(id))
             })
         {
             return Err(WorldError::Invalid("resident state"));
@@ -472,4 +635,90 @@ fn deliver(resident: &mut Resident, depot: Position, shared_stock: &mut u16) -> 
     *shared_stock += amount;
     resident.carried -= amount;
     (amount > 0).then_some(Action::Delivered { amount })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_choices_respect_role_and_resource_accounting() {
+        let depot = Position { x: 0, z: 0 };
+        let forager = AgentId::new();
+        let builder = AgentId::new();
+        let mut world = World::new(WorldSpec {
+            seed: 0,
+            width: 3,
+            depth: 3,
+            depot,
+            residents: vec![
+                ResidentSpec {
+                    id: forager,
+                    name: "Forager".into(),
+                    role: Role::Forager,
+                    position: depot,
+                },
+                ResidentSpec {
+                    id: builder,
+                    name: "Builder".into(),
+                    role: Role::Builder,
+                    position: depot,
+                },
+            ],
+            sites: vec![Site {
+                position: depot,
+                stock: BUILD_COST,
+                capacity: BUILD_COST,
+                regeneration: 0,
+            }],
+        })
+        .unwrap();
+        let source = DecisionSource {
+            task_id: TaskId::new(),
+            model_id: ModelId::new(),
+            provider_id: ProviderId::new(),
+        };
+        assert!(
+            world
+                .apply_model_decision(builder, 0, Decision::Gather {}, source)
+                .is_err()
+        );
+        assert!(
+            world
+                .apply_model_decision(builder, 0, Decision::Build {}, source)
+                .is_err()
+        );
+        for _ in 0..BUILD_COST {
+            world
+                .apply_model_decision(forager, world.revision, Decision::Gather {}, source)
+                .unwrap();
+            world
+                .apply_model_decision(forager, world.revision, Decision::Deliver {}, source)
+                .unwrap();
+        }
+        assert_eq!(world.sites[0].stock, 0);
+        assert_eq!(world.shared_stock, BUILD_COST);
+        assert!(
+            world
+                .apply_model_decision(forager, world.revision, Decision::Gather {}, source)
+                .is_err()
+        );
+        world
+            .apply_model_decision(builder, world.revision, Decision::Build {}, source)
+            .unwrap();
+        assert_eq!(world.shelters, 1);
+        assert_eq!(world.shared_stock, 0);
+        assert_eq!(world.tick, 0);
+        assert!(matches!(
+            world.memory(builder).unwrap().back().unwrap().action,
+            Action::Built {}
+        ));
+        assert_eq!(
+            world.snapshot().residents[1]
+                .last_model_decision
+                .unwrap()
+                .source,
+            source
+        );
+    }
 }

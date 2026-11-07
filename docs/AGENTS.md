@@ -80,8 +80,9 @@ fabricate a running agent.
 The default permission set is empty. Current variants are `communicate`,
 `memory_read`, `memory_write`, `delegate`, and `simulation_act`. Memory reads and
 writes, message sends and inbox reads, delegation, and simulation authorization
-check the corresponding grant. `simulation_act` authorizes a future action; no
-world engine exists yet. There is no tool executor or OS sandbox in this runtime.
+check the corresponding grant. The `world decide` command requires
+`simulation_act` before asking the resident's configured model to choose a
+revision-fenced world action. There is no tool executor or OS sandbox in this runtime.
 
 These Rust library methods assume a trusted caller supplies the correct actor ID.
 They are not a remotely authenticated principal boundary. Future API/external

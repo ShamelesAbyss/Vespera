@@ -196,6 +196,8 @@ enum AppError {
     SchedulerTelemetry(std::io::Error),
     #[error(transparent)]
     World(#[from] vespera_world::WorldError),
+    #[error("model did not return one valid world action choice")]
+    InvalidWorldChoice,
     #[error(transparent)]
     BrokerServer(#[from] vespera_api::http::ServerError),
     #[error("could not monitor shutdown signal: {0}")]
@@ -291,7 +293,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::Memory(args) => memory_commands::run(args).await?,
         Command::Events(args) => event_commands::run(args).await?,
-        Command::World(args) => world_commands::run(args)?,
+        Command::World(args) => world_commands::run(args).await?,
         Command::Serve {
             access_file,
             listen,
