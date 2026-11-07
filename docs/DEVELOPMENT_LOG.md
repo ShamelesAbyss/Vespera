@@ -2,6 +2,8 @@
 
 ## 2026-11-07 — Request memory in Atlas
 
+Verified implementation checkpoint `1c8e6eab3aa9c42451c9cb17065631e71ab2b86c` was pushed to `main`.
+
 Machine shows a green node when a validated local inference request includes retrieved memory. The count is attached to the exact running lease after request construction. The task inspector distinguishes zero included records from unavailable evidence. Version 4 carries counts, and the viewer still accepts versions 1 through 3. Memory queries, content and record IDs stay out of telemetry.
 
 Windows validation included the offline workspace suite, the SDK doctest, seven graphics tests, strict workspace and graphics Clippy, and both builds. In a native Atlas session, a held provider request produced one memory node on the active task. The CLI result recorded one included memory ID, while the live telemetry carried only its count. The final sample had no task leases. The regression compared the live count with the provider request and verified that an oversized retrieved record did not enter either.
