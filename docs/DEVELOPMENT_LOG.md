@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Deterministic replay of committed world revisions
 
+Verified implementation checkpoint `5b77ab43cbfda85997055208a08a9cdea1ecf71a` was pushed to `main`.
+
 The live reasoning checkpoint `15c9f8366e0e21ffa30c115150d12682d151d245` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42349595201). World updates now commit typed changes and state together. A bounded history rolls forward a replay checkpoint as older records expire. The CLI reconstructs a retained commit without a provider. World Mode can open a fixed historical revision for read-only inspection.
 
 Windows validation passed 224 offline workspace tests, the SDK doctest, strict workspace and graphics Clippy, graphics tests and the graphics build. Tests compared reconstructed and current state including committed model provenance, verified retention rollover, and rejected revisions between grouped tick commits. A real Ollama choice was committed at revision 1 and the world advanced to revision 3. The historical 3D view showed Aster's revision 1 action at tick 0. The database remained byte-identical after inspection and attempted control input.
