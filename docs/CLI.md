@@ -328,6 +328,14 @@ See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for op
 An optional `message_targets` array on a worker entry grants outbound messaging to those approved worker IDs. [Worker message contract](PROTOCOL.md#worker-messages)
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
+### Intelligence Network controls
+
+Run `cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765` with the operator key in `VESPERA_OPERATOR_TOKEN`. The view groups the latest observed states into queued, running, complete, failed and cancelled lanes. Violet spheres represent workers that appear in lease events. Cyan links identify running attempts. Selecting a task or worker can reveal its dimmed links to the latest recorded attempts. The activity list shows recent observations and their feed sequences. Counts reflect the loaded observations.
+
+Press Tab to cycle all tasks, queued and running work, and terminal outcomes. N cycles visible tasks and B cycles workers. Left-click picks a visible object. Use right-drag, wheel and WASD to navigate, F to focus, and R to reset. `--reduced-motion` applies to both graphical modes and skips animated camera focus and task lane transitions.
+
+The view is read-only by default. `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. The inspector displays pending, returned or uncertain outcomes. The task lane changes when the event feed reports the new state.
+
 ### TLS worker transport
 
 Use `--tls-cert <chain.pem> --tls-key <key.pem>` together to enable HTTPS and secure WebSockets. Use a PEM chain in leaf-first order and protect the corresponding private key file. A non-loopback address additionally requires `--allow-remote`. For example, with a certificate valid for the configured interface address, run the following command using that address and the paths to your PEM files.

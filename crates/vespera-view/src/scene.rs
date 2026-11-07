@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use tokio::sync::mpsc;
-use vespera_core::{AgentId, TaskId, TaskState};
+use vespera_core::{AgentId, EventKind, ExternalTaskChange, TaskId, TaskState};
 use vespera_view::Graph;
 
 use crate::Update as BrokerUpdate;
@@ -14,12 +14,25 @@ struct Connection {
     updates: mpsc::Receiver<BrokerUpdate>,
     cancel: Option<mpsc::Sender<TaskId>>,
     status: &'static str,
+    cancellation: Cancellation,
+}
+
+#[derive(Default, Clone, Copy)]
+enum Cancellation {
+    #[default]
+    Idle,
+    Confirm(TaskId),
+    Pending(TaskId),
+    Finished(TaskId, TaskState),
+    Uncertain,
 }
 
 #[derive(Resource, Default)]
 struct Scene {
     graph: Graph,
     entities: BTreeMap<NodeKey, Entity>,
+    layout: BTreeMap<NodeKey, Vec3>,
+    recent: VecDeque<(u64, TaskId, ExternalTaskChange)>,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -30,6 +43,33 @@ enum NodeKey {
 
 #[derive(Resource, Default)]
 struct Selection(Option<NodeKey>);
+
+#[derive(Resource, Default)]
+enum Filter {
+    #[default]
+    All,
+    Work,
+    Outcomes,
+}
+
+impl Filter {
+    fn shows(&self, state: TaskState) -> bool {
+        let work = matches!(state, TaskState::Queued | TaskState::Running);
+        match self {
+            Self::All => true,
+            Self::Work => work,
+            Self::Outcomes => !work,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::All => "All tasks",
+            Self::Work => "Queued + running",
+            Self::Outcomes => "Terminal outcomes",
+        }
+    }
+}
 
 #[derive(Resource)]
 struct Palette {
@@ -42,11 +82,18 @@ struct Palette {
 struct Inspector;
 
 #[derive(Component)]
+struct StatusStrip;
+
+#[derive(Component)]
+struct LaneTarget(Vec3);
+
+#[derive(Component)]
 pub(super) struct Orbit {
     focus: Vec3,
     yaw: f32,
     pitch: f32,
     distance: f32,
+    transition: Option<(Vec3, f32)>,
 }
 
 impl Default for Orbit {
@@ -56,6 +103,7 @@ impl Default for Orbit {
             yaw: 0.45,
             pitch: 0.62,
             distance: 17.0,
+            transition: None,
         }
     }
 }
@@ -72,7 +120,9 @@ impl Orbit {
 #[derive(Resource)]
 pub(super) struct CameraFocus {
     pub point: Option<Vec3>,
+    pub home_point: Vec3,
     pub home_distance: f32,
+    pub reduced_motion: bool,
 }
 
 pub(super) fn desktop(title: &str, clear: Color) -> App {
@@ -91,52 +141,66 @@ pub(super) fn desktop(title: &str, clear: Color) -> App {
     app
 }
 
-pub fn run(updates: mpsc::Receiver<BrokerUpdate>, cancel: Option<mpsc::Sender<TaskId>>) {
-    desktop("Vespera | Orchestration", Color::srgb(0.035, 0.055, 0.09))
-        .insert_resource(Connection {
-            updates,
-            cancel,
-            status: "Connecting to broker...",
-        })
-        .init_resource::<Scene>()
-        .init_resource::<Selection>()
-        .insert_resource(CameraFocus {
-            point: None,
-            home_distance: 17.0,
-        })
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                receive,
-                sync_scene,
-                focus_selection,
-                camera,
-                draw_links,
-                inspect,
-            )
-                .chain(),
+pub fn run(
+    updates: mpsc::Receiver<BrokerUpdate>,
+    cancel: Option<mpsc::Sender<TaskId>>,
+    reduced_motion: bool,
+) {
+    desktop(
+        "Vespera | Intelligence Atlas",
+        Color::srgb(0.017, 0.023, 0.043),
+    )
+    .insert_resource(Connection {
+        updates,
+        cancel,
+        status: "Connecting to broker...",
+        cancellation: Cancellation::Idle,
+    })
+    .init_resource::<Scene>()
+    .init_resource::<Selection>()
+    .init_resource::<Filter>()
+    .insert_resource(CameraFocus {
+        point: None,
+        home_point: Vec3::new(2.65, 0.0, -1.25),
+        home_distance: 25.0,
+        reduced_motion,
+    })
+    .add_systems(Startup, setup)
+    .add_systems(
+        Update,
+        (
+            receive,
+            navigate,
+            sync_scene,
+            move_nodes,
+            focus_selection,
+            camera,
+            draw_links,
+            inspect,
         )
-        .run();
+            .chain(),
+    )
+    .run();
 }
 
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    focus: Res<CameraFocus>,
 ) {
     let colors = [
-        Color::srgb(0.70, 0.76, 0.87),
-        Color::srgb(0.10, 0.72, 1.0),
-        Color::srgb(0.24, 0.84, 0.54),
-        Color::srgb(0.98, 0.30, 0.34),
-        Color::srgb(0.99, 0.63, 0.25),
-        Color::srgb(0.64, 0.40, 1.0),
-        Color::srgb(1.0, 0.93, 0.44),
+        Color::srgb(0.99, 0.65, 0.27),
+        Color::srgb(0.14, 0.84, 1.0),
+        Color::srgb(0.19, 0.81, 0.53),
+        Color::srgb(0.96, 0.30, 0.39),
+        Color::srgb(0.49, 0.53, 0.66),
+        Color::srgb(0.66, 0.43, 1.0),
+        Color::srgb(0.96, 0.95, 1.0),
     ];
     commands.insert_resource(Palette {
-        task: meshes.add(Cuboid::new(1.1, 1.1, 1.1)),
-        worker: meshes.add(Sphere::new(0.65)),
+        task: meshes.add(Cuboid::new(0.64, 0.44, 0.64)),
+        worker: meshes.add(Sphere::new(0.46)),
         materials: colors.map(|color| {
             materials.add(StandardMaterial {
                 base_color: color,
@@ -148,17 +212,20 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
-        Orbit::default(),
+        Orbit {
+            focus: focus.home_point,
+            ..Orbit::with_distance(focus.home_distance)
+        },
         Transform::from_xyz(8.0, 12.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(38.0, 0.1, 48.0))),
+        Mesh3d(meshes.add(Cuboid::new(25.0, 0.1, 68.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.07, 0.11, 0.18),
+            base_color: Color::srgb(0.038, 0.05, 0.082),
             unlit: true,
             ..default()
         })),
-        Transform::from_xyz(0.0, -0.2, 12.0),
+        Transform::from_xyz(0.0, -0.2, 23.0),
         Pickable::IGNORE,
     ));
     commands.spawn((
@@ -168,17 +235,32 @@ fn setup(
             left: px(24),
             ..default()
         },
-        Text::new("VESPERA  /  ORCHESTRATION"),
+        Text::new("VESPERA   /   LIVING INTELLIGENCE ATLAS"),
         TextFont::from_font_size(24.0),
         TextColor(Color::srgb(0.86, 0.92, 1.0)),
+    ));
+    commands.spawn((
+        StatusStrip,
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(66),
+            left: px(24),
+            right: px(24),
+            padding: UiRect::axes(px(12), px(8)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.045, 0.06, 0.11, 0.96)),
+        Text::new("INTELLIGENCE NETWORK  |  Connecting..."),
+        TextFont::from_font_size(15.0),
+        TextColor(Color::srgb(0.73, 0.84, 0.98)),
     ));
     commands.spawn((
         Inspector,
         Node {
             position_type: PositionType::Absolute,
-            top: px(66),
+            top: px(122),
             right: px(22),
-            width: px(315),
+            width: px(340),
             padding: UiRect::all(px(15)),
             ..default()
         },
@@ -200,85 +282,188 @@ fn receive(
             break;
         };
         match update {
-            BrokerUpdate::Status(status) => connection.status = status,
-            BrokerUpdate::Observation(event) => scene.graph.observe(event),
-            BrokerUpdate::Cancelled(task, state) => {
-                if let Some(node) = scene.graph.tasks.get_mut(&task) {
-                    node.state = state;
+            BrokerUpdate::Status(status) => {
+                connection.status = status;
+                if !status.starts_with("Connected") {
+                    connection.cancellation = match connection.cancellation {
+                        Cancellation::Pending(_) => Cancellation::Uncertain,
+                        Cancellation::Confirm(_) => Cancellation::Idle,
+                        state => state,
+                    };
                 }
-                connection.status = "Connected - cancellation response received";
             }
+            BrokerUpdate::Observation(event) => {
+                if let EventKind::ExternalTaskChanged {
+                    task_id, change, ..
+                } = event.event.kind
+                {
+                    if scene.recent.len() == 5 {
+                        scene.recent.pop_front();
+                    }
+                    scene
+                        .recent
+                        .push_back((event.cursor.sequence, task_id, change));
+                }
+                scene.graph.observe(event);
+            }
+            BrokerUpdate::Cancelled(task, state) => {
+                connection.cancellation = Cancellation::Finished(task, state);
+            }
+            BrokerUpdate::CancelFailed => connection.cancellation = Cancellation::Uncertain,
             BrokerUpdate::Reset => {
                 for entity in std::mem::take(&mut scene.entities).into_values() {
                     commands.entity(entity).despawn();
                 }
                 scene.graph = Graph::default();
+                scene.layout.clear();
+                scene.recent.clear();
                 selection.0 = None;
+                if matches!(connection.cancellation, Cancellation::Confirm(_)) {
+                    connection.cancellation = Cancellation::Idle;
+                }
             }
         }
     }
 }
 
-fn position(key: NodeKey, graph: &Graph) -> Option<Vec3> {
-    let (slot, columns, height, depth) = match key {
-        NodeKey::Task(id) => (graph.tasks.get(&id)?.slot, 16, 0.7, 0.0),
-        NodeKey::Worker(id) => (*graph.workers.get(&id)?, 8, 2.7, -4.0),
+fn navigate(
+    keys: Res<ButtonInput<KeyCode>>,
+    scene: Res<Scene>,
+    mut selection: ResMut<Selection>,
+    mut filter: ResMut<Filter>,
+) {
+    if keys.just_pressed(KeyCode::Tab) {
+        *filter = match *filter {
+            Filter::All => Filter::Work,
+            Filter::Work => Filter::Outcomes,
+            Filter::Outcomes => Filter::All,
+        };
+    }
+    let mut candidates: Vec<_> = if keys.just_pressed(KeyCode::KeyN) {
+        scene
+            .graph
+            .tasks
+            .iter()
+            .filter(|(_, task)| filter.shows(task.state))
+            .map(|(&id, task)| (task.slot, NodeKey::Task(id)))
+            .collect()
+    } else if keys.just_pressed(KeyCode::KeyB) {
+        scene
+            .graph
+            .workers
+            .iter()
+            .map(|(&id, &slot)| (slot, NodeKey::Worker(id)))
+            .collect()
+    } else {
+        return;
     };
-    let column = (slot % columns) as i32;
-    let lateral = ((column + 1) / 2) * if column % 2 == 0 { -1 } else { 1 };
-    Some(Vec3::new(
-        lateral as f32 * 2.1,
-        height,
-        depth + (slot / columns) as f32 * 2.1,
-    ))
+    candidates.sort_unstable();
+    let next = candidates
+        .iter()
+        .position(|(_, key)| Some(*key) == selection.0)
+        .map_or(0, |index| index + 1);
+    selection.0 = candidates
+        .get(next)
+        .or_else(|| candidates.first())
+        .map(|(_, key)| *key);
+}
+
+const fn lane(state: TaskState) -> usize {
+    match state {
+        TaskState::Queued => 0,
+        TaskState::Running => 1,
+        TaskState::Completed => 2,
+        TaskState::Failed => 3,
+        TaskState::Cancelled => 4,
+    }
+}
+
+fn layout(graph: &Graph) -> BTreeMap<NodeKey, Vec3> {
+    let mut positions = BTreeMap::new();
+    let mut lanes = [0; 5];
+    let mut tasks: Vec<_> = graph.tasks.iter().collect();
+    tasks.sort_unstable_by_key(|(_, task)| task.slot);
+    for (&id, task) in tasks {
+        let band = lane(task.state);
+        let slot = lanes[band];
+        lanes[band] += 1;
+        let x = (band as f32 - 2.0) * 4.4 + (slot % 4) as f32 * 0.87 - 1.3;
+        let y = if task.state == TaskState::Running {
+            0.88
+        } else {
+            0.26
+        };
+        positions.insert(
+            NodeKey::Task(id),
+            Vec3::new(x, y, 0.9 + (slot / 4) as f32 * 0.88),
+        );
+    }
+    for (&id, &slot) in &graph.workers {
+        let column = (slot % 16) as i32;
+        let alternating = ((column + 1) / 2) * if column % 2 == 0 { -1 } else { 1 };
+        let x = alternating as f32 * 1.45;
+        let row = (slot / 16) as f32;
+        positions.insert(
+            NodeKey::Worker(id),
+            Vec3::new(x, 1.5 + row * 0.42, -3.2 - row * 1.45),
+        );
+    }
+    positions
 }
 
 fn sync_scene(
     mut commands: Commands,
     mut scene: ResMut<Scene>,
     selection: Res<Selection>,
+    filter: Res<Filter>,
     palette: Res<Palette>,
-    mut existing: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut existing: Query<(
+        &mut MeshMaterial3d<StandardMaterial>,
+        &mut LaneTarget,
+        &mut Visibility,
+    )>,
 ) {
-    if !scene.is_changed() && !selection.is_changed() {
+    if !scene.is_changed() && !selection.is_changed() && !filter.is_changed() {
         return;
     }
-    let keys: Vec<_> = scene
-        .graph
-        .tasks
-        .keys()
-        .copied()
-        .map(NodeKey::Task)
-        .chain(scene.graph.workers.keys().copied().map(NodeKey::Worker))
-        .collect();
-    for key in keys {
-        let (mesh, index) = match key {
+    let positions = layout(&scene.graph);
+    for (&key, &location) in &positions {
+        let (mesh, index, visible) = match key {
             NodeKey::Task(id) => (
                 &palette.task,
-                match scene.graph.tasks[&id].state {
-                    TaskState::Queued => 0,
-                    TaskState::Running => 1,
-                    TaskState::Completed => 2,
-                    TaskState::Failed => 3,
-                    TaskState::Cancelled => 4,
-                },
+                lane(scene.graph.tasks[&id].state),
+                filter.shows(scene.graph.tasks[&id].state),
             ),
-            NodeKey::Worker(_) => (&palette.worker, 5),
+            NodeKey::Worker(_) => (&palette.worker, 5, true),
+        };
+        let visibility = if visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
         };
         let material = &palette.materials[if selection.0 == Some(key) { 6 } else { index }];
         if let Some(entity) = scene.entities.get(&key) {
-            if let Ok(mut current) = existing.get_mut(*entity)
-                && current.0 != *material
-            {
-                current.0 = material.clone();
+            if let Ok((mut current, mut target, mut visibility_now)) = existing.get_mut(*entity) {
+                if current.0 != *material {
+                    current.0 = material.clone();
+                }
+                if target.0 != location {
+                    target.0 = location;
+                }
+                if *visibility_now != visibility {
+                    *visibility_now = visibility;
+                }
             }
-        } else if let Some(location) = position(key, &scene.graph) {
+        } else {
             let entity = commands
                 .spawn((
                     key,
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),
-                    Transform::from_translation(location),
+                    Transform::from_translation(location)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)),
+                    LaneTarget(location),
+                    visibility,
                 ))
                 .observe(
                     move |event: On<PointerClick>, mut selected: ResMut<Selection>| {
@@ -291,22 +476,74 @@ fn sync_scene(
             scene.entities.insert(key, entity);
         }
     }
+    scene.layout = positions;
 }
 
-fn draw_links(scene: Res<Scene>, mut gizmos: Gizmos) {
-    let grid = Color::srgb(0.12, 0.18, 0.27);
-    for index in -9..=9 {
+fn move_nodes(
+    time: Res<Time>,
+    focus: Res<CameraFocus>,
+    mut nodes: Query<(&LaneTarget, &mut Transform)>,
+) {
+    let factor = if focus.reduced_motion {
+        1.0
+    } else {
+        1.0 - (-10.0 * time.delta_secs()).exp()
+    };
+    for (target, mut transform) in &mut nodes {
+        if transform.translation != target.0 {
+            transform.translation = if transform.translation.distance_squared(target.0) < 0.0001 {
+                target.0
+            } else {
+                transform.translation.lerp(target.0, factor)
+            };
+        }
+    }
+}
+
+fn draw_links(
+    scene: Res<Scene>,
+    selection: Res<Selection>,
+    filter: Res<Filter>,
+    nodes: Query<&Transform, With<NodeKey>>,
+    mut gizmos: Gizmos,
+) {
+    let grid = Color::srgb(0.075, 0.11, 0.19);
+    for index in -6..=6 {
         let x = index as f32 * 2.0;
-        gizmos.line(Vec3::new(x, -0.14, -12.0), Vec3::new(x, -0.14, 36.0), grid);
+        gizmos.line(Vec3::new(x, -0.14, -11.0), Vec3::new(x, -0.14, 57.0), grid);
     }
-    for index in -6..=18 {
+    for index in -5..=28 {
         let z = index as f32 * 2.0;
-        gizmos.line(Vec3::new(-18.0, -0.14, z), Vec3::new(18.0, -0.14, z), grid);
+        gizmos.line(Vec3::new(-12.0, -0.14, z), Vec3::new(12.0, -0.14, z), grid);
     }
+    for (band, color) in [
+        Color::srgb(0.62, 0.39, 0.16),
+        Color::srgb(0.09, 0.42, 0.51),
+        Color::srgb(0.12, 0.39, 0.28),
+        Color::srgb(0.51, 0.18, 0.27),
+        Color::srgb(0.30, 0.33, 0.44),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let x = (band as f32 - 2.0) * 4.4 - 1.85;
+        gizmos.line(Vec3::new(x, -0.12, 0.0), Vec3::new(x, -0.12, 57.0), color);
+    }
+    let point = |key: NodeKey| {
+        scene
+            .entities
+            .get(&key)
+            .and_then(|entity| nodes.get(*entity).ok())
+            .map(|pose| pose.translation)
+    };
     for (&id, task) in &scene.graph.tasks {
-        if let Some(attempt) = task.attempt
-            && let Some(start) = position(NodeKey::Worker(attempt.worker_id), &scene.graph)
-            && let Some(end) = position(NodeKey::Task(id), &scene.graph)
+        if filter.shows(task.state)
+            && let Some(attempt) = task.attempt
+            && (task.state == TaskState::Running
+                || selection.0 == Some(NodeKey::Task(id))
+                || selection.0 == Some(NodeKey::Worker(attempt.worker_id)))
+            && let Some(start) = point(NodeKey::Worker(attempt.worker_id))
+            && let Some(end) = point(NodeKey::Task(id))
         {
             let color = if task.state == TaskState::Running {
                 Color::srgb(0.23, 0.77, 1.0)
@@ -316,10 +553,25 @@ fn draw_links(scene: Res<Scene>, mut gizmos: Gizmos) {
             gizmos.line(start, end, color);
         }
     }
+    if let Some(key) = selection.0
+        && match key {
+            NodeKey::Task(id) => filter.shows(scene.graph.tasks[&id].state),
+            NodeKey::Worker(_) => true,
+        }
+        && let Some(center) = point(key)
+    {
+        let ring = |index| {
+            let angle = index as f32 * std::f32::consts::TAU / 24.0;
+            center + Vec3::new(angle.cos() * 0.72, -0.26, angle.sin() * 0.72)
+        };
+        for index in 0..24 {
+            gizmos.line(ring(index), ring(index + 1), Color::srgb(0.73, 0.84, 1.0));
+        }
+    }
 }
 
 fn focus_selection(graph: Res<Scene>, selection: Res<Selection>, mut focus: ResMut<CameraFocus>) {
-    focus.point = selection.0.and_then(|key| position(key, &graph.graph));
+    focus.point = selection.0.and_then(|key| graph.layout.get(&key).copied());
 }
 
 pub(super) fn camera(
@@ -332,13 +584,15 @@ pub(super) fn camera(
 ) {
     let (orbit, transform) = &mut *camera;
     if keys.just_pressed(KeyCode::KeyR) {
-        **orbit = Orbit::with_distance(focus.home_distance);
+        let (previous, distance) = (orbit.focus, orbit.distance);
+        **orbit = Orbit::with_distance(distance);
+        orbit.focus = previous;
+        orbit.transition = Some((focus.home_point, focus.home_distance));
     }
     if keys.just_pressed(KeyCode::KeyF)
         && let Some(focus) = focus.point
     {
-        orbit.focus = focus;
-        orbit.distance = 9.0;
+        orbit.transition = Some((focus, 9.0));
     }
     if buttons.pressed(MouseButton::Right) {
         orbit.yaw -= motion.delta.x * 0.006;
@@ -349,6 +603,28 @@ pub(super) fn camera(
         - f32::from(u8::from(keys.pressed(KeyCode::KeyA)));
     let forward = f32::from(u8::from(keys.pressed(KeyCode::KeyS)))
         - f32::from(u8::from(keys.pressed(KeyCode::KeyW)));
+    if (buttons.pressed(MouseButton::Right) && motion.delta != Vec2::ZERO)
+        || scroll.delta != Vec2::ZERO
+        || lateral != 0.0
+        || forward != 0.0
+    {
+        orbit.transition = None;
+    }
+    if let Some((target, distance)) = orbit.transition {
+        let factor = if focus.reduced_motion {
+            1.0
+        } else {
+            1.0 - (-8.0 * time.delta_secs()).exp()
+        };
+        orbit.focus = orbit.focus.lerp(target, factor);
+        orbit.distance += (distance - orbit.distance) * factor;
+        if orbit.focus.distance_squared(target) < 0.0001 && (orbit.distance - distance).abs() < 0.01
+        {
+            orbit.focus = target;
+            orbit.distance = distance;
+            orbit.transition = None;
+        }
+    }
     let rotation = Quat::from_rotation_y(orbit.yaw);
     orbit.focus += rotation * Vec3::new(lateral, 0.0, forward) * time.delta_secs() * 8.0;
     let offset = rotation * Vec3::new(0.0, orbit.pitch.sin(), orbit.pitch.cos()) * orbit.distance;
@@ -359,20 +635,34 @@ pub(super) fn camera(
 fn inspect(
     scene: Res<Scene>,
     selection: Res<Selection>,
+    filter: Res<Filter>,
     keys: Res<ButtonInput<KeyCode>>,
     mut connection: ResMut<Connection>,
-    mut inspector: Single<&mut Text, With<Inspector>>,
+    mut inspector: Single<&mut Text, (With<Inspector>, Without<StatusStrip>)>,
+    mut status: Single<&mut Text, (With<StatusStrip>, Without<Inspector>)>,
 ) {
+    update_cancellation(&keys, selection.0, &scene.graph, &mut connection);
+    let mut counts = [0; 5];
+    for task in scene.graph.tasks.values() {
+        counts[lane(task.state)] += 1;
+    }
+    let headline = format!(
+        "INTELLIGENCE NETWORK   |   {}   |   {}   |   {} workers\nQUEUED {}     RUNNING {}     COMPLETE {}     FAILED {}     CANCELLED {}",
+        connection.status,
+        filter.label(),
+        scene.graph.workers.len(),
+        counts[0],
+        counts[1],
+        counts[2],
+        counts[3],
+        counts[4]
+    );
+    if status.0 != headline {
+        status.0 = headline;
+    }
     let detail = match selection.0 {
         Some(NodeKey::Task(id)) => {
             let task = &scene.graph.tasks[&id];
-            if keys.just_pressed(KeyCode::KeyC)
-                && connection.status.starts_with("Connected")
-                && let Some(control) = &connection.cancel
-                && control.try_send(id).is_ok()
-            {
-                connection.status = "Cancellation requested...";
-            }
             let attempt = task.attempt.map_or_else(
                 || "No attempt in this observation".into(),
                 |attempt| {
@@ -383,25 +673,164 @@ fn inspect(
                 },
             );
             format!(
-                "TASK  {id}\n{} / {:?}\n{attempt}\nObserved Unix ms {}",
-                task.state, task.change, task.observed_at_unix_ms
+                "TASK  {id}\n{} / {}{}\n{attempt}\nObserved Unix ms {}",
+                task.state, change_label(task.change),
+                if filter.shows(task.state) { "" } else { " (filtered)" }, task.observed_at_unix_ms
             )
         }
-        Some(NodeKey::Worker(id)) => format!("WORKER  {id}\nObserved in a broker lease event"),
-        None => "Select a task cube or worker sphere.".into(),
+        Some(NodeKey::Worker(id)) => {
+            let mut seen = 0;
+            let mut running = 0;
+            for task in scene.graph.tasks.values().filter(|task| task.attempt.is_some_and(|attempt| attempt.worker_id == id)) {
+                seen += 1;
+                running += usize::from(task.state == TaskState::Running);
+            }
+            format!("WORKER  {id}\n{running} running / {seen} attributed tasks\nLatest observed attempts only")
+        }
+        None => "Pick a task or worker to inspect it.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
     };
-    let control = if connection.cancel.is_some() {
-        "\nC - cancel selected task"
-    } else {
-        ""
+    let receipt = match connection.cancellation {
+        Cancellation::Confirm(id) => format!(
+            "Confirm cancel {}?\nY - confirm   Esc - dismiss",
+            short_id(id)
+        ),
+        Cancellation::Pending(id) => {
+            format!("Cancellation sent for {}. Awaiting broker.", short_id(id))
+        }
+        Cancellation::Finished(id, state) => {
+            format!("Broker response: {} is {state}.", short_id(id))
+        }
+        Cancellation::Uncertain => "Cancellation outcome uncertain. Check the broker.".into(),
+        Cancellation::Idle if connection.cancel.is_some() => "C - request cancellation".into(),
+        Cancellation::Idle => "Read-only controls".into(),
     };
+    let activity = scene
+        .recent
+        .iter()
+        .rev()
+        .map(|(sequence, id, change)| {
+            format!(
+                "#{sequence:<4} {}  {}",
+                short_id(*id),
+                change_label(*change)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let text = format!(
-        "{}\n\n{} tasks   {} workers observed\n\n{detail}\n\nResource measurements unavailable\n\nRight drag - orbit\nWheel - zoom   WASD - pan\nF - focus   R - reset{control}",
-        connection.status,
-        scene.graph.tasks.len(),
-        scene.graph.workers.len()
+        "INSPECTOR\n\n{detail}\n\n{receipt}\n\nRECENT OBSERVATIONS\n{}\n\nResource measurements unavailable\n\nTab - filter   N - next task\nB - next worker   F - focus\nRight drag - orbit   R - reset\nWheel - zoom   WASD - pan",
+        if activity.is_empty() {
+            "Waiting for broker events"
+        } else {
+            &activity
+        }
     );
     if inspector.0 != text {
         inspector.0 = text;
+    }
+}
+
+fn update_cancellation(
+    keys: &ButtonInput<KeyCode>,
+    selected: Option<NodeKey>,
+    graph: &Graph,
+    connection: &mut Connection,
+) {
+    let Some(control) = &connection.cancel else {
+        return;
+    };
+    let task = match selected {
+        Some(NodeKey::Task(id))
+            if graph.tasks.get(&id).is_some_and(|task| {
+                matches!(task.state, TaskState::Queued | TaskState::Running)
+            }) =>
+        {
+            Some(id)
+        }
+        _ => None,
+    };
+    match connection.cancellation {
+        Cancellation::Confirm(id) => {
+            if task != Some(id) || keys.just_pressed(KeyCode::Escape) {
+                connection.cancellation = Cancellation::Idle;
+            } else if keys.just_pressed(KeyCode::KeyY) {
+                connection.cancellation =
+                    if connection.status.starts_with("Connected") && control.try_send(id).is_ok() {
+                        Cancellation::Pending(id)
+                    } else {
+                        Cancellation::Uncertain
+                    };
+            }
+        }
+        Cancellation::Pending(_) => {}
+        _ if keys.just_pressed(KeyCode::KeyC) && connection.status.starts_with("Connected") => {
+            if let Some(id) = task {
+                connection.cancellation = Cancellation::Confirm(id);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn short_id(id: TaskId) -> String {
+    id.to_string()[..8].to_owned()
+}
+
+fn change_label(change: ExternalTaskChange) -> &'static str {
+    match change {
+        ExternalTaskChange::Submitted => "Submitted",
+        ExternalTaskChange::Claimed => "Claimed",
+        ExternalTaskChange::LeaseExpired => "Lease expired",
+        ExternalTaskChange::WorkerRevoked => "Worker revoked",
+        ExternalTaskChange::Completed => "Completed",
+        ExternalTaskChange::Cancelled => "Cancelled",
+        ExternalTaskChange::DeadlineExceeded => "Deadline exceeded",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vespera_view::TaskNode;
+
+    #[test]
+    fn cancellation_requires_confirmation_for_the_same_observed_task() {
+        let id = TaskId::new();
+        let mut graph = Graph::default();
+        graph.tasks.insert(
+            id,
+            TaskNode {
+                slot: 0,
+                state: TaskState::Queued,
+                attempt: None,
+                change: ExternalTaskChange::Submitted,
+                observed_at_unix_ms: 1,
+            },
+        );
+        let (_, updates) = mpsc::channel(1);
+        let (cancel, mut requests) = mpsc::channel(1);
+        let mut connection = Connection {
+            updates,
+            cancel: Some(cancel),
+            status: "Connected",
+            cancellation: Cancellation::Idle,
+        };
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::KeyC);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        assert!(matches!(connection.cancellation, Cancellation::Confirm(task) if task == id));
+        assert!(requests.try_recv().is_err());
+        keys.reset_all();
+        keys.press(KeyCode::KeyY);
+        update_cancellation(&keys, None, &graph, &mut connection);
+        assert!(requests.try_recv().is_err());
+        keys.reset_all();
+        keys.press(KeyCode::KeyC);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        keys.reset_all();
+        keys.press(KeyCode::KeyY);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        assert_eq!(requests.try_recv().unwrap(), id);
+        assert!(matches!(connection.cancellation, Cancellation::Pending(task) if task == id));
     }
 }

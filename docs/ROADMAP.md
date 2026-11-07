@@ -128,7 +128,7 @@ Implement the central native Rust 3D orchestration and world views, evaluating B
 
 ### Living Intelligence Atlas sequence
 
-1. Evolve the current Intelligence Network scene with consistent color, useful grouping, clear selection, a focused inspector and transitions driven by observed events.
+1. Continue evolving the Intelligence Network. State lanes, scoped attempt links, recent observations, filters, camera transitions and confirmed cancellation are implemented. Search and broader typed entity coverage remain.
 2. Add the Machine layer using real hardware observations and scheduler evidence. Distinguish estimates, measurements and unavailable data.
 3. Add a Swarm Perspective backed by actual delegation, authorized communication and workflow relationships.
 4. Extend the existing persistent Living World with model-driven decisions routed through the scheduler and fenced by the world revision.

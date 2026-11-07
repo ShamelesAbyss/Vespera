@@ -20,6 +20,9 @@ struct Options {
     broker: SocketAddr,
     #[arg(long)]
     allow_cancel: bool,
+    /// Disable animated camera focus and task lane transitions.
+    #[arg(long)]
+    reduced_motion: bool,
     /// Open a persistent simulation world instead of the broker view.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
     world: Option<PathBuf>,
@@ -33,12 +36,13 @@ enum Update {
     Reset,
     Observation(BrokerEventEntry),
     Cancelled(TaskId, TaskState),
+    CancelFailed,
 }
 
 fn main() -> ExitCode {
     let options = Options::parse();
     if let Some(path) = options.world {
-        return match world_scene::run(path, options.allow_world_control) {
+        return match world_scene::run(path, options.allow_world_control, options.reduced_motion) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");
@@ -72,7 +76,11 @@ fn main() -> ExitCode {
         }
     };
     std::thread::spawn(move || runtime.block_on(observe(client, observations, actions)));
-    scene::run(receiver, options.allow_cancel.then_some(control));
+    scene::run(
+        receiver,
+        options.allow_cancel.then_some(control),
+        options.reduced_motion,
+    );
     ExitCode::SUCCESS
 }
 
@@ -90,7 +98,7 @@ async fn observe(
                         if let Some(task) = action {
                             let update = match client.cancel(task).await {
                                 Ok(state) => Update::Cancelled(task, state),
-                                Err(_) => Update::Status("Cancellation failed. Inspect the broker before retrying."),
+                                Err(_) => Update::CancelFailed,
                             };
                             if updates.send(update).await.is_err() { return; }
                         }

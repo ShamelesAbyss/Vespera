@@ -64,7 +64,11 @@ struct Palette {
 #[derive(Component)]
 struct Details;
 
-pub(super) fn run(path: PathBuf, allow_control: bool) -> Result<(), WorldError> {
+pub(super) fn run(
+    path: PathBuf,
+    allow_control: bool,
+    reduced_motion: bool,
+) -> Result<(), WorldError> {
     let world = WorldStore::read(&path)?;
     let state = world.snapshot();
     let home_distance = f32::from(state.width.max(state.depth))
@@ -91,7 +95,9 @@ pub(super) fn run(path: PathBuf, allow_control: bool) -> Result<(), WorldError> 
         })
         .insert_resource(CameraFocus {
             point: None,
+            home_point: Vec3::ZERO,
             home_distance,
+            reduced_motion,
         })
         .init_resource::<Selected>()
         .add_systems(Startup, setup)

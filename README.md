@@ -14,7 +14,7 @@ The optional Bevy executable renders observed broker tasks and workers in 3D. Us
 cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765
 ```
 
-Left-click a task cube or worker sphere to inspect it. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus on the selected object or R to reset the camera. Launch with `--allow-cancel` to enable C on a selected task. Cancellation uses the signed broker API. The view shows retained observations and labels resource measurements as unavailable. Providers, models, memory and richer orchestration telemetry still need integration. [Broker setup](docs/CLI.md#external-worker-service)
+The Intelligence Network groups tasks by observed state. Pick a task or worker, use N or B to cycle through them, or press Tab to filter tasks. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus or R to reset the camera. With `--allow-cancel`, press C on a queued or running task, then Y to confirm or Esc to dismiss. The inspector shows the broker response. Add `--reduced-motion` to skip animated lane and camera focus transitions. The view labels resource measurements as unavailable. [Broker setup](docs/CLI.md#external-worker-service)
 
 Open the same executable in World Simulation Mode with an initialized database.
 
