@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-07 — Startup provider residency reconciliation
+
+Verified implementation checkpoint `aa38cf6a09ebc033781c4637d35b6bdc7cdd4d1d` was pushed to `main`. The preceding provider health watch passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42424520669).
+
+`run-agent` and `run-workflow` can now opt into a startup residency observation. The scheduler charges already resident models against its headroom, fences matching model names, and keeps observed models outside its owned cleanup set. Windows formatting, strict workspace Clippy and the offline workspace suite passed. A CLI fixture verified a RAM pressure rejection, an Ollama alias ownership rejection and successful cold execution with acknowledged cleanup.
+
+Live Windows Ollama 0.40.13 reported one externally preloaded `hermes3:8b` model at 4,547,149,823 VRAM bytes. The CLI rejected admission, reported no cleanup actions and left that model resident. After operator unload, a cold invocation completed successfully and acknowledged its own unload. The final provider list was empty.
+
+The observation is scoped, opt-in and taken once per invocation. Continuous pressure and durable ownership reconciliation remain open. Next assess context changes across scheduler reuse and the assumptions behind per-request memory admission.
+
 ## 2026-11-07 — Continuous provider health monitoring
 
 Verified implementation checkpoint `064971760a3689f1684ab2c24e100e6675f5d891` was pushed to `main`.
