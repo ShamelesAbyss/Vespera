@@ -22,7 +22,9 @@ use vespera_providers::{
     OpenAiCompatibleProvider, OpenAiConfig, ProviderError, ProviderHealthStatus, SecretRef,
     ValidatedEndpoint,
 };
-use vespera_scheduler::{ResourceScheduler, SchedulerError, SchedulingPolicy};
+use vespera_scheduler::{
+    QueuePolicy, ResourceScheduler, SchedulerError, SchedulingPolicy, SchedulingPreferences,
+};
 
 /// Application errors deliberately exclude configuration endpoints/credential values.
 #[derive(Debug, Error)]
@@ -216,6 +218,22 @@ pub struct CleanupReport {
     /// Sanitized per-model lifecycle failures.
     pub unload_errors: BTreeMap<ModelId, String>,
 }
+fn scope_inventory(config: &mut AppConfig) {
+    let providers: BTreeSet<_> = config
+        .models
+        .iter()
+        .map(|model| model.provider_id)
+        .collect();
+    config
+        .providers
+        .retain(|provider| providers.contains(&provider.id));
+    let models: BTreeSet<_> = config.models.iter().map(|model| model.id).collect();
+    config
+        .scheduling
+        .model_priorities
+        .retain(|model, _| models.contains(model));
+}
+
 impl VesperaRuntime {
     /// Compose only a workflow's named agents and matching worker inventory.
     /// The coordinator's model is unnecessary unless it is also a step candidate.
@@ -283,14 +301,7 @@ impl VesperaRuntime {
                         })
                 })
         });
-        let providers: BTreeSet<_> = scoped
-            .models
-            .iter()
-            .map(|model| model.provider_id)
-            .collect();
-        scoped
-            .providers
-            .retain(|provider| providers.contains(&provider.id));
+        scope_inventory(&mut scoped);
         let runtime = Self::from_config(&scoped).await?;
         for agent in selected {
             runtime.agents.register_agent(agent).await?;
@@ -342,28 +353,30 @@ impl VesperaRuntime {
             scoped.agents.push(agent.clone());
         }
         scoped.models.retain(|model| models.contains(&model.id));
-        let providers: BTreeSet<_> = scoped
-            .models
-            .iter()
-            .map(|model| model.provider_id)
-            .collect();
-        scoped
-            .providers
-            .retain(|provider| providers.contains(&provider.id));
+        scope_inventory(&mut scoped);
         Self::from_config(&scoped).await
     }
     /// Construct without network requests or model activation.
     pub async fn from_config(config: &AppConfig) -> Result<Self, RuntimeError> {
         let registry = configured_registry(config).await?;
-        let scheduler = Arc::new(ResourceScheduler::new_with_overhead(
+        let settings = &config.scheduling;
+        let keep_alive = settings.keep_alive_seconds.map(u64::from);
+        let scheduler = Arc::new(ResourceScheduler::new_configured(
             registry.clone(),
             SchedulingPolicy {
-                queue: Default::default(),
+                queue: QueuePolicy {
+                    capacity: settings.queue_capacity,
+                    max_priority_bypasses: settings.max_priority_bypasses,
+                },
                 budget: config.resources,
-                default_keep_alive: Duration::from_secs(300),
-                evict_idle_on_pressure: true,
+                default_keep_alive: Duration::from_secs(keep_alive.unwrap_or(300)),
+                evict_idle_on_pressure: settings.evict_idle_on_pressure,
             },
             config.inference_overhead,
+            SchedulingPreferences {
+                model_priorities: settings.model_priorities.clone(),
+                inference_keep_alive_seconds: keep_alive,
+            },
         ));
         let agents = AgentRuntime::new(registry.clone(), scheduler.clone());
         for agent in &config.agents {

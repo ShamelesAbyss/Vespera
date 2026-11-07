@@ -295,7 +295,7 @@ impl AgentRuntime {
                     options.max_output_tokens,
                     active.inference.context_tokens,
                     options.temperature,
-                    None,
+                    self.scheduler.inference_keep_alive_seconds(),
                 )?;
                 {
                     let mut state = lock_state(&self.state);

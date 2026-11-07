@@ -71,6 +71,9 @@ identifier, advertised capabilities, known RAM/VRAM estimates and appropriate
 budgets. Estimates must include retained context allocation and headroom.
 Configure temporary per-request memory in the optional
 [`[inference_overhead]` table](SCHEDULER.md#per-inference-memory-allowance).
+A separate [`[scheduling]` table](SCHEDULER.md#bounded-queue-and-shutdown)
+controls admission queue bounds, model priorities, native keep-alive and
+pressure eviction.
 A zero
 VRAM estimate means an explicit CPU-only estimate; it does not force a provider
 onto the CPU. Provider setup must match the estimate. Do not infer RAM residency

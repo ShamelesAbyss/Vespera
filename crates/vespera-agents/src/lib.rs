@@ -917,7 +917,7 @@ impl AgentRuntime {
                 options.max_output_tokens,
                 context_tokens,
                 options.temperature,
-                None,
+                self.scheduler.inference_keep_alive_seconds(),
             ) {
                 Ok(request) => request,
                 Err(error) => {

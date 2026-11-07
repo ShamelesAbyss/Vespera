@@ -133,12 +133,40 @@ release does not establish that provider-side computation stopped.
 ## Bounded queue and shutdown
 
 `SchedulingPolicy.queue` defaults to 64 waiting requests and at most eight
-priority bypasses. Granted requests (including preparation) are independently
-bounded by `max_concurrent_inferences`. `admit_and_prepare` uses priority zero;
-`admit_with_priority` accepts a `u8`, with larger values preferred. Equal
-priorities are FIFO. After the configured number of bypasses, the oldest
-eligible waiter is selected before newer high-priority arrivals. Capacity zero
-allows immediate free-slot admission but rejects waiting.
+priority bypasses. Granted requests, including preparation, are independently
+bounded by `max_concurrent_inferences`. Managed and default manual admissions
+use the configured model priority, which defaults to zero. The library's
+`admit_with_priority` accepts an explicit `u8` override for the queue.
+Larger values win and equal priorities are FIFO. After the configured number
+of bypasses, the oldest eligible waiter is selected. Capacity zero allows
+immediate free-slot admission and rejects waiting.
+
+Configure the runtime with an optional TOML table.
+
+```toml
+[scheduling]
+queue_capacity = 64
+max_priority_bypasses = 8
+keep_alive_seconds = 300
+evict_idle_on_pressure = true
+
+[scheduling.model_priorities]
+"22222222-2222-4222-8222-222222222222" = 20
+```
+
+Queue capacity and bypasses accept 0–4,096. Zero bypasses selects FIFO.
+Pressure eviction prefers idle models with lower configured priority,
+then the least recently admitted among ties. Set
+`evict_idle_on_pressure = false` to reject work that would require eviction.
+This setting applies to memory pressure. An idle context change still needs
+an acknowledged unload before reload. Priorities refer to the effective
+inventory, including a selected durable catalog. Capability matching and
+agent model policies govern model selection.
+
+`keep_alive_seconds` accepts 1–86,400 seconds. Native Ollama receives it on
+preload and inference. With the setting omitted, preload requests 300 seconds
+and inference uses the provider default. Compatible APIs lack a portable
+retention hint. An explicit cleanup unload overrides the requested retention.
 
 Cancelled or dropped waiting futures remove their tickets synchronously. Queue
 permits follow inference lease lifetime, so preparation errors and handle drop

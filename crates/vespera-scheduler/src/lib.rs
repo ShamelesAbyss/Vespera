@@ -122,6 +122,13 @@ pub struct SchedulingPolicy {
     pub evict_idle_on_pressure: bool,
 }
 
+/// Model preferences and optional keep-alive for managed inference.
+#[derive(Debug, Clone, Default)]
+pub struct SchedulingPreferences {
+    pub model_priorities: BTreeMap<ModelId, u8>,
+    pub inference_keep_alive_seconds: Option<u64>,
+}
+
 /// Accounted model reservation (not physical telemetry).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentModel {
@@ -385,6 +392,7 @@ pub struct ResourceScheduler {
     registry: Arc<ModelRegistry>,
     policy: SchedulingPolicy,
     overhead: InferenceOverhead,
+    preferences: Arc<SchedulingPreferences>,
     state: Arc<Mutex<SchedulerState>>,
     gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
     residency_gate: Arc<AsyncMutex<()>>,
@@ -410,11 +418,23 @@ impl ResourceScheduler {
         policy: SchedulingPolicy,
         overhead: InferenceOverhead,
     ) -> Self {
+        Self::new_configured(registry, policy, overhead, SchedulingPreferences::default())
+    }
+
+    /// Create an empty scheduler with operator-selected model preferences.
+    #[must_use]
+    pub fn new_configured(
+        registry: Arc<ModelRegistry>,
+        policy: SchedulingPolicy,
+        overhead: InferenceOverhead,
+        preferences: SchedulingPreferences,
+    ) -> Self {
         Self {
             queue: AdmissionQueue::new(policy.budget.max_concurrent_inferences, policy.queue),
             registry,
             policy,
             overhead,
+            preferences: Arc::new(preferences),
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
             residency_gate: Arc::new(AsyncMutex::new(())),
@@ -770,6 +790,19 @@ impl ResourceScheduler {
         self.policy.budget.max_context_tokens
     }
 
+    /// Requested post-inference retention hint for provider-native requests.
+    pub fn inference_keep_alive_seconds(&self) -> Option<u64> {
+        self.preferences.inference_keep_alive_seconds
+    }
+
+    fn model_priority(&self, model_id: ModelId) -> u8 {
+        self.preferences
+            .model_priorities
+            .get(&model_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Admit an already validated request, fencing its provider-native model binding
     /// before any lifecycle operation. The admitted context remains exactly the request's.
     pub async fn admit_request(
@@ -781,7 +814,7 @@ impl ResourceScheduler {
         self.prepare(
             model_id,
             Some(request.context_window_limit()),
-            0,
+            self.model_priority(model_id),
             Some(request.model_name()),
             cancel,
         )
@@ -827,8 +860,13 @@ impl ResourceScheduler {
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
     ) -> Result<ScheduledInference, SchedulerError> {
-        self.admit_with_priority(model_id, requested_context_tokens, 0, cancel)
-            .await
+        self.admit_with_priority(
+            model_id,
+            requested_context_tokens,
+            self.model_priority(model_id),
+            cancel,
+        )
+        .await
     }
 
     /// Enqueue bounded admission. Larger priority values run first, subject to
@@ -1054,7 +1092,9 @@ impl ResourceScheduler {
                                             ResidencyState::Loading | ResidencyState::Unloading
                                         )
                                 })
-                                .min_by_key(|entry| entry.last_used_tick)
+                                .min_by_key(|entry| {
+                                    (self.model_priority(entry.model_id), entry.last_used_tick)
+                                })
                                 .map(|entry| entry.model_id)
                         } else {
                             None

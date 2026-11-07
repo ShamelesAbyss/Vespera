@@ -3,7 +3,7 @@
 //! Parsing never opens a provider connection or reads a credential value. A
 //! validated configuration is not proof of provider availability or model fit.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
@@ -51,6 +51,29 @@ pub struct ProviderConfig {
     pub request_timeout_seconds: u32,
 }
 
+/// Optional runtime scheduling controls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SchedulingConfig {
+    pub queue_capacity: usize,
+    pub max_priority_bypasses: u32,
+    pub keep_alive_seconds: Option<u32>,
+    pub evict_idle_on_pressure: bool,
+    pub model_priorities: BTreeMap<ModelId, u8>,
+}
+
+impl Default for SchedulingConfig {
+    fn default() -> Self {
+        Self {
+            queue_capacity: 64,
+            max_priority_bypasses: 8,
+            keep_alive_seconds: None,
+            evict_idle_on_pressure: true,
+            model_priorities: BTreeMap::new(),
+        }
+    }
+}
+
 /// Complete, versioned local-first configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +85,8 @@ pub struct AppConfig {
     pub resources: ResourceBudget,
     #[serde(default)]
     pub inference_overhead: InferenceOverhead,
+    #[serde(default)]
+    pub scheduling: SchedulingConfig,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
@@ -160,6 +185,21 @@ impl AppConfig {
         self.resources
             .validate()
             .map_err(|_| ConfigError::InvalidField("resources"))?;
+        if self.scheduling.queue_capacity > 4096 {
+            return Err(ConfigError::InvalidField("scheduling.queue_capacity"));
+        }
+        if self.scheduling.max_priority_bypasses > 4096 {
+            return Err(ConfigError::InvalidField(
+                "scheduling.max_priority_bypasses",
+            ));
+        }
+        if self
+            .scheduling
+            .keep_alive_seconds
+            .is_some_and(|value| !(1..=86_400).contains(&value))
+        {
+            return Err(ConfigError::InvalidField("scheduling.keep_alive_seconds"));
+        }
 
         let mut provider_ids = BTreeSet::new();
         for provider in &self.providers {
@@ -183,6 +223,16 @@ impl AppConfig {
             if !provider_ids.contains(&model.provider_id) {
                 return Err(error("provider reference does not exist"));
             }
+        }
+        if self
+            .scheduling
+            .model_priorities
+            .keys()
+            .any(|id| !model_ids.contains(id))
+        {
+            return Err(ConfigError::InvalidField(
+                "scheduling.model_priorities references an unknown model",
+            ));
         }
         let mut agent_ids = BTreeSet::new();
         for agent in &self.agents {
@@ -279,6 +329,33 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = include_str!("../../../config/local.toml");
+
+    #[test]
+    fn scheduling_rejects_invalid_limits_and_unknown_model_references() {
+        for (declaration, expected) in [
+            (
+                "[scheduling]\nqueue_capacity = 4097",
+                "scheduling.queue_capacity",
+            ),
+            (
+                "[scheduling]\nmax_priority_bypasses = 4097",
+                "scheduling.max_priority_bypasses",
+            ),
+            (
+                "[scheduling]\nkeep_alive_seconds = 0",
+                "scheduling.keep_alive_seconds",
+            ),
+            (
+                "[scheduling.model_priorities]\n\"55555555-5555-4555-8555-555555555555\" = 5",
+                "scheduling.model_priorities references an unknown model",
+            ),
+        ] {
+            assert!(matches!(
+                AppConfig::parse(&format!("{SAMPLE}\n{declaration}\n")),
+                Err(ConfigError::InvalidField(field)) if field == expected
+            ));
+        }
+    }
 
     #[test]
     fn sample_is_valid() {

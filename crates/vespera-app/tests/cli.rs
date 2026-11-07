@@ -2228,6 +2228,23 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
     let mut config = runtime_config(&fixture, false, true);
     // Unrelated missing credentials/unsupported adapters must not initialize for this fixed agent.
     config.push_str("\n[[providers]]\nid = \"44444444-4444-4444-8444-444444444444\"\nname = \"Unrelated\"\nkind = \"custom\"\nendpoint = \"http://127.0.0.1:1\"\ncredential_env = \"VESPERA_UNRELATED_UNSET_FIXTURE_KEY\"\n");
+    config.push_str(
+        r#"
+[[models]]
+id = "55555555-5555-4555-8555-555555555555"
+provider_id = "44444444-4444-4444-8444-444444444444"
+name = "Unrelated"
+identifier = "unrelated"
+capabilities = ["text-generation"]
+
+[scheduling]
+keep_alive_seconds = 42
+
+[scheduling.model_priorities]
+"55555555-5555-4555-8555-555555555555" = 5
+"22222222-2222-4222-8222-222222222222" = 2
+"#,
+    );
     let output = run_fixture_agent(&directory, &config, &["--resume", "--unload-after"]);
     assert!(
         output.status.success(),
@@ -2270,6 +2287,7 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
     );
     let preload: serde_json::Value = serde_json::from_str(&requests[1].body).unwrap();
     assert_eq!(preload["options"]["num_ctx"], 512);
+    assert_eq!(preload["keep_alive"], "42s");
     let inference: serde_json::Value = serde_json::from_str(&requests[2].body).unwrap();
     assert_eq!(inference["model"], "fixture-model");
     assert_eq!(
@@ -2278,6 +2296,7 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
     );
     assert_eq!(inference["options"]["num_predict"], 32);
     assert_eq!(inference["options"]["num_ctx"], 512);
+    assert_eq!(inference["keep_alive"], "42s");
     let unload: serde_json::Value = serde_json::from_str(&requests[3].body).unwrap();
     assert_eq!(unload["keep_alive"], 0);
     assert!(unload.get("options").is_none());
@@ -2285,6 +2304,121 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
         fs::read_to_string(directory.0.join("test.toml")).unwrap(),
         config
     );
+}
+
+#[tokio::test]
+async fn configured_priority_controls_managed_queue_order_and_pressure_eviction() {
+    use std::time::Duration;
+    use vespera_app::runtime::VesperaRuntime;
+    use vespera_core::ModelId;
+    use vespera_providers::{BoundedInferenceRequest, CancellationToken, ChatMessage, ChatRole};
+    use vespera_scheduler::{QueueError, SchedulerError};
+
+    let fixture = HttpFixture::new(false);
+    let mut config =
+        vespera_config::AppConfig::parse(&runtime_config(&fixture, false, true)).unwrap();
+    let high = config.models[0].id;
+    let low = ModelId::new();
+    let third = ModelId::new();
+    for (id, name) in [(low, "low-model"), (third, "third-model")] {
+        let mut model = config.models[0].clone();
+        model.id = id;
+        model.identifier = name.into();
+        config.models.push(model);
+    }
+    config.resources.ram_bytes = 200;
+    config.scheduling.queue_capacity = 2;
+    config.scheduling.max_priority_bypasses = 1;
+    config.scheduling.model_priorities.insert(high, 9);
+    let runtime = VesperaRuntime::from_config(&config).await.unwrap();
+    let cancel = CancellationToken::new();
+    runtime.refresh_health(cancel.clone()).await;
+    let scheduler = runtime.scheduler();
+    let high_lease = scheduler
+        .admit_and_prepare(high, None, cancel.clone())
+        .await
+        .unwrap();
+    high_lease.release();
+    let active = scheduler
+        .admit_and_prepare(low, None, cancel.clone())
+        .await
+        .unwrap();
+
+    let enqueue = |id, name| {
+        let scheduler = scheduler.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let request = BoundedInferenceRequest::new(
+                name,
+                vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "bounded".into(),
+                }],
+                16,
+                512,
+                None,
+                None,
+            )
+            .unwrap();
+            scheduler.admit_request(id, &request, cancel).await
+        })
+    };
+    let wait_for = |count| async move {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while scheduler.queue_snapshot().waiting != count {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    };
+    let queued_low = enqueue(low, "low-model");
+    wait_for(1).await;
+    let queued_high = enqueue(high, "fixture-model");
+    wait_for(2).await;
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(third, None, cancel.clone())
+            .await,
+        Err(SchedulerError::Queue(QueueError::Full))
+    ));
+    active.release();
+    let winner = tokio::time::timeout(Duration::from_secs(3), queued_high)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(!queued_low.is_finished());
+    winner.release();
+    let next = queued_low.await.unwrap().unwrap();
+    next.release();
+    let _third = scheduler
+        .admit_and_prepare(third, None, cancel)
+        .await
+        .unwrap();
+    let reservations = scheduler.resident_models().await;
+    assert!(reservations.iter().any(|entry| entry.model_id == high));
+    assert!(!reservations.iter().any(|entry| entry.model_id == low));
+
+    config.scheduling.evict_idle_on_pressure = false;
+    let runtime = VesperaRuntime::from_config(&config).await.unwrap();
+    let cancel = CancellationToken::new();
+    runtime.refresh_health(cancel.clone()).await;
+    let scheduler = runtime.scheduler();
+    for id in [high, low] {
+        scheduler
+            .admit_and_prepare(id, None, cancel.clone())
+            .await
+            .unwrap()
+            .release();
+    }
+    assert!(matches!(
+        scheduler.admit_and_prepare(third, None, cancel).await,
+        Err(SchedulerError::BudgetExceeded(_))
+    ));
+    let reservations = scheduler.resident_models().await;
+    assert_eq!(reservations.len(), 2);
+    assert!(reservations.iter().any(|entry| entry.model_id == low));
 }
 
 #[test]
