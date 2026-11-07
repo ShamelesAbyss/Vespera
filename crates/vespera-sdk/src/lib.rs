@@ -28,7 +28,10 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
+pub use vespera_core::{
+    AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, Capability, EventEnvelope,
+    EventKind, ExternalAttempt, ExternalTaskChange, Task, TaskId, TaskState,
+};
 
 use transport::Transport;
 
@@ -101,6 +104,8 @@ pub enum ErrorCode {
     DuplicateTask,
     StaleLease,
     ResultConflict,
+    ForeignCursor,
+    CursorExpired,
     BodyLimit,
     ExpectedJson,
     NonceCapacity,
@@ -155,17 +160,36 @@ pub struct SubmittedTask {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum OperatorRequest<'a> {
     Submit(&'a Submission),
-    Inspect { task_id: TaskId },
-    Cancel { task_id: TaskId },
-    Revoke { worker_id: AgentId },
+    Inspect {
+        task_id: TaskId,
+    },
+    Cancel {
+        task_id: TaskId,
+    },
+    Revoke {
+        worker_id: AgentId,
+    },
+    Replay {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 #[derive(Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum WorkerRequest<'a> {
     Claim {},
-    Renew { fence: Fence },
-    Complete { fence: Fence, content: &'a str },
+    Renew {
+        fence: Fence,
+    },
+    Complete {
+        fence: Fence,
+        content: &'a str,
+    },
+    Replay {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 #[derive(Deserialize)]
@@ -182,6 +206,18 @@ struct Renewal {
 pub struct OperatorClient(Transport);
 
 impl OperatorClient {
+    /// Read a page of observed broker events, including all workers.
+    pub async fn replay(
+        &self,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, ClientError> {
+        self.0
+            .post(&OperatorRequest::Replay { after, limit })
+            .await?
+            .json(StatusCode::OK)
+            .await
+    }
     pub fn new(address: SocketAddr, key: SigningKey) -> Result<Self, ClientError> {
         Transport::new(address, "/v2/operator", "operator".into(), key).map(Self)
     }
@@ -225,6 +261,18 @@ impl OperatorClient {
 pub struct WorkerClient(Transport);
 
 impl WorkerClient {
+    /// Read a page of events about attempts assigned to this worker.
+    pub async fn replay(
+        &self,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, ClientError> {
+        self.0
+            .post(&WorkerRequest::Replay { after, limit })
+            .await?
+            .json(StatusCode::OK)
+            .await
+    }
     pub fn new(
         address: SocketAddr,
         worker_id: AgentId,

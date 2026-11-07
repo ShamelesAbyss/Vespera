@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use vespera_core::{AgentId, TaskId};
 use vespera_sdk::{
-    ClientError, ErrorCode, OperatorClient, SigningKey, Submission, TaskState, WorkerClient,
+    ClientError, ErrorCode, EventKind, ExternalTaskChange, OperatorClient, SigningKey, Submission,
+    TaskState, WorkerClient,
 };
 
 const OPERATOR: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -334,6 +335,23 @@ async fn sdk_executes_and_reconciles_a_task_against_the_cli_service() {
     let lease = worker.claim().await.unwrap().unwrap();
     assert_eq!(lease.task.prompt, submission.prompt);
     assert_eq!(lease.task.id, task);
+    let page = worker.replay(None, 1).await.unwrap();
+    let claim = &page.entries[0].event;
+    assert_eq!(claim.schema_version, 3);
+    assert!(matches!(
+        claim.kind,
+        EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::Claimed, attempt: Some(attempt), ..
+        } if attempt.worker_id == first && attempt.attempt_id == lease.fence.attempt_id
+    ));
+    assert!(other.replay(None, 1).await.unwrap().entries.is_empty());
+    assert!(matches!(
+        other.replay(Some(page.next_cursor), 1).await,
+        Err(ClientError::Rejected {
+            status: 409,
+            code: Some(ErrorCode::ForeignCursor)
+        })
+    ));
     assert!(worker.renew(lease.fence).await.unwrap() > 0);
     assert!(matches!(
         other.renew(lease.fence).await,
@@ -347,6 +365,25 @@ async fn sdk_executes_and_reconciles_a_task_against_the_cli_service() {
         worker.complete(lease.fence, "Result: λ").await.unwrap(),
         result
     );
+    let reconnected =
+        WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let next = reconnected
+        .replay(Some(page.next_cursor), 64)
+        .await
+        .unwrap();
+    assert_eq!(next.entries.len(), 1);
+    assert!(!next.has_more);
+    assert!(matches!(
+        next.entries[0].event.kind,
+        EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::Completed,
+            state: TaskState::Completed,
+            ..
+        }
+    ));
+    let serialized = serde_json::to_string(&next).unwrap();
+    assert!(!serialized.contains("Result:"));
+    assert!(!serialized.contains("Summarize:"));
     let inspected = operator.inspect(task).await.unwrap();
     assert_eq!(inspected.state, TaskState::Completed);
     assert_eq!(inspected.result.unwrap(), result);
@@ -362,9 +399,24 @@ async fn sdk_executes_and_reconciles_a_task_against_the_cli_service() {
         operator.cancel(pending).await.unwrap(),
         TaskState::Cancelled
     );
+    let page = operator.replay(None, 64).await.unwrap();
+    assert_eq!(page.entries.len(), 5);
+    assert!(
+        matches!(page.entries[4].event.kind, EventKind::ExternalTaskChanged {
+        change: ExternalTaskChange::Cancelled, task_id, attempt: None, ..
+    } if task_id == pending)
+    );
+    assert!(
+        reconnected
+            .replay(Some(next.next_cursor), 64)
+            .await
+            .unwrap()
+            .entries
+            .is_empty()
+    );
     operator.revoke(first).await.unwrap();
     assert!(matches!(
-        worker.claim().await,
+        reconnected.replay(Some(next.next_cursor), 64).await,
         Err(ClientError::Rejected {
             status: 401,
             code: Some(ErrorCode::Unauthorized)

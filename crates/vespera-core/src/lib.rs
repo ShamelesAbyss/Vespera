@@ -23,7 +23,10 @@ mod task;
 pub use agent::{AgentDefinition, AgentIdentity, AgentStatus, ModelSelectionPolicy, Permission};
 pub use capability::Capability;
 pub use error::DomainError;
-pub use event::{EVENT_SCHEMA_VERSION, EventEnvelope, EventKind};
+pub use event::{
+    BrokerEventCursor, BrokerEventEntry, BrokerEventPage, EVENT_SCHEMA_VERSION, EventEnvelope,
+    EventKind, ExternalAttempt, ExternalTaskChange,
+};
 pub use id::{AgentId, EventId, MemoryId, ModelId, ProviderId, TaskId};
 pub use memory::{MemoryLayer, MemoryNamespace, MemoryRecord};
 pub use model::{ModelAvailability, ModelDescriptor, ProviderKind};

@@ -34,9 +34,11 @@ The original loopback bearer endpoints under `/v1` have been retired. Use fresh 
 | `/v2/operator` | `inspect` | `task_id` | 200 with `state` and `result` (nullable) |
 | `/v2/operator` | `cancel` | `task_id` | 200 with resulting `state` |
 | `/v2/operator` | `revoke` | `worker_id` | 204 |
+| `/v2/operator` | `replay` | `after` (optional cursor), `limit` | 200 with an event page |
 | `/v2/worker` | `claim` | None | 200 with `task`, `fence` and `expires_in_ms`, or 204 when no work is eligible |
 | `/v2/worker` | `renew` | `fence` | 200 with `expires_in_ms` |
 | `/v2/worker` | `complete` | `fence`, `content` | 200 with `worker`, `fence` and `content` |
+| `/v2/worker` | `replay` | `after` (optional cursor), `limit` | 200 with an event page |
 
 IDs are UUID strings. Capabilities are strings and capability sets and worker allowlists are JSON arrays. The claimed `task` contains `id`, `prompt`, `required_capabilities` and `state`. Task states are `queued`, `running`, `completed`, `failed` and `cancelled`. A `fence` contains `task_id`, `attempt_id` and integer `generation`. Send the entire returned fence unchanged on renewal or completion. After an uncertain submit, inspect by task ID. After an uncertain completion, retry with the same fence and content while the credential remains valid. After an uncertain claim, the lease can expire and become eligible for reassignment.
 
@@ -48,7 +50,8 @@ Application errors carry `{"error":"code"}`.
 | 401 | `unauthorized` |
 | 404 | `unknown_route`, `unknown_task`, `unknown_worker` |
 | 405 | `expected_get`, `expected_post` |
-| 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict` |
+| 409 | `worker_busy`, `duplicate_task`, `stale_lease`, `result_conflict`, `foreign_cursor` |
+| 410 | `cursor_expired` |
 | 413 | `body_limit` |
 | 415 | `expected_json` |
 | 429 | `nonce_capacity` |
@@ -56,7 +59,15 @@ Application errors carry `{"error":"code"}`.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
-Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, network events and durable restart recovery remain open.
+Treat loopback as a deployment boundary. Keep each signing key private and use an isolated local account where appropriate. The service uses plaintext HTTP, so request proofs do not provide confidentiality or authenticate the server's responses. Keys remain valid for the lifetime of the process. Rotate them by replacing the environment values and restarting. Revocation takes effect in the running process. Remove a revoked worker from the access file before restarting to keep it revoked. Protected remote transport, live push delivery and durable restart recovery remain open.
+
+### Broker event replay
+
+Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions and all observed transitions. Event data contains task and attempt metadata. Prompts, results and keys stay out of the feed. Change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.
+
+Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. An operator cursor or another worker's cursor yields 409. A cursor from a previous server process also yields 409. An older cursor beyond retention yields 410. A cursorless restart of replay reports how far retention has advanced in `discarded_through`.
+
+Broker feeds and cursors last for the running process. Revocation removes the worker's feed and signing authority. Replay uses HTTP polling. Durable feeds and live streaming remain roadmap work.
 
 The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. See the [local journal CLI](CLI.md#local-task-outcome-journal).
 
@@ -66,8 +77,8 @@ Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shar
 
 | Client | Methods |
 | --- | --- |
-| `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)` |
-| `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)` |
+| `OperatorClient` | `submit(&Submission)`, `inspect(TaskId)`, `cancel(TaskId)`, `revoke(AgentId)`, `replay(Option<BrokerEventCursor>, u32)` |
+| `WorkerClient` | `claim()`, `renew(Fence)`, `complete(Fence, &str)`, `replay(Option<BrokerEventCursor>, u32)` |
 
 Every call fetches the server's session and signs the request with a fresh nonce. The client permits 15 seconds for each HTTP exchange, caps JSON responses at 512 KiB, and disables proxies, redirects and automatic retries. `claim()` returns `Ok(None)` for 204. `ClientError::Rejected` carries the HTTP status and a typed `ErrorCode` when the server sends a known code.
 
@@ -77,7 +88,7 @@ Build the Rust API reference with `cargo doc -p vespera-sdk --no-deps --locked`.
 
 ## Future interoperability draft
 
-The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover authorized event replay and reconnect behavior.
+The draft sections below describe remaining Milestone 9 and 10 work. A resource-oriented HTTP API and WebSocket event stream are planned. Remote deployments require protected transport and explicit opt-in. Future SDK extensions cover live subscriptions and reconnect behavior across server restarts.
 
 ## Authentication and registration — draft
 
@@ -149,6 +160,6 @@ Before the API/SDK becomes stable, test duplicate and conflicting requests, auth
 
 ## Implemented event wire contract
 
-The current `EventEnvelope` fields are `schema_version`, `event_id`, `occurred_at_unix_ms`, optional `correlation_task_id`, nonempty `source` and typed `kind`. Versions 1 and 2 are supported. `task_failed` and `task_cancelled` require version 2 and carry only a task ID. Existing event kinds still emit version 1. Readers of mixed journals need version 2 support. Agent, model and provider references live in their applicable payloads. The `kind` discriminator uses snake_case. Payloads carry IDs and bounded metadata. `simulation_advanced` carries a logical tick distinct from envelope wall time.
+The current `EventEnvelope` fields are `schema_version`, `event_id`, `occurred_at_unix_ms`, optional `correlation_task_id`, nonempty `source` and typed `kind`. Versions 1 through 3 are supported. `task_failed` and `task_cancelled` require version 2 and carry a task ID. `external_task_changed` requires version 3 and carries `task_id`, `change`, `state` and a nullable `attempt` with `worker_id`, `attempt_id` and `generation`. Existing kinds emit their original version. Agent, model and provider references live in their applicable payloads. The `kind` discriminator uses snake_case. Payloads carry IDs and bounded metadata. `simulation_advanced` carries a logical tick distinct from envelope wall time.
 
 `EventEnvelope::new` generates an event UUID, selects the earliest compatible schema and validates the supplied source, time and payload. Unix time zero is valid. Deserialization rejects unknown fields and incompatible schema versions. Public-field changes need explicit revalidation. Journal entries carry the cursor alongside the envelope. The proposed remote API has its own versioning and authorization requirements.

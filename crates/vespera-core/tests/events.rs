@@ -144,6 +144,32 @@ fn terminal_failure_kinds_require_version_two_while_legacy_envelopes_still_decod
 }
 
 #[test]
+fn external_task_event_requires_version_three_and_a_valid_attempt() {
+    let mut wire = event_json();
+    wire["schema_version"] = json!(3);
+    wire["correlation_task_id"] = json!(ID);
+    wire["kind"] = json!({
+        "kind": "external_task_changed",
+        "task_id": ID,
+        "change": "claimed",
+        "state": "running",
+        "attempt": { "worker_id": ID, "attempt_id": ID, "generation": 1 }
+    });
+    let decoded = serde_json::from_value::<EventEnvelope>(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), wire);
+    for version in [1, 2] {
+        let mut old = wire.clone();
+        old["schema_version"] = json!(version);
+        assert!(serde_json::from_value::<EventEnvelope>(old).is_err());
+    }
+    let mut nil_attempt = wire.clone();
+    nil_attempt["kind"]["attempt"]["attempt_id"] = json!("00000000-0000-0000-0000-000000000000");
+    assert!(serde_json::from_value::<EventEnvelope>(nil_attempt).is_err());
+    wire["kind"]["attempt"]["generation"] = json!(0);
+    assert!(serde_json::from_value::<EventEnvelope>(wire).is_err());
+}
+
+#[test]
 fn unknown_fields_malformed_payloads_and_missing_ids_are_rejected() {
     let mut input = event_json();
     input["unknown"] = json!(true);

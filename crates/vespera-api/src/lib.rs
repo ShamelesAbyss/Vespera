@@ -3,15 +3,20 @@
 //! The host authenticates callers before passing their worker identity here.
 //! Calls that approve, revoke, submit or cancel belong to the operator.
 
+mod events;
 pub mod http;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+use events::{EventFeeds, Transition};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
-use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
+use vespera_core::{
+    AgentId, BrokerEventCursor, BrokerEventPage, Capability, ExternalAttempt, ExternalTaskChange,
+    Task, TaskId, TaskState,
+};
 
 const MAX_WORKERS: usize = 64;
 const MAX_TASKS: usize = 256;
@@ -38,6 +43,10 @@ pub enum BrokerError {
     StaleLease,
     #[error("result conflicts with the accepted result")]
     ResultConflict,
+    #[error("event cursor belongs to a different feed or server process")]
+    ForeignCursor,
+    #[error("event cursor is older than retained history")]
+    ExpiredCursor,
 }
 
 /// Attempt fence. A caller must also present its authenticated worker identity.
@@ -92,6 +101,30 @@ struct Record {
 }
 
 impl Record {
+    fn attempt(&self) -> Option<ExternalAttempt> {
+        match &self.phase {
+            Phase::Leased(active) => Some(ExternalAttempt {
+                worker_id: active.worker,
+                attempt_id: active.fence.attempt_id,
+                generation: active.fence.generation,
+            }),
+            _ => None,
+        }
+    }
+
+    fn transition(
+        &self,
+        change: ExternalTaskChange,
+        attempt: Option<ExternalAttempt>,
+    ) -> Transition {
+        Transition {
+            task_id: self.task.id,
+            change,
+            state: self.state(),
+            attempt,
+        }
+    }
+
     fn retry_or_fail(&mut self, now: Instant) {
         self.phase = if now < self.deadline && self.generation < self.max_attempts {
             Phase::Queued
@@ -100,12 +133,20 @@ impl Record {
         };
     }
 
-    fn expire(&mut self, now: Instant) {
-        match &self.phase {
-            Phase::Queued if now >= self.deadline => self.phase = Phase::Failed,
-            Phase::Leased(active) if now >= active.expires => self.retry_or_fail(now),
-            _ => (),
-        }
+    fn expire(&mut self, now: Instant) -> Option<Transition> {
+        let attempt = self.attempt();
+        let change = match &self.phase {
+            Phase::Queued if now >= self.deadline => {
+                self.phase = Phase::Failed;
+                ExternalTaskChange::DeadlineExceeded
+            }
+            Phase::Leased(active) if now >= active.expires => {
+                self.retry_or_fail(now);
+                ExternalTaskChange::LeaseExpired
+            }
+            _ => return None,
+        };
+        Some(self.transition(change, attempt))
     }
 
     fn state(&self) -> TaskState {
@@ -125,6 +166,7 @@ impl Record {
 pub struct LeaseBroker {
     workers: BTreeMap<AgentId, Worker>,
     tasks: Vec<Record>,
+    events: EventFeeds,
 }
 
 impl LeaseBroker {
@@ -152,6 +194,7 @@ impl LeaseBroker {
                 enabled: true,
             },
         );
+        self.events.approve(id);
         Ok(())
     }
 
@@ -160,9 +203,14 @@ impl LeaseBroker {
         let worker = self.workers.get_mut(&id).ok_or(BrokerError::Unauthorized)?;
         worker.enabled = false;
         let now = Instant::now();
+        self.reconcile(now);
+        self.events.revoke(id);
         for record in &mut self.tasks {
             if matches!(&record.phase, Phase::Leased(active) if active.worker == id) {
+                let attempt = record.attempt();
                 record.retry_or_fail(now);
+                self.events
+                    .publish(record.transition(ExternalTaskChange::WorkerRevoked, attempt));
             }
         }
         Ok(())
@@ -198,14 +246,17 @@ impl LeaseBroker {
         if self.tasks.len() >= MAX_TASKS {
             return Err(BrokerError::Capacity);
         }
-        self.tasks.push(Record {
+        let record = Record {
             task,
             eligible,
             deadline: Instant::now() + lifetime,
             max_attempts,
             generation: 0,
             phase: Phase::Queued,
-        });
+        };
+        self.events
+            .publish(record.transition(ExternalTaskChange::Submitted, None));
+        self.tasks.push(record);
         Ok(())
     }
 
@@ -215,15 +266,13 @@ impl LeaseBroker {
     }
 
     fn claim_at(&mut self, worker: AgentId, now: Instant) -> Result<Option<Lease>, BrokerError> {
+        self.worker(worker)?;
+        self.reconcile(now);
         let capabilities = &self
             .workers
             .get(&worker)
-            .filter(|worker| worker.enabled)
-            .ok_or(BrokerError::Unauthorized)?
+            .expect("approved worker")
             .capabilities;
-        for record in &mut self.tasks {
-            record.expire(now);
-        }
         if self
             .tasks
             .iter()
@@ -250,6 +299,8 @@ impl LeaseBroker {
             fence,
             expires,
         });
+        self.events
+            .publish(record.transition(ExternalTaskChange::Claimed, record.attempt()));
         let mut task = record.task.clone();
         task.state = TaskState::Running;
         Ok(Some(Lease {
@@ -263,10 +314,10 @@ impl LeaseBroker {
     pub fn renew(&mut self, worker: AgentId, fence: Fence) -> Result<u64, BrokerError> {
         self.worker(worker)?;
         let now = Instant::now();
+        self.reconcile(now);
         let record = self
             .record(fence.task_id)
             .map_err(|_| BrokerError::StaleLease)?;
-        record.expire(now);
         match &mut record.phase {
             Phase::Leased(active) if active.worker == worker && active.fence == fence => {
                 active.expires = (now + LEASE_TTL).min(record.deadline);
@@ -288,10 +339,11 @@ impl LeaseBroker {
             return Err(BrokerError::Invalid("result content"));
         }
         let now = Instant::now();
+        self.reconcile(now);
         let record = self
             .record(fence.task_id)
             .map_err(|_| BrokerError::StaleLease)?;
-        record.expire(now);
+        let attempt = record.attempt();
         match &record.phase {
             Phase::Completed(result) if result.worker == worker && result.fence == fence => {
                 if result.content == content {
@@ -307,6 +359,8 @@ impl LeaseBroker {
                     content,
                 };
                 record.phase = Phase::Completed(result.clone());
+                let event = record.transition(ExternalTaskChange::Completed, attempt);
+                self.events.publish(event);
                 Ok(result)
             }
             _ => Err(BrokerError::StaleLease),
@@ -315,18 +369,22 @@ impl LeaseBroker {
 
     /// Operator cancellation returns the existing outcome if already terminal.
     pub fn cancel(&mut self, task: TaskId) -> Result<TaskState, BrokerError> {
+        self.reconcile(Instant::now());
         let record = self.record(task)?;
-        record.expire(Instant::now());
         if matches!(record.phase, Phase::Queued | Phase::Leased(_)) {
+            let attempt = record.attempt();
             record.phase = Phase::Cancelled;
+            let event = record.transition(ExternalTaskChange::Cancelled, attempt);
+            self.events.publish(event);
+            return Ok(TaskState::Cancelled);
         }
         Ok(record.state())
     }
 
     /// Operator inspection reconciles elapsed expiry before returning the state.
     pub fn state(&mut self, task: TaskId) -> Result<TaskState, BrokerError> {
+        self.reconcile(Instant::now());
         let record = self.record(task)?;
-        record.expire(Instant::now());
         Ok(record.state())
     }
 
@@ -341,6 +399,28 @@ impl LeaseBroker {
             Phase::Completed(result) => Some(result),
             _ => None,
         })
+    }
+
+    /// Read one authenticated worker's attempt history, or the operator feed.
+    pub fn replay(
+        &mut self,
+        worker: Option<AgentId>,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, BrokerError> {
+        if let Some(worker) = worker {
+            self.worker(worker)?;
+        }
+        self.reconcile(Instant::now());
+        self.events.replay(worker, after, limit)
+    }
+
+    fn reconcile(&mut self, now: Instant) {
+        for record in &mut self.tasks {
+            if let Some(event) = record.expire(now) {
+                self.events.publish(event);
+            }
+        }
     }
 
     fn worker(&self, id: AgentId) -> Result<(), BrokerError> {
@@ -366,6 +446,7 @@ fn remaining_ms(expires: Instant, now: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vespera_core::EventKind;
 
     fn task() -> Task {
         Task {
@@ -449,6 +530,17 @@ mod tests {
         ));
         let new = broker.claim(second).unwrap().unwrap();
         assert_eq!(new.fence.generation, 2);
+        let expired = broker.replay(Some(first), None, 8).unwrap();
+        assert_eq!(expired.entries.len(), 2);
+        assert!(
+            matches!(expired.entries[1].event.kind, EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::LeaseExpired, state: TaskState::Queued, attempt: Some(attempt), ..
+        } if attempt.attempt_id == old.fence.attempt_id)
+        );
+        assert_eq!(
+            broker.replay(Some(second), None, 8).unwrap().entries.len(),
+            1
+        );
         assert_ne!(old.fence.attempt_id, new.fence.attempt_id);
         assert_eq!(broker.renew(first, old.fence), Err(BrokerError::StaleLease));
         broker.revoke_worker(second).unwrap();
@@ -457,6 +549,19 @@ mod tests {
             Err(BrokerError::Unauthorized)
         ));
         assert_eq!(broker.state(id), Ok(TaskState::Failed));
+        assert!(matches!(
+            broker.replay(Some(second), None, 8),
+            Err(BrokerError::Unauthorized)
+        ));
+        let operator = broker.replay(None, None, 8).unwrap();
+        assert!(matches!(
+            operator.entries.last().unwrap().event.kind,
+            EventKind::ExternalTaskChanged {
+                change: ExternalTaskChange::WorkerRevoked,
+                state: TaskState::Failed,
+                ..
+            }
+        ));
         assert!(broker.claim(first).unwrap().is_none());
     }
 
@@ -500,12 +605,20 @@ mod tests {
             broker.complete(worker, second.fence, "late".into()),
             Err(BrokerError::StaleLease)
         ));
+        let events = broker.replay(Some(worker), None, 8).unwrap();
+        assert_eq!(events.entries.len(), 4);
+        assert!(
+            matches!(events.entries[3].event.kind, EventKind::ExternalTaskChanged {
+            change: ExternalTaskChange::Cancelled, attempt: Some(attempt), ..
+        } if attempt.attempt_id == second.fence.attempt_id)
+        );
     }
 
     #[test]
     fn renewal_obeys_deadline_and_submission_respects_capacity() {
         let mut broker = LeaseBroker::default();
         let (worker, _) = workers(&mut broker);
+        let cursor = broker.replay(None, None, 1).unwrap().next_cursor;
         let first = task();
         let lifetime = Duration::from_secs(5);
         broker
@@ -523,6 +636,20 @@ mod tests {
                 .submit(task(), BTreeSet::from([worker]), lifetime, 1)
                 .unwrap();
         }
+        assert!(matches!(
+            broker.replay(None, Some(cursor), 1),
+            Err(BrokerError::ExpiredCursor)
+        ));
+        let retained = broker.replay(None, None, 1).unwrap();
+        assert_eq!(retained.discarded_through, 1);
+        assert_eq!(retained.next_cursor.sequence, 2);
+        assert!(retained.has_more);
+        let after = broker.replay(None, Some(retained.next_cursor), 1).unwrap();
+        assert_eq!(after.entries[0].cursor.sequence, 3);
+        assert!(matches!(
+            LeaseBroker::default().replay(None, Some(cursor), 1),
+            Err(BrokerError::ForeignCursor)
+        ));
         assert_eq!(
             broker.submit(task(), BTreeSet::from([worker]), lifetime, 1),
             Err(BrokerError::Capacity)

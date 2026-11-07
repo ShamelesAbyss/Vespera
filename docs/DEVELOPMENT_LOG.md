@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Worker-scoped event replay
+
+The Rust SDK checkpoint `f3d5f5f59bd7ce14119f26a525f82c1519c4c504` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42338173619). Added a signed `replay` action to both v2 roles and typed SDK support. The broker records task lifecycle metadata with version 3 envelopes. Operators see every recorded transition and each worker sees its own attempts. Independent feeds retain 256 events and return pages of up to 64. Feed IDs fence cursors across principals and restarts, and a retention gap returns an explicit error. Versions 1 and 2 remain readable.
+
+Windows validation passed 205 offline tests plus the SDK doctest, strict Clippy and rustdoc, the workspace release build and optimized envelope, broker and CLI tests. Coverage includes reconnect, cursor isolation, revocation, retention gaps, expiry, active cancellation and completion retries. The documented PowerShell flow returned the claim and completion events.
+
+Broker feeds remain process-local and are separate from the SQLite CLI journal. Clients poll for updates. Durable recovery, live subscriptions and protected remote transport remain open.
+
 ## 2026-11-06 — Standalone Rust worker SDK
 
 Verified implementation checkpoint `f3d5f5f59bd7ce14119f26a525f82c1519c4c504` was pushed to the default branch, `main`.

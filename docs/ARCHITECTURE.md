@@ -55,7 +55,7 @@ flowchart TD
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-api` | Bounded loopback HTTP service with role-separated credentials and fenced task attempts |
-| `vespera-sdk` | Async HTTP client for v2 operator and worker actions, depending on shared core types |
+| `vespera-sdk` | Async HTTP client for v2 operator and worker actions and scoped event replay |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
 | `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |
@@ -128,6 +128,9 @@ prove remote compute stopped, so uncertain residency and remaining reservations
 remain explicit. The external worker service is an independent, explicitly
 started loopback listener. Its broker derives worker authority from credentials,
 serializes task state transitions and leaves execution to the worker process.
+Broker transitions publish metadata-only events into bounded per-principal
+feeds under the same lock. Feed cursors are specific to the principal and
+server process. The separate SQLite outcome journal serves local CLI execution.
 
 ## State, clocks and remaining architecture
 

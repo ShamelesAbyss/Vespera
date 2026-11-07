@@ -248,7 +248,7 @@ cargo build -p vespera-app --locked
 $server = Start-Process .\target\debug\vespera.exe -ArgumentList 'serve', '--access-file', 'data/worker-access.json' -PassThru -WindowStyle Hidden
 ```
 
-With the service running, submit one task, claim it, post a result and inspect the accepted outcome.
+With the service running, submit one task, claim it, post a result, inspect the outcome and read the worker's attempt events.
 
 ```powershell
 $worker = '73c7d9eb-eddf-418a-b604-ff0cc751ee67'
@@ -287,6 +287,8 @@ $lease = Invoke-VesperaAction '/v2/worker' $worker $env:VESPERA_WORKER_TOKEN @{ 
 $result = @{ action = 'complete'; fence = $lease.fence; content = 'Acknowledged.' }
 Invoke-VesperaAction '/v2/worker' $worker $env:VESPERA_WORKER_TOKEN $result
 Invoke-VesperaAction '/v2/operator' 'operator' $env:VESPERA_OPERATOR_TOKEN @{ action = 'inspect'; task_id = $task }
+$events = Invoke-VesperaAction '/v2/worker' $worker $env:VESPERA_WORKER_TOKEN @{ action = 'replay'; limit = 16 }
+$events.entries.event
 Stop-Process -InputObject $server
 Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 ```

@@ -1,12 +1,55 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     AgentId, DomainError, EventId, MemoryId, MemoryLayer, ModelId, ProviderId, ResourceKind,
-    TaskId, validate_nonempty,
+    TaskId, TaskState, validate_nonempty,
 };
 
 /// Latest supported event wire schema. Existing kinds still emit version 1.
-pub const EVENT_SCHEMA_VERSION: u32 = 2;
+pub const EVENT_SCHEMA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalTaskChange {
+    Submitted,
+    Claimed,
+    LeaseExpired,
+    WorkerRevoked,
+    Completed,
+    Cancelled,
+    DeadlineExceeded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalAttempt {
+    pub worker_id: AgentId,
+    pub attempt_id: Uuid,
+    pub generation: u32,
+}
+
+/// Cursor scoped to one principal's broker event feed in one server process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrokerEventCursor {
+    pub stream_id: Uuid,
+    pub sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokerEventEntry {
+    pub cursor: BrokerEventCursor,
+    pub event: EventEnvelope,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BrokerEventPage {
+    pub entries: Vec<BrokerEventEntry>,
+    pub next_cursor: BrokerEventCursor,
+    pub discarded_through: u64,
+    pub has_more: bool,
+}
 
 /// Typed event payloads, not proof that the described activity has occurred.
 ///
@@ -66,6 +109,12 @@ pub enum EventKind {
     TaskCancelled {
         task_id: TaskId,
     },
+    ExternalTaskChanged {
+        task_id: TaskId,
+        change: ExternalTaskChange,
+        state: TaskState,
+        attempt: Option<ExternalAttempt>,
+    },
     /// Logical tick is distinct from the envelope wall-clock timestamp.
     SimulationAdvanced {
         simulation_id: String,
@@ -83,6 +132,7 @@ pub enum EventKind {
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::ExternalTaskChanged { .. } => 3,
             Self::TaskFailed { .. } | Self::TaskCancelled { .. } => 2,
             _ => 1,
         }
@@ -93,6 +143,24 @@ impl EventKind {
         // is the sole free-form identifier in these payloads.
         if let Self::SimulationAdvanced { simulation_id, .. } = self {
             validate_nonempty(simulation_id, "event.simulation_id")?;
+        }
+        if let Self::ExternalTaskChanged {
+            attempt: Some(attempt),
+            ..
+        } = self
+        {
+            if attempt.attempt_id.is_nil() {
+                return Err(DomainError::InvalidId {
+                    kind: "attempt",
+                    value: attempt.attempt_id.to_string(),
+                    reason: "nil UUID".into(),
+                });
+            }
+            if attempt.generation == 0 {
+                return Err(DomainError::ZeroValue {
+                    field: "event.attempt.generation",
+                });
+            }
         }
         Ok(())
     }

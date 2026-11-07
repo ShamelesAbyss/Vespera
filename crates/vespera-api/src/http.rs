@@ -24,7 +24,7 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
+use vespera_core::{AgentId, BrokerEventCursor, Capability, Task, TaskId, TaskState};
 
 use crate::{BrokerError, Fence, LeaseBroker, MAX_WORKERS};
 use auth::{Authentication, Principal, Proof, SCHEME};
@@ -181,14 +181,27 @@ enum OperatorRequest {
     Revoke {
         worker_id: AgentId,
     },
+    Replay {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum WorkerRequest {
     Claim {},
-    Renew { fence: Fence },
-    Complete { fence: Fence, content: String },
+    Renew {
+        fence: Fence,
+    },
+    Complete {
+        fence: Fence,
+        content: String,
+    },
+    Replay {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 async fn dispatch(
@@ -310,6 +323,9 @@ fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, H
             service.auth.revoke(worker_id);
             reply(StatusCode::NO_CONTENT, &())
         }
+        OperatorRequest::Replay { after, limit } => {
+            reply(StatusCode::OK, &broker.replay(None, after, limit)?)
+        }
     };
     Ok(reply)
 }
@@ -330,6 +346,9 @@ fn work(
         ),
         WorkerRequest::Complete { fence, content } => {
             reply(StatusCode::OK, &broker.complete(worker, fence, content)?)
+        }
+        WorkerRequest::Replay { after, limit } => {
+            reply(StatusCode::OK, &broker.replay(Some(worker), after, limit)?)
         }
     };
     Ok(reply)
@@ -373,6 +392,8 @@ impl From<BrokerError> for HttpError {
             BrokerError::Missing => (StatusCode::NOT_FOUND, "unknown_task"),
             BrokerError::StaleLease => (StatusCode::CONFLICT, "stale_lease"),
             BrokerError::ResultConflict => (StatusCode::CONFLICT, "result_conflict"),
+            BrokerError::ForeignCursor => (StatusCode::CONFLICT, "foreign_cursor"),
+            BrokerError::ExpiredCursor => (StatusCode::GONE, "cursor_expired"),
         };
         Self(status, code)
     }
