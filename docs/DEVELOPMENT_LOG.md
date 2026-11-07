@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Intelligence Network scene refresh
 
+Verified implementation checkpoint `9af4c56df09cb03813af604198ea17ff4e5bb794` was pushed to `main`.
+
 The native world checkpoint `33497ce968c335329b8c6616e7e6cf920ba6faa5` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42343790468). The Atlas now groups observed task states into color-coded lanes, shows current attempt links and recent event sequences, and separates connection and filter status from the inspector. Picking remains available alongside keyboard traversal and filtering. Lane and focus motion interpolate real changes and can be disabled. The read-only default remains. Opt-in cancellation requires a confirmation bound to the selected task, shows the broker's response, and leaves the graph to update from events.
 
 Windows checks passed the 216-test headless workspace suite, the SDK doctest, graphics tests, strict Clippy and the graphics development build. The desktop fixture showed actual claim and expiry events and verified filter, keyboard selection, confirmation and updated lanes. Separate signed inspection verified the task was queued before confirmation and cancelled afterward.
