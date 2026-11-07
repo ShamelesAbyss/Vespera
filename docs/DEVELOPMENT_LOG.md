@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Replay-resistant worker HTTP authentication
 
+Verified implementation checkpoint `7f2eea23dcb8e3d3d6be0b7de6dd8e99ef89fd37` was pushed to the default branch, `main`.
+
 The loopback service checkpoint `58837796c27b7e59f013f4ffaaa6800629dc93e5` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42337036931). HTTP v2 replaces the original bearer endpoints with HMAC-SHA256 proofs bound to the method, route, principal, server session, monotonic issue time, nonce and exact body bytes. Each verified nonce is consumed before broker execution under the same lock. The 128-slot cache per principal preserves live nonce entries and applies backpressure. A new server session invalidates old proofs. Ring was already present in the lockfile.
 
 The 201-test offline Windows suite, formatting, strict Clippy and rustdoc, optimized workspace build and release auth/broker/CLI tests passed. Tests cover concurrent duplicate delivery, body tampering, key/identity mismatch, retired bearer routes, expiration, server sessions and saturated-cache behavior. The updated PowerShell guide completed submit, claim, complete and inspect using .NET HMAC.
