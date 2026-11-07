@@ -7,7 +7,6 @@ use clap::{ArgAction, Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use vespera_agents::ExecutionOptions;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
-use vespera_config::AppConfig;
 use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
 use vespera_providers::CancellationToken;
 use vespera_world::{
@@ -88,6 +87,8 @@ struct DecisionArgs {
     revision: u64,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
+    #[arg(long)]
+    model_catalog: Option<PathBuf>,
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=120))]
     timeout_seconds: u64,
     /// Activate the configured agent in this invocation only.
@@ -293,7 +294,7 @@ impl DecisionAttempt {
 async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
     let world = WorldStore::read(database)?;
     let (task, options) = plan(&world, args.resident, args.revision)?;
-    let config = AppConfig::load(&args.config)?;
+    let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let runtime = VesperaRuntime::from_config_for_agent(&config, args.resident).await?;
     runtime
         .agents()

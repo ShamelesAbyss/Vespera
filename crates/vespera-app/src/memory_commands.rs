@@ -6,7 +6,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use vespera_app::memory::configured_authorizer;
-use vespera_config::AppConfig;
 use vespera_core::{AgentId, MemoryId, MemoryLayer, MemoryRecord, Permission};
 use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
 
@@ -14,6 +13,8 @@ use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
 pub(crate) struct MemoryArgs {
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
+    #[arg(long)]
+    model_catalog: Option<PathBuf>,
     /// Explicit database path; only init can create it.
     #[arg(long, default_value = "data/vespera.sqlite3")]
     database: PathBuf,
@@ -213,7 +214,7 @@ fn record(
     })
 }
 fn execute(args: MemoryArgs) -> Result<Output, AppError> {
-    let config = AppConfig::load(&args.config)?;
+    let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let required = match &args.action {
         MemoryCommand::Init | MemoryCommand::Add { .. } => vec![Permission::MemoryWrite],
         MemoryCommand::Consolidate { .. } | MemoryCommand::Delete { .. } => {

@@ -107,22 +107,41 @@ pub enum ConfigError {
 impl AppConfig {
     /// Parse and validate in-memory configuration without any side effects.
     pub fn parse(input: &str) -> Result<Self, ConfigError> {
-        if input.len() > MAX_CONFIG_BYTES {
-            return Err(ConfigError::TooLarge);
-        }
-        // toml::de::Error can contain literal input. Never forward it to logs.
-        let config: Self = toml::from_str(input).map_err(|_| ConfigError::Parse)?;
+        let config = Self::parse_declarations(input)?;
         config.validate()?;
         Ok(config)
     }
 
+    fn parse_declarations(input: &str) -> Result<Self, ConfigError> {
+        if input.len() > MAX_CONFIG_BYTES {
+            return Err(ConfigError::TooLarge);
+        }
+        // toml::de::Error can contain literal input. Never forward it to logs.
+        toml::from_str(input).map_err(|_| ConfigError::Parse)
+    }
+
     /// Read at most the input-size limit plus one byte, then validate.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        Self::parse(&Self::read_input(path.as_ref())?)
+    }
+
+    /// Validate providers, policies and references against an explicit model inventory.
+    pub fn load_with_models(
+        path: impl AsRef<Path>,
+        models: Vec<ModelDescriptor>,
+    ) -> Result<Self, ConfigError> {
+        let mut config = Self::parse_declarations(&Self::read_input(path.as_ref())?)?;
+        config.models = models;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn read_input(path: &Path) -> Result<String, ConfigError> {
         let file = File::open(path)?;
         let mut input = String::new();
         file.take((MAX_CONFIG_BYTES + 1) as u64)
             .read_to_string(&mut input)?;
-        Self::parse(&input)
+        Ok(input)
     }
 
     /// Validate domain invariants, networking declarations, and all references.

@@ -1,5 +1,6 @@
 //! Native VESPERA CLI: offline inspection and explicit provider/agent operations.
 
+mod catalog_commands;
 mod commands;
 mod doctor;
 mod event_commands;
@@ -15,7 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use thiserror::Error;
 use vespera_app::runtime::RuntimeError;
-use vespera_config::{AppConfig, ConfigError};
+use vespera_config::ConfigError;
 use vespera_core::{AgentId, ResourceBudget};
 
 #[derive(Debug, Parser)]
@@ -36,6 +37,8 @@ enum Command {
         #[arg(long, default_value = "config/local.toml")]
         config: PathBuf,
         #[arg(long)]
+        model_catalog: Option<PathBuf>,
+        #[arg(long)]
         json: bool,
     },
     /// List configured agent identities and policies offline.
@@ -43,12 +46,16 @@ enum Command {
         #[arg(long, default_value = "config/local.toml")]
         config: PathBuf,
         #[arg(long)]
+        model_catalog: Option<PathBuf>,
+        #[arg(long)]
         json: bool,
     },
     /// Check configured provider health through real HTTP requests without loading models.
     ProviderHealth {
         #[arg(long, default_value = "config/local.toml")]
         config: PathBuf,
+        #[arg(long)]
+        model_catalog: Option<PathBuf>,
         #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
         timeout_seconds: u64,
         #[arg(long)]
@@ -58,6 +65,8 @@ enum Command {
     RunAgent(RunAgentArgs),
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
+    /// Manage declared models in a persistent SQLite catalog without provider I/O.
+    Catalog(catalog_commands::CatalogArgs),
     /// Explicit offline durable memory operations; never start model providers.
     Memory(memory_commands::MemoryArgs),
     /// Initialize, replay or follow a local event journal.
@@ -89,6 +98,8 @@ enum Command {
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
         config: PathBuf,
+        #[arg(long)]
+        model_catalog: Option<PathBuf>,
         /// Emit machine-readable JSON without provider endpoints or credentials.
         #[arg(long)]
         json: bool,
@@ -119,6 +130,9 @@ struct RunAgentArgs {
     memory_database: PathBuf,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
+    /// Read model metadata from an initialized SQLite catalog.
+    #[arg(long)]
+    model_catalog: Option<PathBuf>,
     /// Configured agent UUID.
     #[arg(long)]
     agent: AgentId,
@@ -163,6 +177,9 @@ struct RunWorkflowArgs {
     scheduler_telemetry: Option<PathBuf>,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
+    /// Read model metadata from an initialized SQLite catalog.
+    #[arg(long)]
+    model_catalog: Option<PathBuf>,
     /// Strict UTF-8 JSON workflow, at most one MiB.
     #[arg(long)]
     workflow_file: PathBuf,
@@ -192,6 +209,12 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error(transparent)]
+    Catalog(#[from] vespera_model_registry::CatalogError),
+    #[error("model descriptor must be valid strict JSON and fit within 64 KiB")]
+    CatalogInput,
+    #[error("model is absent from the catalog")]
+    CatalogModelAbsent,
     #[error("scheduler telemetry failed: {0}")]
     SchedulerTelemetry(std::io::Error),
     #[error(transparent)]
@@ -251,8 +274,12 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<(), AppError> {
     match cli.command {
-        Command::Models { config, json } => {
-            let config = AppConfig::load(config)?;
+        Command::Models {
+            config,
+            model_catalog,
+            json,
+        } => {
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&config.models)?);
             } else {
@@ -264,8 +291,12 @@ async fn run(cli: Cli) -> Result<(), AppError> {
                 }
             }
         }
-        Command::Agents { config, json } => {
-            let config = AppConfig::load(config)?;
+        Command::Agents {
+            config,
+            model_catalog,
+            json,
+        } => {
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&config.agents)?);
             } else {
@@ -279,11 +310,12 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Command::ProviderHealth {
             config,
+            model_catalog,
             timeout_seconds,
             json,
         } => {
             commands::provider_health(
-                AppConfig::load(config)?,
+                catalog_commands::load(&config, model_catalog.as_deref())?,
                 std::time::Duration::from_secs(timeout_seconds),
                 json,
             )
@@ -291,6 +323,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
+        Command::Catalog(args) => catalog_commands::run(args)?,
         Command::Memory(args) => memory_commands::run(args).await?,
         Command::Events(args) => event_commands::run(args).await?,
         Command::World(args) => world_commands::run(args).await?,
@@ -324,8 +357,12 @@ async fn run(cli: Cli) -> Result<(), AppError> {
                 result = tokio::signal::ctrl_c() => result.map_err(AppError::ShutdownSignal)?,
             }
         }
-        Command::ValidateConfig { config, json } => {
-            let config = AppConfig::load(config)?;
+        Command::ValidateConfig {
+            config,
+            model_catalog,
+            json,
+        } => {
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
             let report = ConfigReport {
                 valid: true,
                 schema_version: config.schema_version,

@@ -30,7 +30,7 @@ struct WorkflowRunReport {
 }
 
 pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> {
-    let config = AppConfig::load(&args.config)?;
+    let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let mut input = String::new();
     File::open(&args.workflow_file)
         .map_err(|_| AppError::WorkflowIo)?
@@ -210,7 +210,7 @@ struct RunReport {
 }
 
 pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
-    let config = AppConfig::load(&args.config)?;
+    let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let mut prompt = String::new();
     File::open(&args.prompt_file)
         .map_err(AppError::PromptIo)?

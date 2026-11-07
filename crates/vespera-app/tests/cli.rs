@@ -763,6 +763,130 @@ fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str])
 }
 
 #[test]
+fn model_catalog_reopens_and_supplies_a_real_runtime_registration() {
+    let provider = HttpFixture::new(false);
+    let scratch = ScratchDirectory::new();
+    let config = runtime_config(&provider, false, false);
+    let config_file = scratch.write_config(&config);
+    let database = scratch.0.join("catalog.sqlite3");
+    let descriptor = scratch.0.join("model.json");
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "catalog",
+            "--database",
+            database.to_str().unwrap(),
+            "--config",
+            config_file.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        execute(&args)
+    };
+    let json = |result: Output| -> serde_json::Value {
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        serde_json::from_slice(&result.stdout).unwrap()
+    };
+    let put = |revision: &str, model: &serde_json::Value| {
+        fs::write(&descriptor, serde_json::to_vec(model).unwrap()).unwrap();
+        run(&[
+            "put",
+            "--model-file",
+            descriptor.to_str().unwrap(),
+            "--revision",
+            revision,
+        ])
+    };
+    assert!(!run(&["list"]).status.success());
+    assert!(!database.exists());
+    let foreign = scratch.0.join("foreign.sqlite3");
+    assert!(
+        execute(&["events", "--journal", foreign.to_str().unwrap(), "init"])
+            .status
+            .success()
+    );
+    let foreign_bytes = fs::read(&foreign).unwrap();
+    assert!(
+        !execute(&[
+            "catalog",
+            "--database",
+            foreign.to_str().unwrap(),
+            "--config",
+            config_file.to_str().unwrap(),
+            "init",
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(fs::read(&foreign).unwrap(), foreign_bytes);
+    assert_eq!(json(run(&["init"]))["revision"], 0);
+    assert!(!run(&["init"]).status.success());
+    let mut model = json(run(&["list"]))["models"][0].clone();
+    let original = model["id"].as_str().unwrap().to_owned();
+    model["name"] = "Durable fixture".into();
+    model["resources"] = serde_json::json!({ "ram_bytes": 100, "vram_bytes": 0 });
+    model["context_window_tokens"] = 512.into();
+    assert_eq!(json(put("0", &model))["revision"], 1);
+    assert!(!put("0", &model).status.success());
+    assert!(
+        !run(&["remove", "--model", &original, "--revision", "1"])
+            .status
+            .success()
+    );
+    let mut extra = model.clone();
+    extra["id"] = "b16b00b5-1111-4111-8111-111111111111".into();
+    extra["identifier"] = "another-fixture-model".into();
+    assert_eq!(json(put("1", &extra))["revision"], 2);
+    let extra_id = extra["id"].as_str().unwrap();
+    assert_eq!(
+        json(run(&["remove", "--model", extra_id, "--revision", "2"]))["revision"],
+        3
+    );
+    extra["identifier"] = "different-binding".into();
+    assert!(!put("3", &extra).status.success());
+    fs::write(&descriptor, serde_json::to_vec(&model).unwrap()).unwrap();
+    let winners = std::thread::scope(|scope| {
+        let commit = || {
+            run(&[
+                "put",
+                "--model-file",
+                descriptor.to_str().unwrap(),
+                "--revision",
+                "3",
+            ])
+        };
+        let competing = scope.spawn(commit);
+        u8::from(commit().status.success()) + u8::from(competing.join().unwrap().status.success())
+    });
+    assert_eq!(winners, 1);
+    let recovered = json(run(&["list"]));
+    assert_eq!(recovered["revision"], 4);
+    assert_eq!(recovered["models"], serde_json::json!([model]));
+    assert!(provider.captured().is_empty());
+    let completed = json(run_fixture_agent(
+        &scratch,
+        &config,
+        &[
+            "--resume",
+            "--model-catalog",
+            database.to_str().unwrap(),
+            "--unload-after",
+        ],
+    ));
+    assert_eq!(completed["execution"]["model_id"], original);
+    assert_eq!(completed["execution"]["task"]["state"], "completed");
+    assert!(
+        provider
+            .captured()
+            .iter()
+            .any(|request| request.path == "/api/chat")
+    );
+    assert_eq!(json(run(&["list"])), recovered);
+}
+
+#[test]
 fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     use std::time::{Duration, Instant};
     use vespera_core::{ReservationState, SchedulerSample};

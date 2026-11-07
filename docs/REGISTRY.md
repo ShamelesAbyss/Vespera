@@ -1,5 +1,25 @@
 # Model registry and provider health
 
+## Durable model catalog
+
+The optional SQLite catalog stores declared model metadata across CLI invocations. Providers, credential references, network policy and agents continue to come from the supplied TOML. Health evidence and residency are observed at runtime.
+
+```powershell
+$db = 'data/models.sqlite3'
+$config = 'config/local.toml'
+cargo run --locked -p vespera-app -- catalog --database $db --config $config init
+cargo run --locked -p vespera-app -- catalog --database $db list
+cargo run --locked -p vespera-app -- models --config $config --model-catalog $db --json
+```
+
+Create the parent directory first. `init` seeds revision 0 from the TOML and rejects an existing initialized catalog. `list` returns the current revision and complete ordered descriptors. Save a descriptor from the `models` array as a JSON object to register or edit one model. Use `put --model-file <PATH> --revision <N>` or `remove --model <UUID> --revision <N>`, with the revision last read.
+
+Edits preserve UUID bindings, including after removal. Changes that break configured agent policies or provider references fail before commit. A stale revision returns an error and preserves the winning writer's changes. SQLite stores model descriptors and retired UUID bindings. Provider endpoints, credentials, health results and reservations stay outside the catalog.
+
+Pass `--model-catalog <PATH>` with `models`, `agents`, `validate-config`, `provider-health`, `run-agent`, `run-workflow`, `memory`, `world decide` or `world run` to use the catalog in place of the TOML model list. A missing or invalid catalog fails explicitly. A command reads one committed snapshot at startup. Running commands keep their loaded inventory.
+
+## Runtime registry
+
 The registry is an in-process, thread-safe inventory. Registering providers or
 models performs no model loading, inference, or health I/O. Models and providers
 have independent UUID identities; model inventory size has no hardcoded cap.

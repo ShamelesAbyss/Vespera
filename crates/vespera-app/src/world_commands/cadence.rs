@@ -5,7 +5,6 @@ use std::time::Duration;
 use clap::Args;
 use serde::Serialize;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
-use vespera_config::AppConfig;
 use vespera_core::{AgentId, AgentStatus, Task, TaskId};
 use vespera_providers::CancellationToken;
 use vespera_world::{
@@ -33,6 +32,8 @@ pub(super) struct RunArgs {
     tick_ms: u64,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
+    #[arg(long)]
+    model_catalog: Option<PathBuf>,
     /// Per-decision wall-clock budget, including provider health and loading.
     #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=120))]
     timeout_seconds: u64,
@@ -75,7 +76,7 @@ pub(super) async fn run(database: &Path, args: RunArgs) -> Result<(), AppError> 
     for &resident in &args.resident {
         world.decision_options(resident, args.revision)?;
     }
-    let config = AppConfig::load(&args.config)?;
+    let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let runtime = VesperaRuntime::from_config_for_agents(&config, &args.resident).await?;
     for &agent_id in &args.resident {
         let agents = runtime.agents();

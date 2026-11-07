@@ -1,5 +1,7 @@
 # Command-line reference
 
+The [durable model catalog](REGISTRY.md#durable-model-catalog) documents SQLite inventory initialization, revision-fenced edits and the optional `--model-catalog <PATH>` flag.
+
 Build with `cargo build --release --locked -p vespera-app`. On Windows use
 `.\target\release\vespera.exe`; on Linux use `./target/release/vespera`.
 `cargo run --locked -p vespera-app -- <command>` builds/runs the same CLI.
@@ -8,6 +10,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 
 | Command | Behavior | Provider/network activity |
 | --- | --- | --- |
+| `catalog` | Initialize, list and edit durable model metadata with revision fencing | None |
 | `validate-config` | Validate strict schema, references and declared resource limits | None |
 | `doctor` | Read host evidence, preserving unknown measurements | None |
 | `models` | List declared model metadata | None |

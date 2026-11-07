@@ -1,5 +1,8 @@
 //! Atomic model registration and conservative, expiring provider-health observations.
 
+mod catalog;
+pub use catalog::{Catalog, CatalogError, CatalogSnapshot};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
