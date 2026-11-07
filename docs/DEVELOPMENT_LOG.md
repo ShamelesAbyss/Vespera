@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Opt-in TLS worker transport
 
+Verified implementation checkpoint `6ebf89c06b6972ab08f679d66b4df1af1fe1cb48` was pushed to the default branch, `main`.
+
 The WebSocket checkpoint `3fedaa938018d3ab77da5dde76efee445d88c1e6` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42340588226). The worker listener now serves HTTPS and secure WebSockets with TLS 1.3 when supplied a PEM identity. Remote binding also requires `--allow-remote`. The Rust SDK uses the same explicit trust roots and IP identity checks for both transports. Request proofs and worker grants continue to apply over TLS. The broker reuses locked Rustls packages, and the CLI fixture generates temporary identities with dev-only Rcgen.
 
 Windows validation passed 213 offline tests plus the SDK doctest, formatting, strict Clippy and rustdoc, the optimized workspace build and release worker subprocess tests. A loopback client verified HTTPS task actions and secure WebSocket events on an explicitly enabled wildcard listener. Tests rejected missing remote opt-in, plaintext on the TLS port, untrusted roots and a certificate with the wrong IP identity.
