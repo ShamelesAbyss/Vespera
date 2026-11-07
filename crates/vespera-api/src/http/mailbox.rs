@@ -76,7 +76,7 @@ impl Mailboxes {
         recipient: AgentId,
         id: Uuid,
         content: String,
-    ) -> Result<(), HttpError> {
+    ) -> Result<bool, HttpError> {
         if !self
             .0
             .get(&sender)
@@ -94,7 +94,9 @@ impl Mailboxes {
             .iter()
             .find(|message| message.sender == sender && message.message_id == id)
         {
-            return (previous.content == content).then_some(()).ok_or(conflict);
+            return (previous.content == content)
+                .then_some(false)
+                .ok_or(conflict);
         }
         if let Some(previous) = mailbox
             .acknowledged
@@ -102,7 +104,7 @@ impl Mailboxes {
             .find(|message| message.sender == sender && message.id == id)
         {
             return (previous.hash.as_ref() == digest(&SHA256, content.as_bytes()).as_ref())
-                .then_some(())
+                .then_some(false)
                 .ok_or(conflict);
         }
         if mailbox.pending.len() == MAX_PENDING {
@@ -113,7 +115,7 @@ impl Mailboxes {
             sender,
             content,
         });
-        Ok(())
+        Ok(true)
     }
 
     pub(super) fn inbox(&self, worker: AgentId) -> Result<&VecDeque<Message>, HttpError> {

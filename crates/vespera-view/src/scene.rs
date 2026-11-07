@@ -289,6 +289,13 @@ fn receive(
             break;
         };
         match update {
+            BrokerUpdate::Ready(discarded_through) => {
+                connection.status = if discarded_through == 0 {
+                    "Connected - live broker"
+                } else {
+                    "Connected - earlier history was pruned"
+                };
+            }
             BrokerUpdate::Status(status) => {
                 connection.status = status;
                 if !status.starts_with("Connected") {

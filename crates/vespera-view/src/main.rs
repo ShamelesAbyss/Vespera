@@ -37,12 +37,16 @@ struct Options {
     /// Inspect observed agent relationships from an existing local event journal.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world", "machine"])]
     swarm: Option<PathBuf>,
+    /// Inspect accepted mailbox messages on the signed operator feed.
+    #[arg(long, conflicts_with_all = ["swarm", "allow_cancel", "world", "machine"])]
+    swarm_broker: bool,
     /// Allow the World Mode window to commit simulation controls.
     #[arg(long, requires = "world")]
     allow_world_control: bool,
 }
 
 enum Update {
+    Ready(u64),
     Status(&'static str),
     Reset,
     Observation(BrokerEventEntry),
@@ -100,11 +104,16 @@ fn main() -> ExitCode {
         }
     };
     std::thread::spawn(move || runtime.block_on(observe(client, observations, actions)));
-    scene::run(
-        receiver,
-        options.allow_cancel.then_some(control),
-        options.reduced_motion,
-    );
+    if options.swarm_broker {
+        drop(control);
+        swarm_scene::run_broker(receiver, options.reduced_motion);
+    } else {
+        scene::run(
+            receiver,
+            options.allow_cancel.then_some(control),
+            options.reduced_motion,
+        );
+    }
     ExitCode::SUCCESS
 }
 
@@ -118,6 +127,7 @@ async fn observe(
         match client.subscribe(cursor).await {
             Ok(mut stream) => loop {
                 tokio::select! {
+                    () = updates.closed() => return,
                     action = actions.recv(), if !actions.is_closed() => {
                         if let Some(task) = action {
                             let update = match client.cancel(task).await {
@@ -129,8 +139,7 @@ async fn observe(
                     }
                     frame = stream.next() => match frame {
                         Ok(Some(BrokerStreamFrame::Ready { discarded_through, .. })) => {
-                            let status = if discarded_through == 0 { "Connected - live broker" } else { "Connected - earlier history was pruned" };
-                            if updates.send(Update::Status(status)).await.is_err() { return; }
+                            if updates.send(Update::Ready(discarded_through)).await.is_err() { return; }
                         }
                         Ok(Some(BrokerStreamFrame::Event { entry })) => {
                             cursor = Some(entry.cursor);

@@ -70,17 +70,27 @@ impl Feed {
         }
         let discarded = self.latest - self.events.len() as u64;
         self.events.iter().enumerate().all(|(index, entry)| {
-            let EventKind::ExternalTaskChanged {
-                task_id, attempt, ..
-            } = entry.event.kind
-            else {
-                return false;
-            };
             entry.cursor == self.cursor(discarded + index as u64 + 1)
                 && entry.event.source == "worker_broker"
-                && entry.event.correlation_task_id == Some(task_id)
-                && worker
-                    .is_none_or(|worker| attempt.is_some_and(|attempt| attempt.worker_id == worker))
+                && match entry.event.kind {
+                    EventKind::ExternalTaskChanged {
+                        task_id, attempt, ..
+                    } => {
+                        entry.event.correlation_task_id == Some(task_id)
+                            && worker.is_none_or(|worker| {
+                                attempt.is_some_and(|attempt| attempt.worker_id == worker)
+                            })
+                    }
+                    EventKind::AgentMessageSent {
+                        from_agent_id,
+                        to_agent_id,
+                    } => {
+                        worker.is_none()
+                            && entry.event.correlation_task_id.is_none()
+                            && from_agent_id != to_agent_id
+                    }
+                    _ => false,
+                }
         })
     }
 
@@ -143,11 +153,6 @@ impl EventFeeds {
     }
 
     pub(super) fn publish(&mut self, transition: Transition) {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                elapsed.as_millis().try_into().unwrap_or(u64::MAX)
-            });
         let Transition {
             task_id,
             change,
@@ -156,7 +161,7 @@ impl EventFeeds {
         } = transition;
         let mut event = EventEnvelope::new(
             "worker_broker",
-            timestamp,
+            timestamp(),
             EventKind::ExternalTaskChanged {
                 task_id,
                 change,
@@ -174,6 +179,19 @@ impl EventFeeds {
         self.operator.push(event);
     }
 
+    pub(super) fn publish_message(&mut self, from_agent_id: AgentId, to_agent_id: AgentId) {
+        let event = EventEnvelope::new(
+            "worker_broker",
+            timestamp(),
+            EventKind::AgentMessageSent {
+                from_agent_id,
+                to_agent_id,
+            },
+        )
+        .expect("accepted mailbox message uses validated identities");
+        self.operator.push(event);
+    }
+
     pub(super) fn replay(
         &self,
         worker: Option<AgentId>,
@@ -186,4 +204,12 @@ impl EventFeeds {
         };
         feed.replay(after, limit)
     }
+}
+
+fn timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            elapsed.as_millis().try_into().unwrap_or(u64::MAX)
+        })
 }

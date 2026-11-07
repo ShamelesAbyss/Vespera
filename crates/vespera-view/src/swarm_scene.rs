@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
-use tokio::sync::watch;
-use vespera_core::{AgentId, EventKind, TaskId, TaskState};
+use tokio::sync::{mpsc, watch};
+use vespera_core::{AgentId, EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
 
+use crate::Update;
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
 
 const MAX_OBSERVATIONS: usize = 128;
@@ -24,7 +25,7 @@ enum Relation {
 
 #[derive(Clone, Copy, PartialEq)]
 struct Edge {
-    sequence: i64,
+    sequence: u64,
     from: AgentId,
     to: AgentId,
     relation: Relation,
@@ -33,75 +34,82 @@ struct Edge {
 #[derive(Clone, Default, PartialEq)]
 struct Evidence {
     edges: VecDeque<Edge>,
-    outcomes: VecDeque<(i64, TaskId, TaskState)>,
-    floor: i64,
+    outcomes: VecDeque<(u64, TaskId, TaskState)>,
+    floor: u64,
     clipped: bool,
     status: &'static str,
 }
 
 impl Evidence {
     fn apply(&mut self, page: vespera_events::Page) {
-        self.floor = page.discarded_through;
-        self.edges.retain(|edge| edge.sequence > self.floor);
-        self.outcomes
-            .retain(|(sequence, _, _)| *sequence > self.floor);
+        self.prune(page.discarded_through.unsigned_abs());
         for entry in page.entries {
-            let sequence = entry.cursor.sequence;
-            match entry.event.kind {
-                EventKind::TaskDelegated {
-                    task_id,
-                    from_agent_id,
-                    to_agent_id,
-                } => {
-                    self.edges.push_back(Edge {
-                        sequence,
-                        from: from_agent_id,
-                        to: to_agent_id,
-                        relation: Relation::Delegation {
-                            task: task_id,
-                            workflow: entry.event.correlation_task_id,
-                        },
-                    });
-                }
-                EventKind::AgentMessageSent {
-                    from_agent_id,
-                    to_agent_id,
-                } => {
-                    self.edges.push_back(Edge {
-                        sequence,
-                        from: from_agent_id,
-                        to: to_agent_id,
-                        relation: Relation::Message,
-                    });
-                }
-                EventKind::TaskCompleted { task_id } if entry.event.source == "run-workflow" => {
-                    self.outcomes
-                        .push_back((sequence, task_id, TaskState::Completed));
-                }
-                EventKind::TaskFailed { task_id } if entry.event.source == "run-workflow" => {
-                    self.outcomes
-                        .push_back((sequence, task_id, TaskState::Failed));
-                }
-                EventKind::TaskCancelled { task_id } if entry.event.source == "run-workflow" => {
-                    self.outcomes
-                        .push_back((sequence, task_id, TaskState::Cancelled));
-                }
-                _ => {}
-            }
-            if self.edges.len() > MAX_OBSERVATIONS {
-                self.edges.pop_front();
-                self.clipped = true;
-            }
-            if self.outcomes.len() > MAX_OBSERVATIONS {
-                self.outcomes.pop_front();
-                self.clipped = true;
-            }
+            self.push(entry.cursor.sequence.unsigned_abs(), entry.event);
         }
         self.status = if page.has_more {
             "Catching up"
         } else {
             "Following committed journal"
         };
+    }
+
+    fn prune(&mut self, floor: u64) {
+        self.floor = floor;
+        self.edges.retain(|edge| edge.sequence > self.floor);
+        self.outcomes
+            .retain(|(sequence, _, _)| *sequence > self.floor);
+    }
+
+    fn push(&mut self, sequence: u64, event: EventEnvelope) {
+        match event.kind {
+            EventKind::TaskDelegated {
+                task_id,
+                from_agent_id,
+                to_agent_id,
+            } => {
+                self.edges.push_back(Edge {
+                    sequence,
+                    from: from_agent_id,
+                    to: to_agent_id,
+                    relation: Relation::Delegation {
+                        task: task_id,
+                        workflow: event.correlation_task_id,
+                    },
+                });
+            }
+            EventKind::AgentMessageSent {
+                from_agent_id,
+                to_agent_id,
+            } => {
+                self.edges.push_back(Edge {
+                    sequence,
+                    from: from_agent_id,
+                    to: to_agent_id,
+                    relation: Relation::Message,
+                });
+            }
+            EventKind::TaskCompleted { task_id } if event.source == "run-workflow" => {
+                self.outcomes
+                    .push_back((sequence, task_id, TaskState::Completed));
+            }
+            EventKind::TaskFailed { task_id } if event.source == "run-workflow" => {
+                self.outcomes
+                    .push_back((sequence, task_id, TaskState::Failed));
+            }
+            EventKind::TaskCancelled { task_id } if event.source == "run-workflow" => {
+                self.outcomes
+                    .push_back((sequence, task_id, TaskState::Cancelled));
+            }
+            _ => {}
+        }
+        if self.edges.len() > MAX_OBSERVATIONS {
+            self.edges.pop_front();
+            self.clipped = true;
+        }
+        if self.outcomes.len() > MAX_OBSERVATIONS {
+            self.outcomes.pop_front();
+            self.clipped = true;
+        }
     }
 }
 
@@ -158,6 +166,44 @@ pub(super) fn run(path: PathBuf, reduced_motion: bool) -> Result<(), JournalErro
     };
     let (send, input) = watch::channel(evidence.clone());
     std::thread::spawn(move || observe(&path, &send));
+    run_window(input, evidence, reduced_motion);
+    Ok(())
+}
+
+pub(super) fn run_broker(mut updates: mpsc::Receiver<Update>, reduced_motion: bool) {
+    let evidence = Evidence {
+        status: "Connecting to signed broker feed",
+        ..default()
+    };
+    let (send, input) = watch::channel(evidence.clone());
+    let mut observed = evidence.clone();
+    std::thread::spawn(move || {
+        while let Some(update) = updates.blocking_recv() {
+            match update {
+                Update::Ready(floor) => {
+                    observed.prune(floor);
+                    observed.status = "Following signed broker feed";
+                }
+                Update::Observation(entry) => observed.push(entry.cursor.sequence, entry.event),
+                Update::Status(status) => observed.status = status,
+                Update::Reset => {
+                    observed = Evidence {
+                        status: "Broker history changed; rebuilding",
+                        ..default()
+                    };
+                }
+                Update::Cancelled(..) | Update::CancelFailed => {}
+            }
+            publish(&send, &observed);
+            if send.is_closed() {
+                break;
+            }
+        }
+    });
+    run_window(input, evidence, reduced_motion);
+}
+
+fn run_window(input: watch::Receiver<Evidence>, evidence: Evidence, reduced_motion: bool) {
     desktop("Vespera | Swarm", Color::srgb(0.018, 0.025, 0.047))
         .insert_resource(Feed { input, evidence })
         .init_resource::<Layout>()
@@ -170,7 +216,6 @@ pub(super) fn run(path: PathBuf, reduced_motion: bool) -> Result<(), JournalErro
         .add_systems(Startup, setup)
         .add_systems(Update, (sync, navigate, camera, draw, inspect).chain())
         .run();
-    Ok(())
 }
 
 fn observe(path: &Path, send: &watch::Sender<Evidence>) {
@@ -195,13 +240,7 @@ fn observe(path: &Path, send: &watch::Sender<Evidence>) {
             }
             Err(_) => evidence.status = "Journal unavailable; showing last observations",
         }
-        send.send_if_modified(|previous| {
-            if *previous == evidence {
-                return false;
-            }
-            *previous = evidence.clone();
-            true
-        });
+        publish(send, &evidence);
         let delay = if evidence.status == "Catching up" {
             20
         } else {
@@ -209,6 +248,16 @@ fn observe(path: &Path, send: &watch::Sender<Evidence>) {
         };
         std::thread::sleep(Duration::from_millis(delay));
     }
+}
+
+fn publish(send: &watch::Sender<Evidence>, evidence: &Evidence) {
+    send.send_if_modified(|previous| {
+        if previous == evidence {
+            return false;
+        }
+        *previous = evidence.clone();
+        true
+    });
 }
 
 fn setup(
@@ -427,7 +476,7 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
         }
     }
     let history = if evidence.floor > 0 || evidence.clipped {
-        format!("History limited / journal floor {}", evidence.floor)
+        format!("History limited / source floor {}", evidence.floor)
     } else {
         "Window shows up to 24 agents".into()
     };

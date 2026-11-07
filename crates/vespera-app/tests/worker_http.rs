@@ -219,18 +219,39 @@ async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
     let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
     access["workers"][0]["message_targets"] = json!([second]);
     std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
-    let (_process, base) = launch_command(server_command(&policy, None), policy);
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let (process, base) = launch_command(server_command(&policy, Some(&db.0)), policy);
     let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
     let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
     let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
     let recipient =
         WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let mut live = operator.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut live).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
     let id = Uuid::new_v4();
     assert!(matches!(
         recipient.send_message(first, id, "denied").await,
         Err(ClientError::Rejected { status: 401, .. })
     ));
     sender.send_message(second, id, "hello").await.unwrap();
+    let BrokerStreamFrame::Event { entry } = live_frame(&mut live).await else {
+        panic!("expected operator message evidence");
+    };
+    assert_eq!(
+        entry.event.kind,
+        EventKind::AgentMessageSent {
+            from_agent_id: first,
+            to_agent_id: second
+        }
+    );
+    assert_eq!(entry.event.correlation_task_id, None);
+    let encoded = serde_json::to_string(&entry).unwrap();
+    assert!(!encoded.contains("hello") && !encoded.contains(&id.to_string()));
     sender.send_message(second, id, "hello").await.unwrap();
     assert!(matches!(
         sender.send_message(second, id, "changed").await,
@@ -254,6 +275,11 @@ async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
     recipient.acknowledge_message(first, id).await.unwrap();
     sender.send_message(second, id, "hello").await.unwrap();
     assert!(recipient.inbox().await.unwrap().is_empty());
+    let page = operator.replay(None, 64).await.unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0], entry);
+    assert!(sender.replay(None, 64).await.unwrap().entries.is_empty());
+    assert!(recipient.replay(None, 64).await.unwrap().entries.is_empty());
     for _ in 0..32 {
         sender
             .send_message(second, Uuid::new_v4(), "queued")
@@ -276,6 +302,15 @@ async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
         sender.inbox().await,
         Err(ClientError::Rejected { status: 401, .. })
     ));
+    let page = operator.replay(None, 64).await.unwrap();
+    assert_eq!(page.entries.len(), 33);
+    drop(live);
+    drop(process);
+    let (_restarted, base) = launch_with_database(first, second, Some(&db.0));
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let recovered = operator.replay(None, 64).await.unwrap();
+    assert_eq!(recovered.entries, page.entries);
 }
 
 #[tokio::test]

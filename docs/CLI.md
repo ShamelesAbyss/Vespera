@@ -400,7 +400,15 @@ cargo run --locked -p vespera-view --features graphics -- --swarm data/events.sq
 
 The workflow publishes only delegations that the runtime accepted. Each record carries the attempt and agent IDs and the root workflow correlation. The delegation records and root terminal event commit in one batch after execution and cleanup. Choose retention large enough to retain the whole batch if you need all its records. The journal stores no workflow prompts or generated outputs in this batch.
 
-Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Swarm is read-only and follows new committed records without a broker key. It shows up to 24 agents from its latest 128 relationship observations and labels a pruned journal history. The view can display typed message records already in the journal. CLI workflow publication currently produces delegation and outcome evidence. Live in-flight progress, message publication and dependency edges remain roadmap work.
+Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
+
+To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --swarm-broker --broker 127.0.0.1:8765
+```
+
+Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Both Swarm modes are read-only and show up to 24 agents from the latest 128 relationship observations loaded into the window. A retention gap is labeled. Journal and broker modes use separate sources. Live in-flight workflow progress, dependency edges and delivery acknowledgements in Swarm remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
 
 ### Follow committed events
 

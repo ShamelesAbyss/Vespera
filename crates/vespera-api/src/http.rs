@@ -515,7 +515,9 @@ fn work(
             message_id,
             content,
         } => {
-            mailboxes.send(worker, recipient, message_id, content)?;
+            if mailboxes.send(worker, recipient, message_id, content)? {
+                broker.events.publish_message(worker, recipient);
+            }
             reply(StatusCode::NO_CONTENT, &())
         }
         WorkerRequest::Inbox {} => reply(StatusCode::OK, mailboxes.inbox(worker)?),

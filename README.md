@@ -24,7 +24,7 @@ cargo run --locked -p vespera-view --features graphics -- --machine
 
 Machine can also inspect scheduler queue counts, estimated reservations and cached provider health from an opted-in local agent or workflow run. Press 4 to inspect that runtime. [Connect a run to Machine](docs/CLI.md#observe-a-local-scheduler)
 
-Open the read-only Swarm view to follow accepted workflow delegations in an initialized local event journal. Cyan arrows identify the delegating and receiving agents, and the inspector correlates each observed attempt with its workflow outcome. [Record and inspect delegations](docs/CLI.md#swarm-view)
+Open the read-only Swarm view to follow accepted workflow delegations in a local event journal or accepted worker messages on a signed broker connection. Cyan arrows show delegations and amber arrows show messages. The inspector identifies the participants and the source sequence. [Open Swarm](docs/CLI.md#swarm-view)
 
 Open the same executable in World Simulation Mode with an initialized database.
 

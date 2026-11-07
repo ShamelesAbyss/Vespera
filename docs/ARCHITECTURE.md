@@ -63,7 +63,7 @@ flowchart TD
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-api` | Bounded HTTP service with role-separated credentials, fenced task attempts and optional TLS |
 | `vespera-sdk` | Async client for v2 operator and worker actions, scoped event replay and WebSocket subscriptions |
-| `vespera-view` | Optional Bevy Machine, Intelligence Network, Swarm and simulation views with picking, inspection and confirmed broker cancellation. Machine can read runtime telemetry. Swarm follows committed typed observations in a local event journal. |
+| `vespera-view` | Optional Bevy Machine, Intelligence Network, Swarm and simulation views with picking, inspection and confirmed broker cancellation. Machine can read runtime telemetry. Swarm follows either a local event journal or the signed operator feed. |
 | `vespera-world` | Deterministic simulation domain and SQLite state independent of graphics and providers |
 | `vespera-events` | Local SQLite task outcome journal, transactional retention and scoped replay cursors |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |

@@ -66,7 +66,9 @@ The access policy can grant a worker outgoing routes through its `message_target
 
 Clients supply a non-nil message UUID and up to 2,048 UTF-8 bytes of nonblank content. Inboxes retain 32 pending entries in arrival order and return 503 when full. Reading preserves the entry until acknowledgement. Acknowledgement is idempotent. Retrying the same sender, recipient, message ID and content is idempotent while pending or among the last 64 acknowledgements in that inbox. Changing content under a retained ID returns 409.
 
-Messages are process-local, including when the broker database is enabled. Revoking a worker clears messages to and from that worker. Inbox delivery uses polling and message contents do not enter the task event feeds.
+Inbox contents and acknowledgement state are process-local, including when the broker database is enabled. Revoking a worker clears messages to and from that worker. Inbox delivery uses polling.
+
+Each newly accepted enqueue adds an `agent_message_sent` event to the operator feed. It contains `from_agent_id` and `to_agent_id` with the broker's ordinary event envelope and cursor. It records acceptance into the inbox. Worker feeds omit these events. Rejected sends, retained idempotent retries, reads and acknowledgements emit no message event. Message IDs, content and hashes stay out of all feeds. With a broker database, the retained acceptance records survive restart while the inbox starts empty.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
@@ -80,11 +82,11 @@ The certificate file accepts a PEM chain of up to sixteen certificates, leaf fir
 
 ### Broker event replay
 
-Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions and all observed transitions. Event data contains task and attempt metadata. Prompts, results and keys stay out of the feed. Change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.
+Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions, all observed task transitions and accepted worker message metadata. Prompts, results and keys stay out of the feed. Task change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.
 
 Send `{"action":"replay","limit":16}` to start at the oldest retained entry. The response includes `entries`, `next_cursor`, `discarded_through` and `has_more`. Each entry has its own `cursor` and `event` envelope. Page size must be between 1 and 64. Keep the cursor of the last processed entry and send it as `after` when reconnecting. Use the page's `next_cursor` once all its entries have been processed. Poll again if the page is empty. The feed retains 256 entries per principal, with separate `stream_id` and sequence values. A cursor from a different feed yields 409. A cursor older than retained history yields 410. A cursorless replay reports how far retention has advanced in `discarded_through`.
 
-In memory-only mode, feeds reset when the process restarts. With `--broker-db`, retained events and cursors survive a restart with the same database and principal. Revocation removes the worker's feed and signing authority. Starting with a policy that omits a worker retires that worker's feed. Reintroducing the worker later starts a new stream.
+The operator's task and message events share the same retention window and cursor order. In memory-only mode, feeds reset when the process restarts. With `--broker-db`, retained events and cursors survive a restart with the same database and principal. Revocation removes the worker's feed and signing authority. Starting with a policy that omits a worker retires that worker's feed. Reintroducing the worker later starts a new stream. Broker builds that predate message evidence cannot open a database containing these operator entries.
 
 ### Live WebSocket subscriptions
 
