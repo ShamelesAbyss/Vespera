@@ -1277,6 +1277,7 @@ dependencies = [
  "vespera-agents",
  "vespera-config",
  "vespera-core",
+ "vespera-memory",
  "vespera-model-registry",
  "vespera-orchestrator",
  "vespera-providers",

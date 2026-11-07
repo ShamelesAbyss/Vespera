@@ -5,6 +5,12 @@ pub(crate) const APPLICATION_ID: i64 = 0x5653504d; // VSPM
 pub(crate) const VERSION: i64 = 1;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), StorageError> {
+    setup(connection, true)
+}
+pub(crate) fn open_existing(connection: &mut Connection) -> Result<(), StorageError> {
+    setup(connection, false)
+}
+fn setup(connection: &mut Connection, allow_initialize: bool) -> Result<(), StorageError> {
     connection
         .busy_timeout(std::time::Duration::from_secs(1))
         .map_err(db)?;
@@ -17,6 +23,9 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), StorageError
         tx.commit().map_err(db)?;
         version
     };
+    if version == 0 && !allow_initialize {
+        return Err(StorageError::WrongDatabase);
+    }
     connection
         .execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;",

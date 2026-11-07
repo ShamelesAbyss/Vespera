@@ -2,6 +2,7 @@
 
 mod commands;
 mod doctor;
+mod memory_commands;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -53,6 +54,8 @@ enum Command {
     RunAgent(RunAgentArgs),
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
+    /// Explicit offline durable memory operations; never start model providers.
+    Memory(memory_commands::MemoryArgs),
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
         #[arg(long, default_value = "config/local.toml")]
@@ -129,6 +132,14 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error("{0}")]
+    Storage(#[from] vespera_memory::StorageError),
+    #[error("invalid bounded memory input: {0}")]
+    MemoryInput(&'static str),
+    #[error("memory operation worker did not complete")]
+    MemoryWorker,
+    #[error("memory record is absent from the authorized namespace")]
+    MemoryNotFound,
     #[error("could not read bounded UTF-8 workflow file")]
     WorkflowIo,
     #[error("workflow must be valid strict JSON and fit within one MiB")]
@@ -206,6 +217,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
+        Command::Memory(args) => memory_commands::run(args).await?,
         Command::ValidateConfig { config, json } => {
             let config = AppConfig::load(config)?;
             let report = ConfigReport {

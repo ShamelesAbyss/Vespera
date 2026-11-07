@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 vespera-core.workspace = true
+vespera-memory = { path = "../vespera-memory" }
 vespera-config.workspace = true
 vespera-providers.workspace = true
 vespera-model-registry = { path = "../vespera-model-registry" }

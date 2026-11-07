@@ -4,13 +4,13 @@
 
 `vespera-memory` provides a blocking SQLite library independent of inference and orchestration. It stores isolated agent-owned records, performs structured and FTS5 literal-phrase retrieval, and commits consolidation lineage with derived records. Data survives close/reopen and agent model-policy changes. The agent runtime supplies a current-grant/accepted-task authorization adapter through `memory_authorizer()`.
 
-The older `AgentRuntime::write_memory` / `read_memory` methods remain separate bounded in-process buffers. They are not silently persisted or migrated. The CLI has no memory subcommand yet and does not automatically open a database, inject retrieved content or store generated outputs. Explicit application/CLI storage integration is the next step.
+The older `AgentRuntime::write_memory` / `read_memory` methods remain separate bounded in-process buffers. They are not silently persisted or migrated. The explicit offline [memory CLI](CLI.md#offline-durable-memory) can initialize, add, inspect, search, consolidate and delete authorized records. It does not automatically open storage during inference, inject retrieved context or store generated outputs. Those integrations remain future work.
 
 An agent UUID owns a namespace; model/provider IDs and display names never do. Every store operation checks the trusted actor, requested owner and current `MemoryRead`/`MemoryWrite` grant before looking up content, excerpts or namespace statistics. Cross-owner access is denied even when the actor has memory grants for its own namespace. The caller must authenticate actor identity outside this library; UUIDs are not credentials. No remote authorization boundary or cross-agent sharing API is implied.
 
 ## Store API and records
 
-Open a file explicitly with `MemoryStore::open(path, StorageLimits, authorizer)`. Parent directories must exist. A trusted `MemoryAuthorizer` supplies current permission and accepted-task ownership checks; `AgentRuntime::memory_authorizer()` implements that port. Calls block on SQLite/filesystem I/O and should run on a blocking worker in async applications. Errors expose bounded categories, not raw SQL, private paths or content.
+Open a file explicitly with `MemoryStore::open(path, StorageLimits, authorizer)`. Parent directories must exist for the library opener; CLI `memory init` creates them. `open_existing` and `open_read_only` require a valid existing database and never initialize empty files. A trusted `MemoryAuthorizer` supplies current permission and accepted-task ownership checks; `AgentRuntime::memory_authorizer()` implements that port. Calls block on SQLite/filesystem I/O and should run on a blocking worker in async applications. Errors expose bounded categories, not raw SQL, private paths or content.
 
 | API | Behavior and permission |
 | --- | --- |
@@ -57,7 +57,7 @@ Foreign keys are enabled, synchronous mode is `FULL`, and trusted schema executi
 
 Tests inject migration failure after schema creation and lineage failure after record/index insertion, verify transaction rollback, and abruptly exit a child writer without running transaction destructors. Reopening recovers previously committed content and removes uncommitted record/FTS writes. This verifies process-exit recovery on the tested filesystem; it does not establish resilience to every power-loss, disk-full, filesystem or hardware failure. Lock contention returns a bounded busy error; synchronous OS I/O is not subject to a hard operation deadline.
 
-There is no backup/restore, secure erase, export, physical compaction, event outbox or migration administration command yet. Logical deletion does not guarantee removal from free pages, journals, OS snapshots, exports or backups. Durable event coordination and workflow/task history remain separate required work. Do not store credentials or private hidden reasoning as ordinary memory.
+There is no dedicated backup/restore, secure erase, bulk export, physical compaction, event outbox or migration administration command yet. Logical deletion does not guarantee removal from free pages, journals, OS snapshots, exports or backups. Durable event coordination and workflow/task history remain separate required work. Do not store credentials or private hidden reasoning as ordinary memory.
 
 ## Verification
 

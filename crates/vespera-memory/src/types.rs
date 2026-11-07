@@ -29,6 +29,8 @@ pub enum StorageError {
     UnsupportedSchema,
     #[error("memory database is busy")]
     Busy,
+    #[error("memory store was opened read-only")]
+    ReadOnly,
     #[error("memory database operation failed; raw SQL and private values suppressed")]
     Database,
 }

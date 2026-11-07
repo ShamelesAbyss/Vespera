@@ -15,6 +15,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `provider-health` | Poll configured adapters and report expiring health evidence | Explicit HTTP health requests; no model load |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
+| `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
 
 Every command supports `--help`; the root supports `--version`. All except
 `doctor` take `--config <PATH>` (default `config/local.toml`). Each command supports
@@ -159,3 +160,43 @@ Composition initializes only providers/models eligible for named idle (or explic
 JSON fields are `task_id`, optional `workflow`, optional sanitized `error`, and `cleanup`. A failed/cancelled/partial workflow returns nonzero while retaining accepted attempt evidence. Command cancellation/expiry recovers any workflow history created before interruption; failure before workflow acceptance may leave it null. Early file/configuration/permission/credential errors can leave stdout empty. Human output prints a selected contribution only after workflow evaluation succeeds. Cleanup behavior and compatible unload limitations are the same as `run-agent`.
 
 See [ORCHESTRATION.md](ORCHESTRATION.md) for strict plan fields, bounds, retry/selection/conflict policies and in-process retention limits. [Live evidence](../artifacts/live-workflow-2026-11-06.json) records one native two-step sample, not broad interoperability or factual validation.
+
+## Offline durable memory
+
+`memory` validates configuration and the selected agent's grants without resolving provider credentials, starting adapters, activating an agent or contacting a backend. Grant `memory_read` and/or `memory_write` explicitly in the agent's private TOML `permissions` list, preserving any other grants. Memory ownership follows the configured UUID across model changes.
+
+```powershell
+$memoryArgs = @('memory', '--config', 'config/local.private.toml', '--agent', '33333333-3333-4333-8333-333333333333')
+.\target\release\vespera.exe @memoryArgs init --json
+Set-Content -LiteralPath data/observation.txt -Encoding utf8 -Value 'One operator observation about the amber experiment.'
+.\target\release\vespera.exe @memoryArgs add --content-file data/observation.txt --layer observation --json
+.\target\release\vespera.exe @memoryArgs list --layer observation --limit 10 --json
+Set-Content -LiteralPath data/query.txt -Encoding utf8 -Value 'amber experiment'
+.\target\release\vespera.exe @memoryArgs search --query-file data/query.txt --json
+```
+
+Common options precede the subcommand: required `--agent <UUID>`, `--config <PATH>` (default `config/local.toml`), and `--database <PATH>` (default `data/vespera.sqlite3`). `--json` may also follow the subcommand. Each operation supports `--help`. POSIX shells can pass the same flags directly to `./target/release/vespera`.
+
+| Subcommand | Options and permissions |
+| --- | --- |
+| `init` | No action options. `memory_write`; creates parent directories and initializes or validates an existing database. |
+| `add` | Required `--content-file <PATH>`; optional `--id <UUID>` (fresh UUID by default), `--layer <LAYER>` (default `observation`), `--origin observation\|import` (default `observation`), `--created-at-unix-ms <N>` (current local observation by default). `memory_write`. |
+| `get` | Required `--id <UUID>`. `memory_read`; returns record and lineage, or JSON `record: null` and nonzero status when absent. |
+| `list` | Optional structured query flags below. `memory_read`. |
+| `search` | Required `--query-file <PATH>` plus the structured query flags. `memory_read`; literal phrase search. |
+| `usage` | No action options. `memory_read`; only this namespace's logical record and byte counts. |
+| `consolidate` | Required `--content-file <PATH>`, repeatable `--source <UUID>` (1–32 distinct owned records), `--method <LABEL>` (1–128 UTF-8 bytes); optional `--id`, `--layer` (default `long_term`), `--created-at-unix-ms`. Both grants. Stores supplied text and lineage; runs no summarization model. |
+| `delete` | Required `--id <UUID>`. Both grants. Removes an unreferenced record and FTS entry atomically; returns `memory_absent` for an already absent record too. Referenced sources cannot be deleted before their derived records. |
+
+Content files must contain nonempty UTF-8 up to 64 KiB. Query files must contain a nonempty UTF-8 phrase up to 256 bytes and at most 32 whitespace-separated terms. Layers: `long_term`, `episodic`, `working`, `relationship`, `goal`, `observation`. Timestamps must fit a nonnegative SQLite signed integer; no task source or `generated` origin can be declared by this offline CLI because it has no accepted task ledger. A derived record is created only through `consolidate`.
+
+| `list` / `search` filter | Bound/default |
+| --- | --- |
+| `--layer <LAYER>` | Optional layer |
+| `--after-sequence <N>` | Owner-local cursor; default 0; use `next_after_sequence` from the preceding page |
+| `--created-since-unix-ms <N>` | Optional inclusive timestamp |
+| `--created-before-unix-ms <N>` | Optional exclusive timestamp |
+| `--limit <N>` | 1–100 records; default 100 |
+| `--max-content-bytes <N>` | 65,536–4,194,304 bytes; default 1,048,576; metadata is separate |
+
+Only `init` can create storage. Read operations open SQLite read-only; existing-file write operations do not create or migrate a missing or empty database. Denied permissions are checked before content/database access. JSON output carries `agent_id` and the relevant `record`, `page`, `usage`, `database_ready`/`sqlite_version`, or `memory_absent` fields. Ordinary failures are nonzero with sanitized stderr; no private path, content excerpt or raw SQL is included. File/database work uses a blocking worker and is outside inference timeout flags. See [MEMORY.md](MEMORY.md) for schema, quotas and recovery limits.

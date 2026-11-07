@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-06 — Explicit offline durable memory CLI
+
+Previous verified checkpoint: `c59ecb7f5ddeba801c83bc526f95256d509916d9`, pushed to `main`; Ubuntu CI [42332452032](https://github.com/ShamelesAbyss/Vespera/actions/runs/42332452032) passed. Added `memory init/add/get/list/search/usage/consolidate/delete`, all scoped to a configured agent UUID and explicit read/write grants. The application authority uses validated local declarations without resolving provider credentials or creating adapters. It never invents accepted task ownership; offline writes support observation/import and explicit derived lineage only.
+
+The storage library now distinguishes create/initialize, existing-file write, and true SQLite read-only opens. Only CLI `init` creates parents/storage. Inspection and ordinary writes reject missing/empty/unrelated files without migration. Denied grants fail before content/database access. File payloads, query text, result pages, timestamps and sources are bounded; file/database calls run on a blocking worker. Explicit delete reports absence without claiming an already missing record was removed, and referenced originals remain protected. No new third-party packages were added.
+
+Validation passed: all 183 offline workspace tests, two separately ignored helpers (live Ollama health and parent-invoked crash writer), formatting, all-target compilation, strict Clippy/rustdoc, optimized workspace build, 36 optimized application/CLI tests and 16 optimized memory tests. Eight actual subprocess tests cover persistence/filter/search/usage, owner isolation, model replacement, grants, missing/foreign files, invalid input, lineage/deletion and help. Read-only storage tests verify byte-for-byte unchanged database contents and denied writes. A separate release PowerShell smoke run used a new ignored private database, exercised default UUID/time assignment, listed and found the same record via phrase search, observed SQLite 3.54.1 and confirmed unchanged file hash after inspection. No user database or configuration was changed.
+
+Updated root onboarding and full CLI/memory/architecture/roadmap/implementation documentation. The `memory` command does not start inference or auto-attach memory to prompts; retained buffers and durable storage remain distinct. Next: bounded opt-in memory context and owned generated-result persistence during real agent execution, then durable events/replay and the remaining platform roadmap. Dedicated backup/restore, durable task/source history, encryption and disk/power failure validation remain open.
+
 ## 2026-11-06 — Durable authorized SQLite memory and retrieval
 
 Previous verified checkpoint: `c19d0b625c28f71ddc84526b314955a8043518e7`, pushed to the new `main`. Ubuntu CI succeeded for that promotion checkpoint ([42331095059](https://github.com/ShamelesAbyss/Vespera/actions/runs/42331095059)) and workflow source `339b9f8` ([42331021906](https://github.com/ShamelesAbyss/Vespera/actions/runs/42331021906)). The former baseline remains preserved on `old-dead-code`.

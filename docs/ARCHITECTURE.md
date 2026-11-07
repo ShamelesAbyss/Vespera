@@ -14,6 +14,7 @@ Arrows mean compile-time dependencies; the graph is acyclic.
 ```mermaid
 flowchart TD
     App[vespera-app: CLI and composition] --> Config[vespera-config]
+    App --> Memory
     App --> Orchestrator
     App --> Agents[vespera-agents]
     App --> Scheduler[vespera-scheduler]
@@ -48,7 +49,7 @@ flowchart TD
 | `vespera-agents` | Independent identity, permission-gated bounded records/messages, task source ownership, actual bounded inference, cancellation/deadline/abort cleanup |
 | `vespera-orchestrator` | Authorized bounded workflow routing/delegation, attempts, dependencies, cancellation and explicit output/conflict policy |
 | `vespera-memory` | Explicit authorized SQLite storage, FTS, lineage, owner-local pagination, transactional quotas and recovery |
-| `vespera-app` | Library composition plus offline inspection, explicit health checks and agent and workflow CLI operations |
+| `vespera-app` | Library composition plus offline inspection, explicit health checks and agent/workflow execution and offline memory CLI operations |
 
 `vespera-app::runtime` owns composition. CLI handlers perform bounded input/output
 and call application services; provider/scheduler/agent logic remains outside
@@ -122,7 +123,7 @@ is present yet.
 
 Registry, workflow/task histories and the original agent memory buffers remain in-process. The independent memory library now persists authorized records and lineage in SQLite when explicitly opened. `MemoryNamespace`
 is a logical address, not a database. Event envelopes are schema contracts, not
-an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. SQLite memory/retrieval, transactional initialization and provenance are implemented as a library. Application/context integration, durable task history, event delivery/replay, authenticated interoperability and independent deterministic world state remain required work.
+an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. SQLite memory/retrieval, transactional initialization and provenance are implemented as a library. Explicit offline CLI composition is implemented; inference context integration, durable task history, event delivery/replay, authenticated interoperability and independent deterministic world state remain required work.
 
 Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
 simulation ticks separate. In-process monotonic instants do not survive restart.

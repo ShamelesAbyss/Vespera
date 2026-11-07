@@ -507,6 +507,75 @@ fn duplicate_ids_cannot_overwrite_another_namespace_or_consume_its_counter() {
 }
 
 #[test]
+fn read_only_and_existing_modes_never_create_or_initialize_a_missing_or_empty_file() {
+    let database = Database::new();
+    let a = database.owners[0];
+    let record = record(a, "read only observation");
+    assert!(
+        MemoryStore::open_read_only(
+            database.path(),
+            StorageLimits::default(),
+            database.authority.clone()
+        )
+        .is_err()
+    );
+    assert!(!database.path().exists());
+    assert!(
+        MemoryStore::open_existing(
+            database.path(),
+            StorageLimits::default(),
+            database.authority.clone()
+        )
+        .is_err()
+    );
+    assert!(!database.path().exists());
+    std::fs::write(database.path(), []).unwrap();
+    assert!(matches!(
+        MemoryStore::open_read_only(
+            database.path(),
+            StorageLimits::default(),
+            database.authority.clone()
+        ),
+        Err(StorageError::WrongDatabase)
+    ));
+    assert_eq!(std::fs::metadata(database.path()).unwrap().len(), 0);
+    {
+        let store = database.open(StorageLimits::default());
+        store
+            .insert(a, record.clone(), MemoryOrigin::Observation)
+            .unwrap();
+    }
+    let before = std::fs::read(database.path()).unwrap();
+    {
+        let store = MemoryStore::open_read_only(
+            database.path(),
+            StorageLimits::default(),
+            database.authority.clone(),
+        )
+        .unwrap();
+        assert_eq!(store.get(a, a, record.id).unwrap().unwrap().record, record);
+        assert_eq!(
+            store.insert(
+                a,
+                crate::record(a, "attempted change"),
+                MemoryOrigin::Observation
+            ),
+            Err(StorageError::ReadOnly)
+        );
+        assert_eq!(store.delete(a, a, record.id), Err(StorageError::ReadOnly));
+        assert_eq!(
+            store
+                .search(a, a, "observation", &MemoryQuery::default())
+                .unwrap()
+                .records
+                .len(),
+            1
+        );
+    }
+    assert_eq!(std::fs::read(database.path()).unwrap(), before);
+}
+
+#[test]
 fn simultaneous_initializers_preserve_one_complete_schema() {
     let database = Database::new();
     let barrier = Arc::new(std::sync::Barrier::new(2));

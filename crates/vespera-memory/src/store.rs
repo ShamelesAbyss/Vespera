@@ -13,6 +13,7 @@ pub struct MemoryStore {
     connection: Mutex<Connection>,
     limits: StorageLimits,
     authorizer: Arc<dyn MemoryAuthorizer>,
+    read_only: bool,
 }
 impl MemoryStore {
     /// Explicitly open/create a database file. Parent directories must already exist.
@@ -22,26 +23,58 @@ impl MemoryStore {
         limits: StorageLimits,
         authorizer: Arc<dyn MemoryAuthorizer>,
     ) -> Result<Self, StorageError> {
+        Self::open_mode(path.as_ref(), limits, authorizer, true, false)
+    }
+    /// Open existing storage without creating or initializing a missing/empty file.
+    pub fn open_existing(
+        path: impl AsRef<Path>,
+        limits: StorageLimits,
+        authorizer: Arc<dyn MemoryAuthorizer>,
+    ) -> Result<Self, StorageError> {
+        Self::open_mode(path.as_ref(), limits, authorizer, false, false)
+    }
+    /// Open existing storage with SQLite's read-only flag. No schema creation/migration.
+    pub fn open_read_only(
+        path: impl AsRef<Path>,
+        limits: StorageLimits,
+        authorizer: Arc<dyn MemoryAuthorizer>,
+    ) -> Result<Self, StorageError> {
+        Self::open_mode(path.as_ref(), limits, authorizer, false, true)
+    }
+    fn open_mode(
+        path: &Path,
+        limits: StorageLimits,
+        authorizer: Arc<dyn MemoryAuthorizer>,
+        initialize: bool,
+        read_only: bool,
+    ) -> Result<Self, StorageError> {
         limits.validate()?;
-        let path = path.as_ref();
         if path.as_os_str().is_empty()
             || path.to_string_lossy() == ":memory:"
             || path.to_string_lossy().starts_with("file:")
         {
             return Err(StorageError::Invalid("path"));
         }
-        let mut connection = Connection::open_with_flags(
-            path,
+        let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        flags |= if read_only {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        } else {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(db)?;
-        crate::schema::initialize(&mut connection)?;
+        };
+        if initialize {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
+        }
+        let mut connection = Connection::open_with_flags(path, flags).map_err(db)?;
+        if initialize {
+            crate::schema::initialize(&mut connection)?;
+        } else {
+            crate::schema::open_existing(&mut connection)?;
+        }
         Ok(Self {
             connection: Mutex::new(connection),
             limits,
             authorizer,
+            read_only,
         })
     }
     fn connection(&self) -> MutexGuard<'_, Connection> {
@@ -65,6 +98,9 @@ impl MemoryStore {
     }
     fn validate_record(&self, actor: AgentId, record: &MemoryRecord) -> Result<(), StorageError> {
         self.authorize(actor, record.agent_id, Permission::MemoryWrite)?;
+        if self.read_only {
+            return Err(StorageError::ReadOnly);
+        }
         record
             .validate()
             .map_err(|_| StorageError::Invalid("record"))?;
@@ -332,6 +368,9 @@ impl MemoryStore {
     pub fn delete(&self, actor: AgentId, owner: AgentId, id: MemoryId) -> Result<(), StorageError> {
         self.authorize(actor, owner, Permission::MemoryWrite)?;
         self.authorize(actor, owner, Permission::MemoryRead)?;
+        if self.read_only {
+            return Err(StorageError::ReadOnly);
+        }
         let mut connection = self.connection();
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
