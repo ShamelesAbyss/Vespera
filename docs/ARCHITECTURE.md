@@ -123,7 +123,7 @@ is present yet.
 
 Registry, workflow/task histories and the original agent memory buffers remain in-process. The independent memory library now persists authorized records and lineage in SQLite when explicitly opened. `MemoryNamespace`
 is a logical address, not a database. Event envelopes are schema contracts, not
-an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. SQLite memory/retrieval, transactional initialization and provenance are implemented as a library. Explicit offline CLI composition is implemented; inference context integration, durable task history, event delivery/replay, authenticated interoperability and independent deterministic world state remain required work.
+an event bus. Bounded multi-step orchestration is implemented as a library; application submission is integrated and automatic decomposition remains future work. SQLite memory/retrieval, transactional initialization and provenance are implemented as a library. The CLI supports offline memory management and opt-in single-agent retrieval and result persistence. Durable task history, event delivery and replay, authenticated interoperability and independent deterministic world state remain required work.
 
 Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
 simulation ticks separate. In-process monotonic instants do not survive restart.

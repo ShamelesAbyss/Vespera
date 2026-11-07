@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Opt-in durable memory during agent inference
+
+Previous checkpoint `b490c0ec62fe8a4f76e39c1797fc8c6a9f4e1539` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42333437601). Single-agent execution now accepts an explicitly retrieved memory snapshot and separately offers generated result retention. The CLI checks grants and opens the requested existing database before provider requests. The agent runtime checks the snapshot owner and read grant again. Provider preflight validates the same messages sent during inference.
+
+Retrieval considers eight namespace-ordered matches and includes whole records within an 8 KiB serialized user message. Execution reports list the included IDs while task history keeps the original prompt. Result retention writes accepted output as generated episodic memory through the live task authority. Persistence errors preserve the inference result and return nonzero. Database work runs outside the inference deadline. Input tokenization remains provider-specific.
+
+Validation passed all 185 offline workspace tests, strict Clippy and rustdoc, and the optimized workspace build. Two subprocess regressions also passed in release mode. They verify the captured provider payload, oversized record exclusion, original task prompt, persisted task provenance and absence of provider I/O on denied grants or missing storage. The remaining roadmap includes durable events and replay, durable task history, interoperability, simulation, 3D and experiments.
+
 ## 2026-11-06 — Explicit offline durable memory CLI
 
 Previous verified checkpoint: `c59ecb7f5ddeba801c83bc526f95256d509916d9`, pushed to `main`; Ubuntu CI [42332452032](https://github.com/ShamelesAbyss/Vespera/actions/runs/42332452032) passed. Added `memory init/add/get/list/search/usage/consolidate/delete`, all scoped to a configured agent UUID and explicit read/write grants. The application authority uses validated local declarations without resolving provider credentials or creating adapters. It never invents accepted task ownership; offline writes support observation/import and explicit derived lineage only.

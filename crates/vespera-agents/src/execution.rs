@@ -4,12 +4,58 @@ use serde::Serialize;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
-use vespera_core::{AgentId, ModelId, ProviderId, Task, TaskId, TaskState};
+use vespera_core::{AgentId, MemoryId, ModelId, Permission, ProviderId, Task, TaskId, TaskState};
+use vespera_memory::{MemoryQuery, MemoryStore, StorageError};
 use vespera_providers::{
     BoundedInferenceRequest, CancellationToken, ChatMessage, ChatRole, InferenceFinishReason,
     InferenceResponse, ProviderError,
 };
 use vespera_scheduler::ScheduledInference;
+
+/// Owned retrieval snapshot. Content is kept out of task history and debug output.
+#[derive(Clone)]
+pub struct MemoryContext {
+    owner: AgentId,
+    ids: Vec<MemoryId>,
+    message: Option<String>,
+}
+
+impl MemoryContext {
+    /// Read up to eight phrase matches from the actor's namespace and include
+    /// whole records that fit in an 8 KiB serialized user message.
+    pub fn retrieve(
+        store: &MemoryStore,
+        actor: AgentId,
+        phrase: &str,
+    ) -> Result<Self, StorageError> {
+        let query = MemoryQuery {
+            limit: 8,
+            ..Default::default()
+        };
+        let page = store.search(actor, actor, phrase, &query)?;
+        let mut entries = Vec::new();
+        let mut ids = Vec::new();
+        let mut message = None;
+        for memory in page.records {
+            entries.push(serde_json::json!({
+                "id": memory.record.id,
+                "content": memory.record.content,
+            }));
+            let candidate = serde_json::json!({"untrusted_memory": entries}).to_string();
+            if candidate.len() <= 8192 {
+                ids.push(memory.record.id);
+                message = Some(candidate);
+            } else {
+                entries.pop();
+            }
+        }
+        Ok(Self {
+            owner: actor,
+            ids,
+            message,
+        })
+    }
+}
 
 /// Explicit limits for a single task, including queueing, loading and inference time.
 #[derive(Debug, Clone)]
@@ -81,6 +127,9 @@ pub struct TaskExecutionResult {
     pub lease_id: String,
     /// Generated content and provider execution observations.
     pub response: InferenceResponse,
+    /// Exact durable records included as untrusted user input.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub memory_context_ids: Vec<MemoryId>,
     /// Runtime-observed local elapsed milliseconds, including queue/preparation.
     pub elapsed_ms: u64,
 }
@@ -170,10 +219,46 @@ impl AgentRuntime {
         options: ExecutionOptions,
         cancel: CancellationToken,
     ) -> Result<TaskExecutionResult, ExecutionError> {
+        self.execute_task_with_context(agent_id, task, options, None, cancel)
+            .await
+    }
+
+    /// Execute with explicitly retrieved memory from the same authorized agent.
+    pub async fn execute_task_with_context(
+        &self,
+        agent_id: AgentId,
+        task: Task,
+        options: ExecutionOptions,
+        context: Option<MemoryContext>,
+        cancel: CancellationToken,
+    ) -> Result<TaskExecutionResult, ExecutionError> {
         options.validate()?;
         if cancel.is_cancelled() {
             return Err(ExecutionError::Cancelled);
         }
+        let mut messages = Vec::new();
+        let mut memory_context_ids = Vec::new();
+        if let Some(context) = context {
+            let agent = self.get_agent(agent_id).await?;
+            if context.owner != agent_id || !agent.permissions.contains(&Permission::MemoryRead) {
+                return Err(AgentRuntimeError::PermissionDenied {
+                    agent_id,
+                    permission: Permission::MemoryRead,
+                }
+                .into());
+            }
+            if let Some(content) = context.message {
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    content,
+                });
+            }
+            memory_context_ids = context.ids;
+        }
+        messages.push(ChatMessage {
+            role: ChatRole::User,
+            content: task.prompt.clone(),
+        });
         let started = Instant::now();
         let deadline = started
             .checked_add(options.timeout)
@@ -186,7 +271,7 @@ impl AgentRuntime {
                     task.clone(),
                     options.context_tokens,
                     owned_cancel.clone(),
-                    Some((owned_cancel.clone(), &options)),
+                    Some((owned_cancel.clone(), &options, &messages)),
                 )
                 .await
                 .map_err(|error| match error {
@@ -204,10 +289,7 @@ impl AgentRuntime {
             let outcome = async {
                 let request = BoundedInferenceRequest::new(
                     active.inference.model_name(),
-                    vec![ChatMessage {
-                        role: ChatRole::User,
-                        content: task.prompt,
-                    }],
+                    messages,
                     options.max_output_tokens,
                     active.inference.context_tokens,
                     options.temperature,
@@ -256,6 +338,7 @@ impl AgentRuntime {
                         provider_id: active.inference.provider_id,
                         lease_id: active.inference.lease_id().to_string(),
                         response,
+                        memory_context_ids,
                         elapsed_ms: u64::try_from(started.elapsed().as_millis())
                             .unwrap_or(u64::MAX),
                     })

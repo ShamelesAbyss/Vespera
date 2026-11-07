@@ -73,6 +73,15 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct RunAgentArgs {
+    /// Retrieve a literal phrase from a UTF-8 file and attach matching owned memories.
+    #[arg(long)]
+    memory_query_file: Option<PathBuf>,
+    /// Save the accepted output as an episodic generated memory.
+    #[arg(long)]
+    remember_result: bool,
+    /// Existing database for explicit retrieval or result retention.
+    #[arg(long, default_value = "data/vespera.sqlite3")]
+    memory_database: PathBuf,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
     /// Configured agent UUID.

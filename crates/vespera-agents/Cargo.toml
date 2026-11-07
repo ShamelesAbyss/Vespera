@@ -13,6 +13,7 @@ vespera-providers.workspace = true
 vespera-model-registry = { path = "../vespera-model-registry" }
 vespera-scheduler = { path = "../vespera-scheduler" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

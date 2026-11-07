@@ -162,7 +162,11 @@ pub(crate) async fn run(args: MemoryArgs) -> Result<(), AppError> {
     }
     Ok(())
 }
-fn read_text(path: &Path, limit: usize, field: &'static str) -> Result<String, AppError> {
+pub(crate) fn read_text(
+    path: &Path,
+    limit: usize,
+    field: &'static str,
+) -> Result<String, AppError> {
     let mut text = String::new();
     File::open(path)
         .map_err(|_| AppError::MemoryInput(field))?
@@ -174,6 +178,16 @@ fn read_text(path: &Path, limit: usize, field: &'static str) -> Result<String, A
     }
     Ok(text)
 }
+pub(crate) fn current_timestamp() -> Result<u64, AppError> {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| AppError::MemoryInput("clock"))?
+            .as_millis(),
+    )
+    .map_err(|_| AppError::MemoryInput("clock"))
+}
+
 fn record(
     actor: AgentId,
     id: Option<MemoryId>,
@@ -184,13 +198,7 @@ fn record(
     let content = read_text(content_file, 64 * 1024, "content_file")?;
     let timestamp = match timestamp {
         Some(value) => value,
-        None => u64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| AppError::MemoryInput("clock"))?
-                .as_millis(),
-        )
-        .map_err(|_| AppError::MemoryInput("clock"))?,
+        None => current_timestamp()?,
     };
     if timestamp > i64::MAX as u64 {
         return Err(AppError::MemoryInput("created_at_unix_ms"));

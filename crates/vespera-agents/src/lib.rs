@@ -21,7 +21,7 @@ use vespera_providers::CancellationToken;
 use vespera_scheduler::{ResourceScheduler, ScheduledInference, SchedulerError};
 
 mod execution;
-pub use execution::{ExecutionError, ExecutionOptions, TaskExecutionResult};
+pub use execution::{ExecutionError, ExecutionOptions, MemoryContext, TaskExecutionResult};
 mod limits;
 pub use limits::{RuntimeLimits, RuntimeUsage};
 
@@ -779,7 +779,11 @@ impl AgentRuntime {
         mut task: Task,
         requested_context_tokens: Option<u32>,
         cancel: CancellationToken,
-        managed: Option<(CancellationToken, &ExecutionOptions)>,
+        managed: Option<(
+            CancellationToken,
+            &ExecutionOptions,
+            &[vespera_providers::ChatMessage],
+        )>,
     ) -> Result<ActiveTaskExecution, AgentRuntimeError> {
         task.validate()?;
         if task.state != TaskState::Queued {
@@ -818,7 +822,7 @@ impl AgentRuntime {
             task.state.transition(TaskState::Running)?;
             state.tasks.insert(task.id, task.clone());
             state.task_assignments.insert(task.id, agent_id);
-            if let Some((token, _)) = &managed {
+            if let Some((token, _, _)) = &managed {
                 state.managed_tasks.insert(task.id, token.clone());
             }
             if let Some(agent) = state.agents.get_mut(&agent_id) {
@@ -845,7 +849,7 @@ impl AgentRuntime {
             }
         };
 
-        let admitted = if let Some((_, options)) = managed {
+        let admitted = if let Some((_, options, messages)) = managed {
             let context_tokens = requested_context_tokens.unwrap_or_else(|| {
                 resolved_model
                     .context_window
@@ -854,10 +858,7 @@ impl AgentRuntime {
             });
             let request = match vespera_providers::BoundedInferenceRequest::new(
                 &resolved_model.provider_model_identifier,
-                vec![vespera_providers::ChatMessage {
-                    role: vespera_providers::ChatRole::User,
-                    content: task.prompt.clone(),
-                }],
+                messages.to_vec(),
                 options.max_output_tokens,
                 context_tokens,
                 options.temperature,

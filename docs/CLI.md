@@ -200,3 +200,17 @@ Content files must contain nonempty UTF-8 up to 64 KiB. Query files must contain
 | `--max-content-bytes <N>` | 65,536–4,194,304 bytes; default 1,048,576; metadata is separate |
 
 Only `init` can create storage. Read operations open SQLite read-only; existing-file write operations do not create or migrate a missing or empty database. Denied permissions are checked before content/database access. JSON output carries `agent_id` and the relevant `record`, `page`, `usage`, `database_ready`/`sqlite_version`, or `memory_absent` fields. Ordinary failures are nonzero with sanitized stderr; no private path, content excerpt or raw SQL is included. File/database work uses a blocking worker and is outside inference timeout flags. See [MEMORY.md](MEMORY.md) for schema, quotas and recovery limits.
+
+## Opt-in memory during inference
+
+Use these options on `run-agent` after initializing a database with `memory init`.
+
+| Option | Behavior |
+| --- | --- |
+| `--memory-query-file <PATH>` | Read a nonempty UTF-8 literal phrase of at most 256 bytes. Requires `memory_read`. |
+| `--remember-result` | Store accepted output as generated episodic memory. Requires `memory_write`. |
+| `--memory-database <PATH>` | Existing database used by either option. Defaults to `data/vespera.sqlite3`. |
+
+Retrieval examines the first eight matches in namespace order. Whole records that fit within an 8 KiB serialized JSON message are sent as untrusted user content before the original task prompt. This is a byte limit. Provider tokenization and context handling still apply. The JSON execution report lists included IDs in `memory_context_ids` when at least one record is attached. The stored task snapshot keeps the original prompt.
+
+A retained response carries the accepted task ID and appears as `stored_memory_id` in the JSON report. Storage failure returns nonzero with `memory_error` and preserves the completed execution evidence. File and database preparation and post-inference persistence run on blocking workers outside the inference deadline.

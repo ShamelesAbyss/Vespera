@@ -358,6 +358,141 @@ fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str])
     execute(&args)
 }
 
+#[test]
+fn agent_memory_context_and_generated_result_round_trip() {
+    use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission};
+    use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
+
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true).replace(
+        "permissions = []",
+        "permissions = [\"memory_read\", \"memory_write\"]",
+    );
+    let database = directory.0.join("memory.sqlite3");
+    let phrase = directory.0.join("phrase.txt");
+    fs::write(&phrase, "amber").unwrap();
+    let actor = AGENT.parse().unwrap();
+    let authority = vespera_app::memory::configured_authorizer(
+        &vespera_config::AppConfig::load(directory.write_config(&config)).unwrap(),
+        actor,
+        &[Permission::MemoryRead, Permission::MemoryWrite],
+    )
+    .unwrap();
+    let store = MemoryStore::open(&database, StorageLimits::default(), authority).unwrap();
+    let id = MemoryId::new();
+    for (memory_id, content) in [
+        (MemoryId::new(), format!("amber {}", "x".repeat(8192))),
+        (id, "amber \"operator record\"".to_owned()),
+    ] {
+        store
+            .insert(
+                actor,
+                MemoryRecord {
+                    id: memory_id,
+                    agent_id: actor,
+                    layer: MemoryLayer::Observation,
+                    content,
+                    created_at_unix_ms: 1,
+                    source_task_id: None,
+                },
+                MemoryOrigin::Observation,
+            )
+            .unwrap();
+    }
+    let output = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--memory-database",
+            database.to_str().unwrap(),
+            "--memory-query-file",
+            phrase.to_str().unwrap(),
+            "--remember-result",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["execution"]["memory_context_ids"],
+        serde_json::json!([id])
+    );
+    assert_eq!(
+        report["execution"]["task"]["prompt"],
+        "bounded integrated task"
+    );
+    let requests = fixture.captured();
+    let request = requests
+        .iter()
+        .find(|request| request.path == "/api/chat")
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    let messages = payload["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["role"], "user");
+    let context: serde_json::Value =
+        serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        context["untrusted_memory"],
+        serde_json::json!([{
+            "id": id, "content": "amber \"operator record\""
+        }])
+    );
+    assert_eq!(messages[1]["content"], "bounded integrated task");
+    let memories = store
+        .list(
+            actor,
+            actor,
+            &MemoryQuery {
+                layer: Some(MemoryLayer::Episodic),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(memories.records.len(), 1);
+    let saved = &memories.records[0];
+    assert_eq!(saved.origin, MemoryOrigin::Generated);
+    assert_eq!(
+        serde_json::json!(saved.record.id),
+        report["stored_memory_id"]
+    );
+    assert_eq!(
+        serde_json::json!(saved.record.source_task_id),
+        report["task_id"]
+    );
+    assert_eq!(
+        saved.record.content,
+        report["execution"]["response"]["content"]
+    );
+}
+
+#[test]
+fn agent_memory_preflight_blocks_provider_io_on_denied_grants_or_missing_database() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true);
+    let database = directory.0.join("missing.sqlite3");
+    let flags = [
+        "--resume",
+        "--remember-result",
+        "--memory-database",
+        database.to_str().unwrap(),
+    ];
+    let denied = run_fixture_agent(&directory, &config, &flags);
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("memory access denied"));
+    let allowed = config.replace("permissions = []", "permissions = [\"memory_write\"]");
+    let missing = run_fixture_agent(&directory, &allowed, &flags);
+    assert!(!missing.status.success());
+    assert!(fixture.captured().is_empty());
+    assert!(!database.exists());
+}
+
 fn workflow_value() -> serde_json::Value {
     serde_json::json!({
         "task": { "id": "77777777-7777-4777-8777-777777777777", "prompt": "Produce a bounded contribution and summarize it.", "required_capabilities": ["text-generation"], "state": "queued" },

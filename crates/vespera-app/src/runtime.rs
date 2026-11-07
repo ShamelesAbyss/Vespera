@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use vespera_agents::{
-    AgentRuntime, AgentRuntimeError, ExecutionError, ExecutionOptions, TaskExecutionResult,
+    AgentRuntime, AgentRuntimeError, ExecutionError, ExecutionOptions, MemoryContext,
+    TaskExecutionResult,
 };
 use vespera_config::{AppConfig, ConfigError};
 use vespera_core::{
@@ -395,6 +396,20 @@ impl VesperaRuntime {
         resume: bool,
         cancel: CancellationToken,
     ) -> Result<TaskExecutionResult, RuntimeError> {
+        self.run_agent_with_context(agent_id, task, options, resume, None, cancel)
+            .await
+    }
+
+    /// Run an agent with an optional authorized durable memory snapshot.
+    pub async fn run_agent_with_context(
+        &self,
+        agent_id: AgentId,
+        task: Task,
+        options: ExecutionOptions,
+        resume: bool,
+        context: Option<MemoryContext>,
+        cancel: CancellationToken,
+    ) -> Result<TaskExecutionResult, RuntimeError> {
         options.validate()?;
         let agent = self.agents.get_agent(agent_id).await?;
         if agent.status != AgentStatus::Idle {
@@ -430,7 +445,7 @@ impl VesperaRuntime {
         }
         Ok(self
             .agents
-            .execute_task(agent_id, task, options, cancel)
+            .execute_task_with_context(agent_id, task, options, context, cancel)
             .await?)
     }
     /// Stop admissions and optionally request explicit unload of this runtime's idle models.

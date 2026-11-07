@@ -6,10 +6,12 @@ use std::fs::File;
 use std::future::Future;
 use std::io::Read;
 use std::time::Duration;
-use vespera_agents::{ExecutionOptions, TaskExecutionResult};
+use vespera_agents::{ExecutionOptions, MemoryContext, TaskExecutionResult};
+use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime, check_providers};
 use vespera_config::AppConfig;
-use vespera_core::{Task, TaskId, TaskState};
+use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId, TaskState};
+use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
 use vespera_orchestrator::{Workflow, WorkflowReport};
 use vespera_providers::CancellationToken;
@@ -145,6 +147,10 @@ struct RunReport {
     execution: Option<TaskExecutionResult>,
     error: Option<String>,
     cleanup: CleanupReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stored_memory_id: Option<MemoryId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_error: Option<String>,
 }
 
 pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
@@ -158,7 +164,48 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     if prompt.len() > 65_536 || prompt.trim().is_empty() {
         return Err(AppError::InvalidPrompt);
     }
+    let mut required = Vec::new();
+    if args.memory_query_file.is_some() {
+        required.push(Permission::MemoryRead);
+    }
+    if args.remember_result {
+        required.push(Permission::MemoryWrite);
+    }
+    let authority = if required.is_empty() {
+        None
+    } else {
+        Some(configured_authorizer(&config, args.agent, &required)?)
+    };
+    let context = if let (Some(path), Some(authority)) = (args.memory_query_file, authority) {
+        let database = args.memory_database.clone();
+        let actor = args.agent;
+        Some(
+            tokio::task::spawn_blocking(move || {
+                let phrase = crate::memory_commands::read_text(&path, 256, "memory_query_file")?;
+                let store =
+                    MemoryStore::open_read_only(database, StorageLimits::default(), authority)?;
+                Ok::<_, AppError>(MemoryContext::retrieve(&store, actor, &phrase)?)
+            })
+            .await
+            .map_err(|_| AppError::MemoryWorker)??,
+        )
+    } else {
+        None
+    };
     let runtime = VesperaRuntime::from_config_for_agent(&config, args.agent).await?;
+    let result_store = if args.remember_result {
+        let database = args.memory_database;
+        let authority = runtime.agents().memory_authorizer();
+        Some(
+            tokio::task::spawn_blocking(move || {
+                MemoryStore::open_existing(database, StorageLimits::default(), authority)
+            })
+            .await
+            .map_err(|_| AppError::MemoryWorker)??,
+        )
+    } else {
+        None
+    };
     let task_id = TaskId::new();
     let task = Task {
         id: task_id,
@@ -178,7 +225,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     let outcome = cancellable(
         timeout,
         cancel.clone(),
-        runtime.run_agent(args.agent, task, options, args.resume, cancel),
+        runtime.run_agent_with_context(args.agent, task, options, args.resume, context, cancel),
     )
     .await;
     let cleanup = runtime
@@ -195,6 +242,35 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Ok(execution) => (Some(execution), None),
         Err(error) => (None, Some(error)),
     };
+    let persistence = if let (Some(store), Some(execution)) = (result_store, &execution) {
+        let actor = execution.agent_id;
+        let content = execution.response.content.clone();
+        tokio::task::spawn_blocking(move || {
+            let timestamp = crate::memory_commands::current_timestamp()?;
+            let id = MemoryId::new();
+            store.insert(
+                actor,
+                MemoryRecord {
+                    id,
+                    agent_id: actor,
+                    layer: MemoryLayer::Episodic,
+                    content,
+                    created_at_unix_ms: timestamp,
+                    source_task_id: Some(task_id),
+                },
+                MemoryOrigin::Generated,
+            )?;
+            Ok::<_, AppError>(Some(id))
+        })
+        .await
+        .unwrap_or(Err(AppError::MemoryWorker))
+    } else {
+        Ok(None)
+    };
+    let (stored_memory_id, memory_error) = match persistence {
+        Ok(id) => (id, None),
+        Err(error) => (None, Some(error)),
+    };
     if args.json {
         let report = RunReport {
             task_id,
@@ -202,9 +278,14 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             error: error.as_ref().map(ToString::to_string),
             execution,
             cleanup,
+            stored_memory_id,
+            memory_error: memory_error.as_ref().map(ToString::to_string),
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        if let Some(id) = stored_memory_id {
+            println!("Stored memory {id}");
+        }
         if let Some(execution) = &execution {
             println!("{}", execution.response.content);
             println!(
@@ -223,6 +304,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     }
     if let Some(error) = error {
         return Err(error.into());
+    }
+    if let Some(error) = memory_error {
+        return Err(error);
     }
     if cleanup_failed {
         return Err(AppError::CleanupFailed);
