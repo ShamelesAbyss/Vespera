@@ -377,7 +377,9 @@ Run `cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.
 
 Press Tab to cycle all tasks, queued and running work, and terminal outcomes. N cycles visible tasks and B cycles workers. Left-click picks a visible object. Use right-drag, wheel and WASD to navigate, F to focus, and R to reset. `--reduced-motion` skips animated camera focus and task lane transitions.
 
-The view is read-only by default. `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. The inspector displays pending, returned or uncertain outcomes. The task lane changes when the event feed reports the new state.
+Press T to freeze the Intelligence Network or return live. Press [ to freeze and step back, then use [ and ] to move across captured task transitions. The header shows the viewed sequence, captured range and live position. The window can replay up to 256 locally observed task transitions from a rolling baseline. The capture survives a feed reset. Returning live switches to the new feed.
+
+The view is read-only by default. In live mode, `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. Freezing dismisses any confirmation that has yet to be sent. The inspector displays pending, returned or uncertain outcomes for requests already sent. The task lane changes when the event feed reports the new state.
 
 ### TLS worker transport
 

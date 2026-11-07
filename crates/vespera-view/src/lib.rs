@@ -9,7 +9,7 @@ use vespera_core::{
 const MAX_TASKS: usize = 256;
 const MAX_WORKERS: usize = 64;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TaskNode {
     pub slot: usize,
     pub state: TaskState,
@@ -18,7 +18,7 @@ pub struct TaskNode {
     pub observed_at_unix_ms: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Graph {
     pub tasks: BTreeMap<TaskId, TaskNode>,
     pub workers: BTreeMap<AgentId, usize>,

@@ -4,10 +4,11 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use tokio::sync::mpsc;
-use vespera_core::{AgentId, EventKind, ExternalTaskChange, TaskId, TaskState};
+use vespera_core::{AgentId, ExternalTaskChange, TaskId, TaskState};
 use vespera_view::Graph;
 
 use crate::Update as BrokerUpdate;
+use crate::task_timeline::Timeline;
 
 #[derive(Resource)]
 struct Connection {
@@ -15,6 +16,7 @@ struct Connection {
     cancel: Option<mpsc::Sender<TaskId>>,
     status: &'static str,
     cancellation: Cancellation,
+    timeline: Timeline,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -162,6 +164,7 @@ pub fn run(
         cancel,
         status: "Connecting to broker...",
         cancellation: Cancellation::Idle,
+        timeline: Timeline::default(),
     })
     .init_resource::<Scene>()
     .init_resource::<Selection>()
@@ -265,7 +268,7 @@ fn setup(
         Inspector,
         Node {
             position_type: PositionType::Absolute,
-            top: px(122),
+            top: px(146),
             right: px(22),
             width: px(340),
             padding: UiRect::all(px(15)),
@@ -279,17 +282,30 @@ fn setup(
 }
 
 fn receive(
-    mut commands: Commands,
     mut scene: ResMut<Scene>,
     mut connection: ResMut<Connection>,
     mut selection: ResMut<Selection>,
+    keys: Res<ButtonInput<KeyCode>>,
 ) {
+    let earlier = keys.just_pressed(KeyCode::BracketLeft);
+    let later = connection.timeline.is_frozen() && keys.just_pressed(KeyCode::BracketRight);
+    let mut refresh = keys.just_pressed(KeyCode::KeyT);
+    if refresh {
+        if connection.timeline.source_changed() {
+            selection.0 = None;
+        }
+        connection.timeline.toggle();
+    } else if earlier || later {
+        connection.timeline.step(earlier);
+        refresh = true;
+    }
     for _ in 0..64 {
         let Ok(update) = connection.updates.try_recv() else {
             break;
         };
         match update {
             BrokerUpdate::Ready(discarded_through) => {
+                connection.timeline.ready(discarded_through);
                 connection.status = if discarded_through == 0 {
                     "Connected - live broker"
                 } else {
@@ -307,36 +323,28 @@ fn receive(
                 }
             }
             BrokerUpdate::Observation(event) => {
-                if let EventKind::ExternalTaskChanged {
-                    task_id, change, ..
-                } = event.event.kind
-                {
-                    if scene.recent.len() == 5 {
-                        scene.recent.pop_front();
-                    }
-                    scene
-                        .recent
-                        .push_back((event.cursor.sequence, task_id, change));
-                }
-                scene.graph.observe(event);
+                refresh |= connection.timeline.observe(event);
             }
             BrokerUpdate::Cancelled(task, state) => {
                 connection.cancellation = Cancellation::Finished(task, state);
             }
             BrokerUpdate::CancelFailed => connection.cancellation = Cancellation::Uncertain,
             BrokerUpdate::Reset => {
-                for entity in std::mem::take(&mut scene.entities).into_values() {
-                    commands.entity(entity).despawn();
+                connection.timeline.reset();
+                if !connection.timeline.is_frozen() {
+                    refresh = true;
+                    selection.0 = None;
                 }
-                scene.graph = Graph::default();
-                scene.layout.clear();
-                scene.recent.clear();
-                selection.0 = None;
                 if matches!(connection.cancellation, Cancellation::Confirm(_)) {
                     connection.cancellation = Cancellation::Idle;
                 }
             }
         }
+    }
+    if refresh {
+        let projected = connection.timeline.projection();
+        scene.graph = projected.graph;
+        scene.recent = projected.recent;
     }
 }
 
@@ -441,6 +449,13 @@ fn sync_scene(
         return;
     }
     let positions = layout(&scene.graph);
+    scene.entities.retain(|key, entity| {
+        if positions.contains_key(key) {
+            return true;
+        }
+        commands.entity(*entity).despawn();
+        false
+    });
     for (&key, &location) in &positions {
         let (mesh, index, visible) = match key {
             NodeKey::Task(id) => (
@@ -496,9 +511,10 @@ fn sync_scene(
 fn move_nodes(
     time: Res<Time>,
     focus: Res<CameraFocus>,
+    connection: Res<Connection>,
     mut nodes: Query<(&LaneTarget, &mut Transform)>,
 ) {
-    let factor = if focus.reduced_motion {
+    let factor = if focus.reduced_motion || connection.timeline.is_frozen() {
         1.0
     } else {
         1.0 - (-10.0 * time.delta_secs()).exp()
@@ -569,7 +585,11 @@ fn draw_links(
     }
     if let Some(key) = selection.0
         && match key {
-            NodeKey::Task(id) => filter.shows(scene.graph.tasks[&id].state),
+            NodeKey::Task(id) => scene
+                .graph
+                .tasks
+                .get(&id)
+                .is_some_and(|task| filter.shows(task.state)),
             NodeKey::Worker(_) => true,
         }
         && let Some(center) = point(key)
@@ -661,7 +681,7 @@ fn inspect(
         counts[lane(task.state)] += 1;
     }
     let headline = format!(
-        "INTELLIGENCE NETWORK   |   {}   |   {}   |   {} workers\nQUEUED {}     RUNNING {}     COMPLETE {}     FAILED {}     CANCELLED {}",
+        "INTELLIGENCE NETWORK   |   {}   |   {}   |   {} workers\nQUEUED {}     RUNNING {}     COMPLETE {}     FAILED {}     CANCELLED {}\n{}",
         connection.status,
         filter.label(),
         scene.graph.workers.len(),
@@ -669,37 +689,49 @@ fn inspect(
         counts[1],
         counts[2],
         counts[3],
-        counts[4]
+        counts[4],
+        connection.timeline.label(),
     );
     if status.0 != headline {
         status.0 = headline;
     }
     let detail = match selection.0 {
         Some(NodeKey::Task(id)) => {
-            let task = &scene.graph.tasks[&id];
-            let attempt = task.attempt.map_or_else(
-                || "No attempt in this observation".into(),
-                |attempt| {
-                    format!(
-                        "Worker {}\nAttempt {}\nGeneration {}",
-                        attempt.worker_id, attempt.attempt_id, attempt.generation
-                    )
-                },
-            );
-            format!(
-                "TASK  {id}\n{} / {}{}\n{attempt}\nObserved Unix ms {}",
-                task.state, change_label(task.change),
-                if filter.shows(task.state) { "" } else { " (filtered)" }, task.observed_at_unix_ms
-            )
+            if let Some(task) = scene.graph.tasks.get(&id) {
+                let attempt = task.attempt.map_or_else(
+                    || "No attempt in this observation".into(),
+                    |attempt| {
+                        format!(
+                            "Worker {}\nAttempt {}\nGeneration {}",
+                            attempt.worker_id, attempt.attempt_id, attempt.generation
+                        )
+                    },
+                );
+                format!(
+                    "TASK  {id}\n{} / {}{}\n{attempt}\nObserved Unix ms {}",
+                    task.state,
+                    change_label(task.change),
+                    if filter.shows(task.state) { "" } else { " (filtered)" },
+                    task.observed_at_unix_ms
+                )
+            } else {
+                format!("TASK  {id}\nUnavailable at this sequence")
+            }
         }
         Some(NodeKey::Worker(id)) => {
-            let mut seen = 0;
-            let mut running = 0;
-            for task in scene.graph.tasks.values().filter(|task| task.attempt.is_some_and(|attempt| attempt.worker_id == id)) {
-                seen += 1;
-                running += usize::from(task.state == TaskState::Running);
+            if !scene.graph.workers.contains_key(&id) {
+                format!("WORKER  {id}\nUnavailable at this sequence")
+            } else {
+                let mut seen = 0;
+                let mut running = 0;
+                for task in scene.graph.tasks.values().filter(|task| {
+                    task.attempt.is_some_and(|attempt| attempt.worker_id == id)
+                }) {
+                    seen += 1;
+                    running += usize::from(task.state == TaskState::Running);
+                }
+                format!("WORKER  {id}\n{running} running / {seen} attributed tasks\nLatest observed attempts only")
             }
-            format!("WORKER  {id}\n{running} running / {seen} attributed tasks\nLatest observed attempts only")
         }
         None => "Pick a task or worker to inspect it.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
     };
@@ -715,6 +747,9 @@ fn inspect(
             format!("Broker response: {} is {state}.", short_id(id))
         }
         Cancellation::Uncertain => "Cancellation outcome uncertain. Check the broker.".into(),
+        Cancellation::Idle if connection.timeline.is_frozen() => {
+            "Replay controls are read-only".into()
+        }
         Cancellation::Idle if connection.cancel.is_some() => "C - request cancellation".into(),
         Cancellation::Idle => "Read-only controls".into(),
     };
@@ -732,9 +767,9 @@ fn inspect(
         .collect::<Vec<_>>()
         .join("\n");
     let text = format!(
-        "INSPECTOR\n\n{detail}\n\n{receipt}\n\nRECENT OBSERVATIONS\n{}\n\nResource measurements unavailable\n\nTab - filter   N - next task\nB - next worker   F - focus\nRight drag - orbit   R - reset\nWheel - zoom   WASD - pan",
+        "INSPECTOR\n\n{detail}\n\n{receipt}\n\nRECENT OBSERVATIONS\n{}\n\nResource measurements unavailable\n\nT - freeze / live   [ ] - step\nTab - filter   N - next task\nB - next worker   F - focus\nRight drag - orbit   R - reset\nWheel - zoom   WASD - pan",
         if activity.is_empty() {
-            "Waiting for broker events"
+            "No task observations at this sequence"
         } else {
             &activity
         }
@@ -750,6 +785,12 @@ fn update_cancellation(
     graph: &Graph,
     connection: &mut Connection,
 ) {
+    if connection.timeline.is_frozen() || keys.just_pressed(KeyCode::KeyT) {
+        if matches!(connection.cancellation, Cancellation::Confirm(_)) {
+            connection.cancellation = Cancellation::Idle;
+        }
+        return;
+    }
     let Some(control) = &connection.cancel else {
         return;
     };
@@ -828,6 +869,7 @@ mod tests {
             cancel: Some(cancel),
             status: "Connected",
             cancellation: Cancellation::Idle,
+            timeline: Timeline::default(),
         };
         let mut keys = ButtonInput::default();
         keys.press(KeyCode::KeyC);
@@ -837,6 +879,20 @@ mod tests {
         keys.reset_all();
         keys.press(KeyCode::KeyY);
         update_cancellation(&keys, None, &graph, &mut connection);
+        assert!(requests.try_recv().is_err());
+        keys.reset_all();
+        keys.press(KeyCode::KeyC);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        connection.timeline.step(true);
+        keys.reset_all();
+        keys.press(KeyCode::KeyY);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        assert!(requests.try_recv().is_err());
+        assert!(matches!(connection.cancellation, Cancellation::Idle));
+        connection.timeline.toggle();
+        keys.reset_all();
+        keys.press(KeyCode::KeyY);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
         assert!(requests.try_recv().is_err());
         keys.reset_all();
         keys.press(KeyCode::KeyC);

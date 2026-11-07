@@ -14,7 +14,7 @@ The optional Bevy executable renders observed broker tasks and workers in 3D. Us
 cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765
 ```
 
-The Intelligence Network groups tasks by observed state. Pick a task or worker, use N or B to cycle through them, or press Tab to filter tasks. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus or R to reset the camera. With `--allow-cancel`, press C on a queued or running task, then Y to confirm or Esc to dismiss. The inspector shows the broker response. Add `--reduced-motion` to skip animated lane and camera focus transitions. The view labels resource measurements as unavailable. [Broker setup](docs/CLI.md#external-worker-service)
+The Intelligence Network groups tasks by observed state. Pick a task or worker, use N or B to cycle through them, or press Tab to filter tasks. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus or R to reset the camera. Press T to freeze or return live and use [ and ] to replay captured transitions. In live mode with `--allow-cancel`, press C on a queued or running task, then Y to confirm or Esc to dismiss. The inspector shows the broker response. Add `--reduced-motion` to skip animated lane and camera focus transitions. The view labels resource measurements as unavailable. [Intelligence Network controls](docs/CLI.md#intelligence-network-controls)
 
 Open the read-only Machine view to inspect local CPU utilization, system memory and the adapter Bevy uses to render the application. It requires no broker or operator key. Select a component with the mouse or keys 1–3. [Machine controls and measurement scope](docs/CLI.md#machine-view)
 

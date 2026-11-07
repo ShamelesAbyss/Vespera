@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Intelligence Network task replay
+
+The Swarm timeline checkpoint `47ba366f0d652276ab4ecf48d08e26e59b501bda` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42418445608). The signed Intelligence Network now captures up to 256 task transitions from a rolling baseline. The live feed continues during replay. The inspector preserves task selection even before that task appears. Historical controls suppress new cancellation requests and dismiss confirmations that have yet to be sent.
+
+Windows validation passed the offline workspace suite, the SDK doctest, six graphics tests, strict workspace and graphics Clippy, and the graphics build. The regression covered rollover, a live source reset during capture and cancellation confirmation across a replay boundary. In a native Windows session connected to a signed loopback broker, the selected task stayed queued at sequence 1 while the live source reported sequence 2. The broker confirmed that pressing Y during and after replay did not send the old confirmation. Stepping back to sequence 0 removed the task from the scene while retaining its identity in the inspector. Stepping to 2 restored the selected task in the cancelled lane.
+
+Replay covers task transitions observed in the current viewer session. It can retain an already captured window through a feed reset. Shared navigation across the Atlas layers remains open.
+
 ## 2026-11-07 — Interactive Swarm evidence timeline
 
 Verified implementation checkpoint `47ba366f0d652276ab4ecf48d08e26e59b501bda` was pushed to `main`.

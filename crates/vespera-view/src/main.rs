@@ -1,6 +1,7 @@
 mod machine_scene;
 mod scene;
 mod swarm_scene;
+mod task_timeline;
 mod world_scene;
 
 use std::net::SocketAddr;

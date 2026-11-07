@@ -132,7 +132,7 @@ Implement the central native Rust 3D orchestration and world views, evaluating B
 2. Machine displays local CPU and RAM observations, wgpu renderer identity, and sampled scheduler and provider aggregates from an opted-in local run. Add per-model evidence, decision reasons, measured VRAM and multi-device discovery.
 3. Swarm follows accepted workflow attempts, observed dependency inputs and terminal task states from the local journal, or accepted worker messages from the signed operator feed. Add combined source navigation, receipt and contention evidence.
 4. Living World supports individual choices and bounded resident reasoning through the scheduler. The view distinguishes preparation, active local inference and committed actions. Retained world commits replay without inference.
-5. World Mode can freeze, step through retained revisions with explicit gaps, and return live. Swarm can replay its captured journal or signed message window while the live feed advances. Connect the layers through shared navigation and retained selection context, and add timeline controls to the broker task view.
+5. World Mode can freeze, step through retained revisions with explicit gaps, and return live. Swarm and the Intelligence Network can replay captured observations while their feeds advance. Connect the layers through shared navigation and retained selection context.
 
 Keep read-only operation as the default, require explicit authorization for controls, and show pending and committed outcomes. Preserve headless operation. Validate interactive graphics and performance on the RTX 4070 Laptop GPU, and label measurements and simulation state separately.
 
