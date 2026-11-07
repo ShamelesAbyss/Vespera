@@ -150,6 +150,21 @@ impl ValidatedEndpoint {
         Ok(joined)
     }
 
+    /// Join a versioned API route without duplicating a version suffix in the configured base.
+    pub(crate) fn join_versioned_api_path(
+        &self,
+        provider_id: ProviderId,
+        version: &str,
+        path: &str,
+    ) -> Result<Url, ProviderError> {
+        let suffix = self.url.path().trim_end_matches('/').rsplit('/').next();
+        if suffix == Some(version) {
+            self.join_api_path(provider_id, path)
+        } else {
+            self.join_api_path(provider_id, &format!("{version}/{path}"))
+        }
+    }
+
     /// Returns whether this endpoint points to a loopback address.
     #[must_use]
     pub const fn is_loopback(&self) -> bool {

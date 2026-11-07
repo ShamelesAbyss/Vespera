@@ -1,5 +1,17 @@
 # Development log
 
+## 2026-11-06 — Discovered provider fixtures and truthful protocol completion
+
+Previous verified checkpoint: `f98c8d6f1a392898669b5f1146ece916b2ed4cc5`, pushed to the recovery branch.
+
+Moved the dormant Ollama fixture file from `src` into Cargo's integration-test directory. Its seven offline fixtures passed immediately; the live daemon health test remains ignored and unrun. Added OpenAI-compatible fixtures, first reproducing failures for duplicated `v1` prefixes, EOF falsely becoming success, multiline SSE data, discarded trailing usage and oversized frames. SSE parsing now dispatches complete bounded events, retains finish reasons and reported usage until `[DONE]`, and returns an interruption when transport closes without that terminal event. A missing reason remains unknown. Versioned bases are joined without duplicating their suffix.
+
+Additional failing Ollama regressions exposed invented text-generation capability on embedding-only models, clamped/overflowing residency telemetry, and non-terminal non-stream responses being accepted. Fixed all three. Complete newline-terminated NDJSON lines are checked before parsing. OpenAI metadata now reports explicit unsupported operation instead of synthesizing success/capabilities.
+
+Arbitrary upstream error diagnostics are suppressed rather than incompletely redacted. This also removes a UTF-8 truncation panic path and separated-Bearer-token leakage from the old token heuristic. Typed errors retain safe operation/category/status information. Official OpenAI/Ollama protocol references and exact implemented/live-unverified scope are recorded in the rewritten `PROVIDERS.md`.
+
+Validation passed: provider-only suite has 22 offline tests with one live test ignored; full workspace suite has 106 passing tests and that same one ignored live test. Formatting, all-target check, strict Clippy, rustdoc and optimized workspace build passed. Remaining provider work: bounded aggregate bodies/streams, single request deadlines, DNS/proxy connection enforcement, live provider/version matrix and per-engine interoperability. No live inference claim is made.
+
 ## 2026-11-06 — Atomic registry lifecycle and effective provider health
 
 Previous verified checkpoint: `d37c4aac6cc78035e4e8a0d9e01f9d75afe87a3e`, pushed to the recovery branch.

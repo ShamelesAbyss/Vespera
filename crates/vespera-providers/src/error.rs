@@ -132,30 +132,29 @@ pub enum ProviderError {
 }
 
 impl ProviderError {
-    /// Sanitizes an arbitrary error string to ensure URLs, userinfo, and bearer tokens are stripped.
+    /// Suppress untrusted diagnostic text instead of attempting incomplete token redaction.
+    /// Typed variants retain provider, phase, HTTP status and error category. Arbitrary
+    /// upstream messages may echo secrets without recognizable markers and are not logged.
     #[must_use]
-    pub fn sanitize_diagnostic(input: &str) -> String {
-        const MAX_LEN: usize = 240;
-        let mut cleaned = String::with_capacity(input.len().min(MAX_LEN));
-        for token in input.split_whitespace() {
-            if !cleaned.is_empty() {
-                cleaned.push(' ');
-            }
-            if token.starts_with("http://")
-                || token.starts_with("https://")
-                || token.to_ascii_lowercase().starts_with("bearer")
-                || token.contains('@')
-            {
-                cleaned.push_str("[REDACTED]");
-            } else {
-                cleaned.push_str(token);
-            }
-            if cleaned.len() >= MAX_LEN {
-                cleaned.truncate(MAX_LEN);
-                cleaned.push_str("...");
-                break;
-            }
+    pub fn sanitize_diagnostic(_input: &str) -> String {
+        "upstream diagnostic omitted to protect endpoint and credential data".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn arbitrary_diagnostics_are_suppressed_without_utf8_truncation_panics() {
+        for input in [
+            "Bearer fixture-token".to_string(),
+            "https://user:fixture-password@example.invalid/private".to_string(),
+            format!("{}é", "x".repeat(239)),
+            "unmarked-fixture-credential".to_string(),
+        ] {
+            let result = ProviderError::sanitize_diagnostic(&input);
+            assert!(!result.contains(&input));
+            assert!(!result.contains("fixture"));
         }
-        cleaned
     }
 }

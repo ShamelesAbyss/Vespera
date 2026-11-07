@@ -1,10 +1,9 @@
-//! Production OpenAI-compatible provider adapter for VESPERA.
+//! OpenAI-compatible provider adapter for VESPERA.
 //!
 //! Supports local engines exposing standard OpenAI v1 endpoints:
 //! - `GET /v1/models` (Model enumeration)
 //! - `POST /v1/chat/completions` (Non-streaming and SSE streaming chat generation)
 
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -20,7 +19,7 @@ use crate::contract::{
     ProviderHealthReport, ProviderHealthStatus, ProviderKind, ProviderLifecycleSupport,
     ProviderTelemetrySnapshot, StreamChunk,
 };
-use crate::core_bridge::{Capability, ProviderId, ResourceEstimate};
+use crate::core_bridge::ProviderId;
 use crate::error::ProviderError;
 use crate::policy::{EndpointPolicy, SecretRef, SecretString, ValidatedEndpoint};
 
@@ -281,7 +280,7 @@ impl InferenceProvider for OpenAiCompatibleProvider {
     fn lifecycle_support(&self) -> ProviderLifecycleSupport {
         ProviderLifecycleSupport {
             model_enumeration: LifecycleCapabilityState::Supported,
-            model_metadata: LifecycleCapabilityState::Unknown,
+            model_metadata: LifecycleCapabilityState::Unsupported,
             explicit_model_load: LifecycleCapabilityState::Unsupported,
             explicit_model_unload: LifecycleCapabilityState::Unsupported,
             residency_telemetry: LifecycleCapabilityState::Unsupported,
@@ -293,7 +292,9 @@ impl InferenceProvider for OpenAiCompatibleProvider {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<ProviderHealthReport, ProviderError>> {
         Box::pin(async move {
-            let url = self.endpoint.join_api_path(self.provider_id, "v1/models")?;
+            let url = self
+                .endpoint
+                .join_versioned_api_path(self.provider_id, "v1", "models")?;
             let req = self.client.get(url);
             let (_, latency_ms): (OpenAiModelsResponse, u64) = self
                 .execute_json_request(req, "health_check", "v1/models", None, &cancel)
@@ -313,7 +314,9 @@ impl InferenceProvider for OpenAiCompatibleProvider {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<Vec<DiscoveredModel>, ProviderError>> {
         Box::pin(async move {
-            let url = self.endpoint.join_api_path(self.provider_id, "v1/models")?;
+            let url = self
+                .endpoint
+                .join_versioned_api_path(self.provider_id, "v1", "models")?;
             let req = self.client.get(url);
             let (resp, _): (OpenAiModelsResponse, u64) = self
                 .execute_json_request(req, "enumerate_models", "v1/models", None, &cancel)
@@ -338,31 +341,13 @@ impl InferenceProvider for OpenAiCompatibleProvider {
 
     fn model_metadata<'a>(
         &'a self,
-        model_name: &'a str,
+        _model_name: &'a str,
         _cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<DiscoveredModelMetadata, ProviderError>> {
         Box::pin(async move {
-            if model_name.trim().is_empty() {
-                return Err(ProviderError::RequestValidation {
-                    reason: "model_name must not be empty".to_string(),
-                });
-            }
-            let mut capabilities = BTreeSet::new();
-            if let Ok(cap) = "text-generation".parse::<Capability>() {
-                capabilities.insert(cap);
-            }
-
-            Ok(DiscoveredModelMetadata {
-                provider_model_name: model_name.to_string(),
-                architecture: None,
-                parameter_size: None,
-                quantization_level: None,
-                context_window_tokens: None,
-                capabilities,
-                estimated_resources: ResourceEstimate {
-                    ram_bytes: None,
-                    vram_bytes: None,
-                },
+            Err(ProviderError::UnsupportedOperation {
+                provider_id: self.provider_id,
+                operation: "model_metadata",
             })
         })
     }
@@ -412,9 +397,11 @@ impl InferenceProvider for OpenAiCompatibleProvider {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<InferenceResponse, ProviderError>> {
         Box::pin(async move {
-            let url = self
-                .endpoint
-                .join_api_path(self.provider_id, "v1/chat/completions")?;
+            let url = self.endpoint.join_versioned_api_path(
+                self.provider_id,
+                "v1",
+                "chat/completions",
+            )?;
             let payload = OpenAiChatRequest::from_bounded(&request, false);
             let req = self.client.post(url).json(&payload);
 
@@ -440,7 +427,7 @@ impl InferenceProvider for OpenAiCompatibleProvider {
 
             let content = choice.message.content;
             let finish_reason =
-                map_finish_reason(choice.finish_reason.as_deref().unwrap_or("stop"));
+                map_finish_reason(choice.finish_reason.as_deref().unwrap_or("unknown"));
             let metrics = InferenceMetrics {
                 client_elapsed_ms: elapsed_ms,
                 prompt_tokens: resp.usage.as_ref().map(|u| u.prompt_tokens),
@@ -472,9 +459,11 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                 });
             }
 
-            let url = self
-                .endpoint
-                .join_api_path(self.provider_id, "v1/chat/completions")?;
+            let url = self.endpoint.join_versioned_api_path(
+                self.provider_id,
+                "v1",
+                "chat/completions",
+            )?;
             let payload = OpenAiChatRequest::from_bounded(&request, true);
             let req = self.client.post(url).json(&payload);
 
@@ -518,6 +507,9 @@ impl InferenceProvider for OpenAiCompatibleProvider {
                     idle_timeout,
                     started,
                     finished: false,
+                    event_data: String::new(),
+                    finish_reason: None,
+                    usage: None,
                 },
                 |mut state| async move {
                     if state.finished {
@@ -547,17 +539,27 @@ impl InferenceProvider for OpenAiCompatibleProvider {
 struct SseStreamState<S> {
     byte_stream: S,
     buffer: BytesMut,
+    event_data: String,
     provider_id: ProviderId,
     cancel: CancellationToken,
     idle_timeout: Duration,
     started: Instant,
     finished: bool,
+    finish_reason: Option<InferenceFinishReason>,
+    usage: Option<OpenAiUsage>,
 }
 
 impl<S> SseStreamState<S>
 where
     S: futures_core::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
 {
+    fn malformed(&self, reason: &'static str) -> ProviderError {
+        ProviderError::MalformedPayload {
+            provider_id: self.provider_id,
+            context: "sse_stream",
+            reason: reason.into(),
+        }
+    }
     async fn next_chunk(&mut self) -> Result<Option<StreamChunk>, ProviderError> {
         loop {
             if self.cancel.is_cancelled() {
@@ -566,161 +568,90 @@ where
                     phase: "sse_stream_chunk",
                 });
             }
-
             if let Some(newline_idx) = self.buffer.iter().position(|&b| b == b'\n') {
-                let line_bytes = self.buffer.split_to(newline_idx + 1);
-                let trimmed = trim_ascii_whitespace(&line_bytes);
-                if trimmed.is_empty() {
-                    continue;
+                if newline_idx > MAX_SSE_LINE_BYTES {
+                    return Err(self.malformed("SSE line exceeded 256 KiB limit"));
                 }
-                if let Some(chunk) = self.parse_sse_line(trimmed)? {
-                    return Ok(Some(chunk));
+                let line_bytes = self.buffer.split_to(newline_idx + 1);
+                let line = std::str::from_utf8(&line_bytes[..newline_idx])
+                    .map_err(|_| self.malformed("invalid UTF-8 in SSE stream"))?;
+                let line = line.strip_suffix('\r').unwrap_or(line);
+                if line.is_empty() {
+                    if !self.event_data.is_empty() {
+                        let data = std::mem::take(&mut self.event_data);
+                        if let Some(chunk) = self.parse_event(data.trim_end_matches('\n'))? {
+                            return Ok(Some(chunk));
+                        }
+                    }
+                } else if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.strip_prefix(' ').unwrap_or(data);
+                    if self
+                        .event_data
+                        .len()
+                        .saturating_add(data.len())
+                        .saturating_add(1)
+                        > MAX_SSE_LINE_BYTES
+                    {
+                        return Err(self.malformed("SSE event exceeded 256 KiB limit"));
+                    }
+                    self.event_data.push_str(data);
+                    self.event_data.push('\n');
                 }
                 continue;
             }
-
             if self.buffer.len() > MAX_SSE_LINE_BYTES {
-                return Err(ProviderError::MalformedPayload {
-                    provider_id: self.provider_id,
-                    context: "sse_stream",
-                    reason: "SSE line exceeded 256 KiB limit".to_string(),
-                });
+                return Err(self.malformed("SSE line exceeded 256 KiB limit"));
             }
-
             let chunk_start = Instant::now();
             let next_bytes = tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => {
-                    return Err(ProviderError::Cancelled {
-                        provider_id: self.provider_id,
-                        phase: "sse_stream_chunk",
-                    });
-                }
-                res = tokio::time::timeout(self.idle_timeout, self.byte_stream.next()) => {
-                    match res {
-                        Ok(Some(Ok(bytes))) => Some(bytes),
-                        Ok(Some(Err(err))) => {
-                            return Err(ProviderError::ConnectionFailed {
-                                provider_id: self.provider_id,
-                                sanitized_message: ProviderError::sanitize_diagnostic(&err.to_string()),
-                            });
-                        }
-                        Ok(None) => None,
-                        Err(_) => {
-                            return Err(ProviderError::Timeout {
-                                provider_id: self.provider_id,
-                                phase: "sse_stream_chunk",
-                                elapsed_ms: u64::try_from(chunk_start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                            });
-                        }
-                    }
-                }
+                () = self.cancel.cancelled() => return Err(ProviderError::Cancelled { provider_id: self.provider_id, phase: "sse_stream_chunk" }),
+                result = tokio::time::timeout(self.idle_timeout, self.byte_stream.next()) => match result {
+                    Ok(Some(Ok(bytes))) => bytes,
+                    Ok(Some(Err(error))) => return Err(ProviderError::ConnectionFailed { provider_id: self.provider_id, sanitized_message: ProviderError::sanitize_diagnostic(&error.to_string()) }),
+                    Ok(None) => return Err(ProviderError::StreamInterrupted { provider_id: self.provider_id, reason: "SSE stream ended before [DONE] event".into() }),
+                    Err(_) => return Err(ProviderError::Timeout { provider_id: self.provider_id, phase: "sse_stream_chunk", elapsed_ms: u64::try_from(chunk_start.elapsed().as_millis()).unwrap_or(u64::MAX) }),
+                },
             };
-
-            match next_bytes {
-                Some(bytes) => {
-                    self.buffer.extend_from_slice(&bytes);
-                }
-                None => {
-                    return Ok(Some(StreamChunk {
-                        delta: String::new(),
-                        done: true,
-                        finish_reason: Some(InferenceFinishReason::Stop),
-                        metrics: Some(InferenceMetrics {
-                            client_elapsed_ms: u64::try_from(self.started.elapsed().as_millis())
-                                .unwrap_or(u64::MAX),
-                            prompt_tokens: None,
-                            completion_tokens: None,
-                            provider_load_duration_ms: None,
-                            provider_eval_duration_ms: None,
-                        }),
-                    }));
-                }
-            }
+            self.buffer.extend_from_slice(&next_bytes);
         }
     }
-
-    fn parse_sse_line(&self, line_bytes: &[u8]) -> Result<Option<StreamChunk>, ProviderError> {
-        let line_str =
-            std::str::from_utf8(line_bytes).map_err(|_| ProviderError::MalformedPayload {
-                provider_id: self.provider_id,
-                context: "sse_stream",
-                reason: "invalid UTF-8 in SSE stream".to_string(),
-            })?;
-
-        let data_payload = if let Some(stripped) = line_str.strip_prefix("data:") {
-            stripped.trim()
-        } else {
-            return Ok(None);
-        };
-
-        if data_payload == "[DONE]" {
-            let elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    fn parse_event(&mut self, data: &str) -> Result<Option<StreamChunk>, ProviderError> {
+        if data == "[DONE]" {
             return Ok(Some(StreamChunk {
                 delta: String::new(),
                 done: true,
-                finish_reason: Some(InferenceFinishReason::Stop),
+                finish_reason: Some(self.finish_reason.unwrap_or(InferenceFinishReason::Unknown)),
                 metrics: Some(InferenceMetrics {
-                    client_elapsed_ms: elapsed_ms,
-                    prompt_tokens: None,
-                    completion_tokens: None,
+                    client_elapsed_ms: u64::try_from(self.started.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                    prompt_tokens: self.usage.as_ref().map(|usage| usage.prompt_tokens),
+                    completion_tokens: self.usage.as_ref().map(|usage| usage.completion_tokens),
                     provider_load_duration_ms: None,
                     provider_eval_duration_ms: None,
                 }),
             }));
         }
-
-        let chunk_frame: OpenAiStreamChunkFrame =
-            serde_json::from_str(data_payload).map_err(|e| ProviderError::MalformedPayload {
-                provider_id: self.provider_id,
-                context: "sse_stream_json",
-                reason: ProviderError::sanitize_diagnostic(&e.to_string()),
-            })?;
-
-        let choice = match chunk_frame.choices.into_iter().next() {
-            Some(c) => c,
-            None => return Ok(None),
+        let frame: OpenAiStreamChunkFrame = serde_json::from_str(data)
+            .map_err(|_| self.malformed("invalid chat completion event JSON"))?;
+        if let Some(usage) = frame.usage {
+            self.usage = Some(usage);
+        }
+        let Some(choice) = frame.choices.into_iter().next() else {
+            return Ok(None);
         };
-
-        let delta = choice.delta.content.unwrap_or_default();
         let finish_reason = choice.finish_reason.as_deref().map(map_finish_reason);
-        let done = finish_reason.is_some()
-            || (delta.is_empty() && finish_reason == Some(InferenceFinishReason::Stop));
-
-        let metrics = if done {
-            Some(InferenceMetrics {
-                client_elapsed_ms: u64::try_from(self.started.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                prompt_tokens: None,
-                completion_tokens: None,
-                provider_load_duration_ms: None,
-                provider_eval_duration_ms: None,
-            })
-        } else {
-            None
-        };
-
+        if finish_reason.is_some() {
+            self.finish_reason = finish_reason;
+        }
         Ok(Some(StreamChunk {
-            delta,
-            done,
+            delta: choice.delta.content.unwrap_or_default(),
+            done: false,
             finish_reason,
-            metrics,
+            metrics: None,
         }))
     }
 }
-
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|b| !b.is_ascii_whitespace())
-        .map_or(start, |idx| idx + 1);
-    &bytes[start..end]
-}
-
 fn map_finish_reason(reason: &str) -> InferenceFinishReason {
     match reason {
         "stop" => InferenceFinishReason::Stop,
@@ -789,6 +720,7 @@ struct OpenAiUsage {
 #[derive(Deserialize)]
 struct OpenAiStreamChunkFrame {
     #[serde(default)]
+    usage: Option<OpenAiUsage>,
     choices: Vec<OpenAiStreamChoice>,
 }
 

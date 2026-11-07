@@ -1,4 +1,4 @@
-//! Production Ollama provider adapter implementing the universal `InferenceProvider` contract.
+//! Ollama provider adapter implementing the universal `InferenceProvider` contract.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -373,9 +373,6 @@ impl InferenceProvider for OllamaProvider {
             let context_window_tokens = extract_context_length(&resp.model_info);
 
             let mut capabilities = BTreeSet::new();
-            if let Ok(cap) = "text-generation".parse::<Capability>() {
-                capabilities.insert(cap);
-            }
             for raw_cap in resp.capabilities {
                 let normalized = match raw_cap.as_str() {
                     "completion" => "text-generation",
@@ -424,11 +421,15 @@ impl InferenceProvider for OllamaProvider {
 
             for entry in resp.models {
                 let total_bytes = entry.size;
-                let vram_bytes = entry.size_vram.min(total_bytes);
-                let ram_bytes = total_bytes.saturating_sub(vram_bytes);
-
-                total_vram = total_vram.saturating_add(vram_bytes);
-                total_ram = total_ram.saturating_add(ram_bytes);
+                let vram_bytes = entry.size_vram;
+                let invalid = || ProviderError::MalformedPayload {
+                    provider_id: self.provider_id,
+                    context: "api/ps",
+                    reason: "inconsistent or overflowing residency telemetry".into(),
+                };
+                let ram_bytes = total_bytes.checked_sub(vram_bytes).ok_or_else(invalid)?;
+                total_vram = total_vram.checked_add(vram_bytes).ok_or_else(invalid)?;
+                total_ram = total_ram.checked_add(ram_bytes).ok_or_else(invalid)?;
 
                 resident_models.push(ModelResidencyRecord {
                     provider_model_name: entry.name,
@@ -498,6 +499,13 @@ impl InferenceProvider for OllamaProvider {
                     provider_id: self.provider_id,
                     status_code: 500,
                     sanitized_summary: ProviderError::sanitize_diagnostic(&err_msg),
+                });
+            }
+
+            if !resp.done {
+                return Err(ProviderError::StreamInterrupted {
+                    provider_id: self.provider_id,
+                    reason: "non-streaming response was not terminal".into(),
                 });
             }
 
@@ -662,6 +670,13 @@ where
             }
 
             if let Some(newline_idx) = self.buffer.iter().position(|&b| b == b'\n') {
+                if newline_idx > MAX_NDJSON_LINE_BYTES {
+                    return Err(ProviderError::MalformedPayload {
+                        provider_id: self.provider_id,
+                        context: "ndjson_stream",
+                        reason: "stream frame exceeded 256 KiB line ceiling".into(),
+                    });
+                }
                 let line_bytes = self.buffer.split_to(newline_idx + 1);
                 let trimmed = trim_ascii_whitespace(&line_bytes);
                 if trimmed.is_empty() {
@@ -941,4 +956,31 @@ struct OllamaChatFrame {
     eval_count: Option<u32>,
     #[serde(default)]
     eval_duration: Option<u64>,
+}
+
+#[cfg(test)]
+mod stream_limits {
+    use super::*;
+    #[tokio::test]
+    async fn complete_oversized_ndjson_line_is_rejected_before_parsing() {
+        let body = format!(
+            "{{\"message\":{{\"role\":\"assistant\",\"content\":\"{}\"}},\"done\":true}}\n",
+            "x".repeat(MAX_NDJSON_LINE_BYTES)
+        );
+        let byte_stream =
+            futures_util::stream::iter([Ok::<_, reqwest::Error>(bytes::Bytes::from(body))]);
+        let mut state = NdjsonStreamState {
+            byte_stream,
+            buffer: BytesMut::new(),
+            provider_id: ProviderId::new(),
+            cancel: CancellationToken::new(),
+            idle_timeout: Duration::from_secs(1),
+            started: Instant::now(),
+            finished: false,
+        };
+        assert!(matches!(
+            state.next_chunk().await,
+            Err(ProviderError::MalformedPayload { .. })
+        ));
+    }
 }

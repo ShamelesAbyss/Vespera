@@ -32,7 +32,7 @@ where
         .expect("bind ephemeral loopback port");
     let addr = listener.local_addr().expect("local addr");
     tokio::spawn(async move {
-        if let Ok(( mut socket, _)) = listener.accept().await {
+        if let Ok((mut socket, _)) = listener.accept().await {
             let mut req_buf = [0u8; 2048];
             let _ = socket.read(&mut req_buf).await;
             handler(socket).await;
@@ -65,7 +65,7 @@ async fn object_safety_and_lifecycle_negotiation_work() {
 }
 
 #[tokio::test]
-async fn enumeration_metadata_and_vram_residency_telemetry_parse_accurately() {
+async fn vram_residency_telemetry_parses_accurately() {
     let base_url = spawn_raw_http_fixture(|mut socket| async move {
         let body = r#"{
             "models": [
@@ -218,7 +218,8 @@ async fn cancellation_race_aborts_in_flight_stream_immediately() {
     let base_url = spawn_raw_http_fixture(|mut socket| async move {
         let headers = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n";
         let _ = socket.write_all(headers.as_bytes()).await;
-        let first_line = b"{\"message\":{\"role\":\"assistant\",\"content\":\"Part 1\"},\"done\":false}\n";
+        let first_line =
+            b"{\"message\":{\"role\":\"assistant\",\"content\":\"Part 1\"},\"done\":false}\n";
         let _ = socket.write_all(first_line).await;
         let _ = socket.flush().await;
         // Stall long enough for the client to trigger cancellation.
@@ -337,7 +338,10 @@ async fn transport_policy_blocks_http_redirects_and_redacts_secrets() {
         .await
         .expect_err("redirect must be blocked");
 
-    assert!(matches!(err, ProviderError::TransportPolicyViolation { .. }));
+    assert!(matches!(
+        err,
+        ProviderError::TransportPolicyViolation { .. }
+    ));
     assert!(!err.to_string().contains("super-secret-token-value-999"));
 
     // Verify non-loopback endpoint is rejected by default policy.
@@ -369,4 +373,116 @@ async fn live_ollama_smoke_test() {
         .await
         .expect("live health check");
     assert_eq!(report.status, ProviderHealthStatus::Healthy);
+}
+
+async fn json_fixture(body: &str) -> String {
+    let body = body.to_owned();
+    spawn_raw_http_fixture(|mut socket| async move {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+    })
+    .await
+}
+
+#[tokio::test]
+async fn metadata_does_not_invent_text_capability_for_embedding_only_models() {
+    let url = json_fixture(r#"{"details":{"family":"embed","parameter_size":"1B","quantization_level":"F16"},"model_info":{"embed.context_length":512},"capabilities":["embedding"]}"#).await;
+    let p =
+        OllamaProvider::new(OllamaConfig::loopback_default(sample_provider_id(), &url).unwrap())
+            .unwrap();
+    let metadata = p
+        .model_metadata("fixture", CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(metadata.context_window_tokens, Some(512));
+    assert!(
+        metadata
+            .capabilities
+            .contains(&"embeddings".parse().unwrap())
+    );
+    assert!(
+        !metadata
+            .capabilities
+            .contains(&"text-generation".parse().unwrap())
+    );
+    assert_eq!(metadata.estimated_resources.ram_bytes, None);
+}
+
+#[tokio::test]
+async fn invalid_or_overflowing_residency_is_rejected_instead_of_clamped() {
+    for body in [
+        r#"{"models":[{"name":"bad","size":1,"size_vram":2}]}"#.to_string(),
+        format!(
+            "{{\"models\":[{{\"name\":\"a\",\"size\":{},\"size_vram\":0}},{{\"name\":\"b\",\"size\":1,\"size_vram\":0}}]}}",
+            u64::MAX
+        ),
+    ] {
+        let url = json_fixture(&body).await;
+        let p = OllamaProvider::new(
+            OllamaConfig::loopback_default(sample_provider_id(), &url).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            p.query_residency(CancellationToken::new()).await,
+            Err(ProviderError::MalformedPayload { .. })
+        ));
+    }
+}
+
+#[tokio::test]
+async fn nonstreaming_inference_requires_a_terminal_done_response() {
+    let url =
+        json_fixture(r#"{"message":{"role":"assistant","content":"partial"},"done":false}"#).await;
+    let p =
+        OllamaProvider::new(OllamaConfig::loopback_default(sample_provider_id(), &url).unwrap())
+            .unwrap();
+    let request = BoundedInferenceRequest::new(
+        "fixture",
+        vec![ChatMessage {
+            role: ChatRole::User,
+            content: "fixture".into(),
+        }],
+        32,
+        512,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(matches!(
+        p.infer(request, CancellationToken::new()).await,
+        Err(ProviderError::StreamInterrupted { .. })
+    ));
+}
+
+#[tokio::test]
+async fn enumeration_and_explicit_lifecycle_parse_provider_responses() {
+    let url = json_fixture(r#"{"models":[{"name":"fixture","digest":"fixture-digest","size":100,"details":{"parameter_size":"1B","quantization_level":"Q4"}}]}"#).await;
+    let p =
+        OllamaProvider::new(OllamaConfig::loopback_default(sample_provider_id(), &url).unwrap())
+            .unwrap();
+    let models = p.enumerate_models(CancellationToken::new()).await.unwrap();
+    assert_eq!(models[0].provider_model_name, "fixture");
+    assert_eq!(models[0].size_bytes, Some(100));
+    for load in [true, false] {
+        let url = json_fixture(r#"{"done":true}"#).await;
+        let p = OllamaProvider::new(
+            OllamaConfig::loopback_default(sample_provider_id(), &url).unwrap(),
+        )
+        .unwrap();
+        let outcome = if load {
+            p.load_model(
+                "fixture",
+                Some(Duration::from_secs(10)),
+                CancellationToken::new(),
+            )
+            .await
+        } else {
+            p.unload_model("fixture", CancellationToken::new()).await
+        }
+        .unwrap();
+        assert!(outcome.acknowledged);
+    }
 }

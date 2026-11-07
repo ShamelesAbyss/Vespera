@@ -1,51 +1,125 @@
-# Providers
+# Provider adapters
 
-## Current: metadata and offline configuration only
+Vespera includes an object-safe asynchronous Rust `InferenceProvider` contract and
+Ollama/OpenAI-compatible HTTP adapters. These are library implementations. The
+current CLI still exposes only configuration validation and host diagnostics;
+CLI agent inference and automatic provider polling are not wired yet.
 
-Milestone 1 defines provider/model identities, capability and model metadata, model-selection policy, and configuration references. There is **no provider trait implementation, discovery process, connection, health polling, inference, streaming, credential resolution, loading, or unloading** in the current build. `validate-config` verifies declarations, not endpoint availability. `doctor` observes this host, not a provider's machines or memory.
+## Implemented protocol subset
 
-A provider ID identifies a configured engine/endpoint; a model ID identifies a registered model independently of its display name or provider-native identifier. Agent identity remains separate. Endpoints belong to provider configuration; a model references that provider rather than supplying an independent credential-bearing connection. Declared capabilities can inform selection, but are not a health check, permission grant, or verified performance claim.
+| Operation | Ollama | OpenAI-compatible |
+| --- | --- | --- |
+| Health | `GET /api/version` | `GET /v1/models` |
+| Enumeration | `GET /api/tags` | `GET /v1/models` |
+| Model metadata | `POST /api/show` | Explicitly unsupported |
+| Non-stream chat | `POST /api/chat` | `POST /v1/chat/completions` |
+| Streaming chat | NDJSON, terminal `done` required | SSE, terminal `[DONE]` required |
+| Explicit load/unload | Empty-prompt `/api/generate`, keep-alive control | Explicitly unsupported |
+| Residency | `GET /api/ps` | Explicitly unsupported |
 
-## Future provider port — draft for Milestone 2
+The OpenAI-compatible base may end at the server root, a proxy prefix, or a `v1`
+suffix; the adapter adds that version segment once. The current payload uses
+`max_tokens`, text messages and optional temperature. This is a tested subset,
+not universal compatibility with every engine or model family. No tool executor,
+multimodal payload support, embeddings operation, or Responses API is supplied.
 
-Use a shared Rust contract with provider-specific adapters for enumeration, metadata, availability, bounded inference, streaming, cancellation, health, typed errors, and optional resource observations. Negotiate or explicitly report support rather than assuming uniform behavior. Separate provider-operation support from model capabilities: a model may support structured output while the server cannot cancel a request or expose residency.
+Ollama capabilities are derived only from reported metadata: `completion` maps to
+`text-generation`, `tools` to `tool-use`, and `embedding` to `embeddings`. Valid
+other capability slugs are preserved. An embedding-only record does not acquire
+text generation implicitly. Unsupported OpenAI metadata is not synthesized into
+a successful result or a verified capability declaration.
 
-The contract should represent supported, unsupported, and unknown states for lifecycle and telemetry operations. Optional operations include load, unload, keep-alive/residency hints, and device-specific utilization. A no-op must not be reported as successful unloading. Provider-owned automatic loading may be observable but not controllable. Capabilities can become stale when the server or model changes; cache them with observation/version information and bounded freshness.
+## Bounded request and stream behavior
 
-Normalize errors into actionable categories such as authentication failure, denied endpoint, missing model, unsupported operation, malformed response, timeout, cancellation requested/confirmed, resource exhaustion, and transport failure. Preserve safe provider diagnostic context without credentials. Retry only classified transient failures within a bounded policy; an interrupted request may already have consumed resources or produced a result.
+`BoundedInferenceRequest::new` validates nonempty model/messages, output-token
+limits, a context ceiling, and finite optional temperature. Ollama receives its
+native context option. The OpenAI-compatible protocol has no portable context
+allocation field; the scheduler must enforce its own declared context ceiling.
+The provider is still responsible for actually honoring generation limits.
 
-Streaming requires explicit framing and bounds on chunks, total response size, idle timeout, and completion. Transport closure is not successful completion. Client-side cancellation can stop consumption even when a provider cannot stop compute; report that distinction. Unknown remote completion must not become an invented cancellation acknowledgement.
+Both adapters expose connection/request/stream-idle timeouts and cooperative
+cancellation. Cancellation stops local I/O/consumption; it does not prove remote
+compute stopped. Non-streaming Ollama responses must be terminal. OpenAI SSE
+supports CRLF, comments/ignored event fields, multiline data, trailing usage and
+TCP fragmentation. Finish reasons are retained until `[DONE]`; EOF without it is
+an interruption. Missing finish reason stays unknown rather than becoming an
+invented natural stop.
 
-## Target adapters and documentation gates
+NDJSON lines and SSE lines/events have 256-KiB bounds, including already complete
+newline-terminated lines. This is not yet a total response or total stream budget:
+aggregate JSON-body size, whole-request deadlines, aggregate stream limits, and
+connection-boundary policy need further hardening before claiming the complete
+transport acceptance gate.
 
-**Ollama** is the first implementation target at Milestone 2. Confirm the selected product/version against its official API documentation before coding inference, streaming, or lifecycle behavior. The present documents assert no tested Ollama support.
+## Resource observations and lifecycle
 
-**Bionic** is an ambiguous product/API name. Obtain the exact product, version, deployment type, and authoritative API documentation from the user/product before Milestone 3. Do not assume OpenAI compatibility, invent a base URL, or route it through another adapter merely because the name appears in the directive. Missing documentation is an explicit blocker to that adapter's acceptance.
+Ollama residency separates provider-reported total/VRAM and computed host RAM.
+Inconsistent measurements (VRAM larger than total) and aggregate overflow are
+rejected; values are not clamped into plausible-looking telemetry. These
+observations are not automatically reconciled into scheduler reservations yet.
+Model metadata resource estimates remain unknown unless separately supplied.
 
-**OpenAI-compatible local endpoints** are a separate Milestone 3 target. “Compatible” is a deployment claim to test, not proof that every operation, streaming format, model enumeration, tool call, lifecycle control, or error matches. Record the verified subset and limitations for each tested engine.
+A lifecycle acknowledgement is not measured memory. The scheduler retains
+reservations after uncertain lifecycle outcomes and checks provider/model
+identity on acknowledgements. See [SCHEDULER.md](SCHEDULER.md) and
+[REGISTRY.md](REGISTRY.md). Provider health does not prove model-specific readiness
+or hardware fit, and other provider clients can consume resources outside this
+process's accounting.
 
-**llama.cpp, LM Studio, custom inference servers, and future local/remote providers** remain targets, not implemented adapters. Add them only with product/version evidence and adapter contract tests. A custom server must implement a documented interface; VESPERA cannot infer an arbitrary protocol.
+## Endpoints and credentials
 
-## Registry is not residency
+`ValidatedEndpoint` defaults to loopback-only HTTP/HTTPS. URL credentials, query
+strings and fragments are rejected. Remote HTTPS requires explicit
+`EndpointPolicy.allow_remote_https`; remote plaintext HTTP additionally requires
+`allow_insecure_remote_http`. Redirects are prohibited in both clients. Further
+connection-boundary DNS/proxy enforcement remains pending; offline endpoint
+validation alone is not that guarantee.
 
-Registering an arbitrary number of models stores metadata and does not reserve RAM or VRAM. Distinguish registry presence, discovered availability, provider health, load state, and currently executing requests. Provider availability does not guarantee that a model fits or that its endpoint supports a given request. Future health observations need timestamps, stale states, bounded polling, and recovery without repeatedly activating models.
+Library configs accept an environment credential reference or a pre-resolved
+`SecretString`. Secret wrappers redact formatting and authorization headers are
+marked sensitive. Arbitrary upstream diagnostic text is suppressed rather than
+passed through incomplete token heuristics; typed errors retain provider ID,
+operation/category and HTTP status. Never put actual credentials in TOML,
+provider/model names, command arguments, Git, memory or event records.
 
-Model metadata can record parameter size, quantization, context limit, responsibilities, capabilities, and estimated requirements when known. Missing data stays unknown. Later performance history must distinguish measured samples from generated claims. A provider's total allocation may include other clients and models outside VESPERA; tracked requests alone cannot prove free capacity.
+Configuration schema version 1 permits provider categories `ollama`,
+`open_ai_compatible` and `custom`; `custom` is a declaration, not an installed
+adapter. `credential_env` is a variable-name reference, not a value. Parsing
+performs no credential resolution or provider I/O. `network.allow_remote` and
+`network.allow_insecure_http` govern offline declarations; future composition
+must map them into the runtime endpoint policy.
 
-Future admission must include weight memory, context-dependent KV cache, temporary buffers, batching/concurrency, provider-global overhead, system headroom, and separate RAM/per-device VRAM limits. Estimates vary by engine and offloading strategy. No exposed GPU on this sandbox is not a measured zero-VRAM claim about the user or a remote endpoint. The default single-inference configuration is a safe starting limit, not a guarantee of model fit. Only future measured admission and lifecycle implementations can govern residency.
+## Verification and live scope
 
-## Security and acceptance
+```powershell
+cargo test -p vespera-providers --locked
+# Opt-in health check against a running local Ollama daemon:
+cargo test -p vespera-providers --test ollama --locked -- --ignored
+```
 
-Current configuration permits loopback by default; remote endpoints need explicit opt-in. URL validation rejects embedded credentials, and configuration holds only environment-variable references for secrets. Offline validation must not resolve DNS, contact endpoints, or print environment values. A valid reference does not establish that its variable exists or that a credential works.
+Ordinary tests use ephemeral loopback fixture servers and require no model
+weights, GPU or external service. The live smoke test is ignored by default and
+has not been run in this recovery session. It checks health only, not inference,
+residency correctness or end-to-end agent execution.
 
-Future adapters must enforce network policy again when connecting, including redirects, resolved destinations, transport security, timeouts, and response-size limits. Loopback is not an authentication mechanism. Do not let provider responses, model output, or tool instructions change credential sources, endpoint policy, or permissions. Logs and events must redact authorization headers, secret values, and sensitive query material.
+Fixture coverage includes enumeration/lifecycle, advertised metadata, telemetry
+arithmetic, bounded payload fields, endpoint prefixes, streaming framing and
+completion, malformed/oversized data, cancellation, idle timeout, redirects,
+auth errors and diagnostic suppression. None of this establishes a live
+compatibility matrix for Ollama, LM Studio, llama.cpp, vLLM or hosted services.
 
-Milestone 2/3 acceptance requires repeatable adapter tests for success, unsupported operations, malformed/partial streams, missing models, auth errors, timeouts, cancellation limits, and reconnect behavior. Live integration tests require explicit opt-in; deterministic local fixtures must keep ordinary CI offline. This proposal derives from [INITIAL_PLAN.md](INITIAL_PLAN.md) and [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt), not independently verified provider APIs.
+**Bionic remains blocked** on exact product, version, deployment and authoritative
+API documentation. It is not treated as an OpenAI-compatible alias. Additional
+provider-specific adapters and live-version records remain roadmap work.
 
-## Implemented configuration details
+## Protocol references
 
-Schema version 1 currently accepts declaration categories `ollama`, `open_ai_compatible`, and `custom`; these are enum values, **not installed adapters**. There is no `bionic` category or compatibility alias. The input file is bounded to 1 MiB; that safety bound is not a hardcoded model-count limit.
+These official references were consulted on 2026-11-06 for the tested wire subset;
+they are not records of a live server version:
 
-Endpoints must use HTTP/HTTPS with a host and nonzero explicit port when supplied. URL user information, query strings, and fragments are rejected. Literal IPv4/IPv6 loopback addresses and the exact hostname `localhost` count as loopback; arbitrary DNS names, LAN addresses, wildcard addresses, and names merely containing `localhost` do not. `network.allow_remote` permits remote HTTPS declarations; remote plaintext HTTP additionally requires `network.allow_insecure_http`. Both flags default to false. Offline parsing performs no DNS resolution; future connections must recheck destinations and redirects.
-
-`credential_env` is only a variable-name reference, with an ASCII letter/underscore first and ASCII letters/digits/underscores thereafter, at most 128 bytes. Parsing neither reads its value nor proves that it is set. Unknown fields are rejected and parse errors suppress input excerpts. This reduces accidental leakage; it cannot determine whether an arbitrary allowed text field was deliberately misused to hide a secret.
+- [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+  and [streaming events](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events).
+- Ollama [chat](https://docs.ollama.com/api/chat),
+  [generation/keep-alive](https://docs.ollama.com/api/generate),
+  [model details](https://docs.ollama.com/api-reference/show-model-details), and
+  [running models](https://docs.ollama.com/api/ps).

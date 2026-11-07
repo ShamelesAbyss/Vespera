@@ -4,8 +4,8 @@
 //! - Object-safe asynchronous `InferenceProvider` trait (`dyn InferenceProvider`).
 //! - Explicit lifecycle capability negotiation (`Supported`, `Unsupported`, `Unknown`).
 //! - Connection-time transport security (loopback enforcement, redirect prohibition, secret redaction).
-//! - Production Ollama adapter supporting residency telemetry and NDJSON streaming.
-//! - Production OpenAI-compatible adapter supporting SSE chat streaming and model discovery.
+//! - Ollama adapter supporting residency telemetry and NDJSON streaming.
+//! - OpenAI-compatible adapter supporting SSE chat streaming and model discovery.
 
 pub mod contract;
 pub mod error;
