@@ -2,6 +2,8 @@
 
 ## 2026-11-07 — Continuous provider health monitoring
 
+Verified implementation checkpoint `064971760a3689f1684ab2c24e100e6675f5d891` was pushed to `main`.
+
 The durable catalog checkpoint `963533e2aa604f126a0c3a39b136633b0307b0ee` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42424232656). The CLI can now keep one registry alive across health rounds, bound each round by a deadline, and stream JSON observations until Ctrl+C or a sample limit. A timeout marks the round incomplete and does not replace unfinished observations with a fabricated failure.
 
 The Windows subprocess regression observed a timed-out round with unknown health, a subsequent unreachable state, and recovery to healthy in the same process. The fixture received exactly three health requests. A separate live Ollama check reported three healthy rounds, with zero resident models both before and after. Formatting, strict workspace Clippy and offline workspace tests passed.
