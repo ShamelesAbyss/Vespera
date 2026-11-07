@@ -143,6 +143,8 @@ cargo test -p vespera-providers --test ollama --locked live_ollama_smoke_test --
 
 [Recorded live evidence](artifacts/live-ollama-2026-11-06.json) covers two nonstreaming tasks on one model/backend version, not a benchmark or broad compatibility matrix. Native execution returned `OK` and acknowledged unload; compatible execution returned `OK` and retained an honest provider-managed reservation. A separate native operator request cleaned up that compatible run. Provider measurements, estimates and client timings are distinguished in the artifact.
 
+Active development is on `main`, the repository default. The previous baseline is preserved on [old-dead-code](https://github.com/ShamelesAbyss/Vespera/tree/old-dead-code).
+
 For contributions, inspect the [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [implementation report](docs/IMPLEMENTATION_REPORT.md) and [development log](docs/DEVELOPMENT_LOG.md). Keep first-party implementation in Rust, maintain acyclic crate boundaries, add meaningful regression coverage, validate intended diffs and record limitations. Verified upgrades are committed and pushed as recoverable checkpoints; do not commit private configuration or credentials.
 
 ## Troubleshooting and operational limits

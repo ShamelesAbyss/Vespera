@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Promote development branch to the public default
+
+At the owner's explicit request, renamed the former GitHub `main` to `old-dead-code` (spaces are invalid in Git branch names), preserving commit `adb163a8750a87fb8bfa6f8dff4e3afcdc10a2a7`. Renamed `codex/scheduler-recovery` to `main` at verified development checkpoint `339b9f8b1297161ab1dc460b8b3b90bbcf96f866` and set repository `default_branch` to `main`. No history was rewritten, branch content overwritten or force push performed. The initial second rename did not complete during the first API sequence; remote refs were inspected before resuming the remaining operation successfully.
+
+Verified GitHub repository metadata and remote symbolic HEAD both identify the new `main`, and both remote branch SHAs match the preserved source tips. Local branch names/upstreams and `origin/HEAD` now match. Future checkpoints target `origin/main`; `old-dead-code` is the historical baseline. The repository homepage now opens the current implementation/README by default. CI triggers accept all push branches and required no change.
+
+The SQLite memory work started after `339b9f8` remains unfinished local work and is deliberately excluded from this documentation-only checkpoint. Its dependency probe introduced only the new memory crate and six new locked packages; it is not advertised as working storage. Continue implementing/validating durable namespace storage from the current worktree on `main`.
+
 ## 2026-11-06 — Workflow CLI integration and live dependent execution
 
 Previous verified checkpoint: `020bdeb4f576b6e17de63cca5d85bc5ec834f5bc`, pushed; Ubuntu CI [42326680634](https://github.com/ShamelesAbyss/Vespera/actions/runs/42326680634) passed. The native CLI now exposes `run-workflow --workflow-file` with strict bounded UTF-8 JSON, explicit invocation-only resume, overall deadline, opt-in unload and JSON/human reports. Added a structurally validated example. Composition validates the complete config/plan/references/authority before adapters and scopes initialization to eligible named worker models. A delegation-only coordinator does not initialize its unrelated model adapter or credentials.
