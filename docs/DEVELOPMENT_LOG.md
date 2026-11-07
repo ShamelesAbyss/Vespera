@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Live signed mailbox evidence in Swarm
 
+Verified implementation checkpoint `2060d53ecf0284f7a58b9f9d7cce497dca19e6ec` was pushed to `main`.
+
 The native Swarm checkpoint `5b402c6e627725bb92a492ea900452563306c57c` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42346866960). The broker now adds a sender-to-recipient observation to the signed operator feed after a newly authorized inbox enqueue. Worker feeds remain scoped to task attempts. The record contains no message ID, content or hash. Swarm can follow that signed feed in read-only broker mode and render the observed direction.
 
 Windows validation passed 218 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. The HTTP fixture verified the live signed frame, worker feed isolation, retained retry and rejection behavior, and durable replay after restart. A separate desktop fixture showed zero agents on connect and then one amber link and its sequence after a signed enqueue and identical retry.
