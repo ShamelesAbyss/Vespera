@@ -5454,6 +5454,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "clap",
+ "serde_json",
  "sysinfo",
  "tokio",
  "vespera-core",

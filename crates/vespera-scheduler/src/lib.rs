@@ -279,6 +279,22 @@ impl ResourceScheduler {
         self.queue.snapshot()
     }
 
+    /// Capture reservation counters and model states under one accounting lock.
+    pub fn reservation_snapshot(&self) -> (ResourceBudget, ResourceUsage, usize, usize) {
+        let state = lock(&self.state);
+        let uncertain = state
+            .resident_models
+            .values()
+            .filter(|model| model.residency == ResidencyState::Unknown)
+            .count();
+        (
+            self.policy.budget,
+            state.usage,
+            state.resident_models.len(),
+            uncertain,
+        )
+    }
+
     /// Configured logical context ceiling, not a measured backend allocation.
     pub fn max_context_tokens(&self) -> u32 {
         self.policy.budget.max_context_tokens

@@ -169,6 +169,42 @@ impl ResourceUsage {
     }
 }
 
+/// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerSample {
+    pub schema_version: u32,
+    pub observed_unix_ms: u64,
+    /// The command completed its execution and cleanup attempt.
+    pub finished: bool,
+    pub waiting: usize,
+    /// Granted permits include work still in preparation.
+    pub admitted: usize,
+    pub queue_closed: bool,
+    pub budget: ResourceBudget,
+    pub reserved: ResourceUsage,
+    pub model_reservations: usize,
+    pub uncertain_reservations: usize,
+    pub provider_health: ProviderHealthCounts,
+}
+
+impl SchedulerSample {
+    pub const SCHEMA_VERSION: u32 = 1;
+    pub const FILE_NAME: &str = "scheduler.json";
+    pub const MAX_FILE_BYTES: u64 = 4096;
+}
+
+/// Effective observations already held by this runtime's provider registry.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderHealthCounts {
+    pub unknown: usize,
+    pub healthy: usize,
+    pub degraded: usize,
+    pub unreachable: usize,
+    pub stale: usize,
+}
+
 /// Explicit resource costs for one prospective inference; no unknown dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -322,6 +322,22 @@ impl ModelRegistry {
             .map(|entry| self.health(entry))
             .ok_or(RegistryError::ProviderNotRegistered { provider_id })
     }
+
+    /// Summarize effective health from the registry without polling providers.
+    pub async fn provider_health_counts(&self) -> vespera_core::ProviderHealthCounts {
+        let state = self.state.read().await;
+        let mut counts = vespera_core::ProviderHealthCounts::default();
+        for entry in state.providers.values() {
+            match self.health(entry).state {
+                ProviderHealthState::Unknown => counts.unknown += 1,
+                ProviderHealthState::Healthy => counts.healthy += 1,
+                ProviderHealthState::Degraded => counts.degraded += 1,
+                ProviderHealthState::Unreachable => counts.unreachable += 1,
+                ProviderHealthState::Stale => counts.stale += 1,
+            }
+        }
+        counts
+    }
     fn effective(&self, state: &RegistryState, model: &ModelRegistration) -> ModelRegistration {
         let mut model = model.clone();
         model.available &= state

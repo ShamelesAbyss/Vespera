@@ -359,6 +359,87 @@ fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str])
 }
 
 #[test]
+fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
+    use std::time::{Duration, Instant};
+    use vespera_core::SchedulerSample;
+
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(2200, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let target = directory.0.join("observation");
+    let path = target.join(SchedulerSample::FILE_NAME);
+    let config = runtime_config(&fixture, false, true);
+    let output = std::thread::scope(|scope| {
+        let child = scope.spawn(|| {
+            run_fixture_agent(
+                &directory,
+                &config,
+                &[
+                    "--resume",
+                    "--unload-after",
+                    "--scheduler-telemetry",
+                    target.to_str().unwrap(),
+                ],
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let active = loop {
+            if let Ok(bytes) = fs::read(&path) {
+                let sample: SchedulerSample =
+                    serde_json::from_slice(&bytes).expect("atomic sample");
+                if sample.admitted > 0 && sample.reserved.active_inferences > 0 {
+                    break Some(sample);
+                }
+                if sample.finished {
+                    break None;
+                }
+            }
+            if child.is_finished() || Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        (child.join().unwrap(), active)
+    });
+    assert!(
+        output.0.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.0.stderr)
+    );
+    let active = output
+        .1
+        .expect("inference was observed while its lease was active");
+    assert_eq!(active.schema_version, SchedulerSample::SCHEMA_VERSION);
+    assert!(!active.finished);
+    assert_eq!(active.admitted, 1);
+    assert_eq!(active.reserved.ram_bytes, 100);
+    assert_eq!(active.model_reservations, 1);
+    assert_eq!(active.provider_health.healthy, 1);
+    let final_bytes = fs::read(&path).unwrap();
+    let final_sample: SchedulerSample = serde_json::from_slice(&final_bytes).unwrap();
+    assert!(final_sample.finished && final_sample.queue_closed);
+    assert_eq!(final_sample.admitted, 0);
+    assert_eq!(final_sample.reserved, Default::default());
+    assert_eq!(final_sample.model_reservations, 0);
+    assert!(
+        !String::from_utf8(final_bytes.clone())
+            .unwrap()
+            .contains("fixture")
+    );
+    let duplicate = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--scheduler-telemetry",
+            target.to_str().unwrap(),
+        ],
+    );
+    assert!(!duplicate.status.success());
+    assert_eq!(fs::read(path).unwrap(), final_bytes);
+}
+
+#[test]
 fn agent_memory_context_and_generated_result_round_trip() {
     use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission};
     use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
@@ -578,13 +659,25 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
         &directory,
         &config,
         &workflow_value().to_string(),
-        &["--resume", "--event-journal", path],
+        &[
+            "--resume",
+            "--event-journal",
+            path,
+            "--scheduler-telemetry",
+            directory.0.join("workflow-observation").to_str().unwrap(),
+        ],
     );
     assert!(
         workflow.status.success(),
         "{}",
         String::from_utf8_lossy(&workflow.stderr)
     );
+    let telemetry: vespera_core::SchedulerSample = serde_json::from_slice(
+        &fs::read(directory.0.join("workflow-observation/scheduler.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(telemetry.finished && telemetry.queue_closed);
+    assert_eq!(telemetry.provider_health.healthy, 1);
     let agent: serde_json::Value = serde_json::from_slice(&agent.stdout).unwrap();
     let workflow: serde_json::Value = serde_json::from_slice(&workflow.stdout).unwrap();
     let replay = execute(&["events", "--journal", path, "replay", "--limit", "1"]);

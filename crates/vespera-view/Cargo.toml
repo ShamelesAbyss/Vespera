@@ -7,7 +7,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:sysinfo", "dep:tokio", "dep:vespera-sdk", "dep:vespera-world"]
+graphics = ["dep:bevy", "dep:clap", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-sdk", "dep:vespera-world"]
 
 [[bin]]
 name = "vespera-view"
@@ -19,6 +19,7 @@ vespera-core.workspace = true
 vespera-sdk = { path = "../vespera-sdk", optional = true }
 vespera-world = { path = "../vespera-world", optional = true }
 clap = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 sysinfo = { version = "0.39.5", default-features = false, features = ["system"], optional = true }
 tokio = { workspace = true, optional = true }
 bevy = { version = "0.20.1", optional = true, default-features = false, features = [

@@ -360,7 +360,21 @@ Use the same database on each restart to recover queued tasks, terminal outcomes
 
 Run `cargo run --locked -p vespera-view --features graphics -- --machine` without a broker, provider or key. Click a component or press 1 for CPU, 2 for memory, or 3 for the renderer adapter. Right-drag to orbit, scroll to zoom, use WASD to pan, F to focus and R to reset. Use `--reduced-motion` to skip animated focus and reset.
 
-The window samples host CPU and RAM roughly once per second. The CPU inspector shows process-available logical threads and host-wide CPU utilization. The CPU meter starts after a utilization baseline. The memory meter shows the fraction of physical RAM currently unavailable to applications according to the OS. Host RAM can exceed container limits. Missing or stale samples are labeled unavailable and their meters are hidden. The adapter inspector displays the device and backend selected by wgpu for this window. Other adapters, VRAM, inference-device activity and scheduler or provider state are unavailable in this view.
+The window samples host CPU and RAM roughly once per second. The CPU inspector shows process-available logical threads and host-wide CPU utilization. The CPU meter starts after a utilization baseline. The memory meter shows the fraction of physical RAM currently unavailable to applications according to the OS. Host RAM can exceed container limits. Missing or stale samples are labeled unavailable and their meters are hidden. The adapter inspector displays the device and backend selected by wgpu for this window. Other adapters, measured VRAM and inference-device activity are unavailable.
+
+### Observe a local scheduler
+
+Supply `--scheduler-telemetry <DIRECTORY>` to `run-agent` or `run-workflow`. Choose a new directory under an existing private local parent. In a separate terminal, run the view with the same directory. Open Machine before starting a short run to see live samples.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --machine --scheduler-telemetry data/observation-001
+# In the existing run-agent or run-workflow command, append:
+# --scheduler-telemetry data/observation-001
+```
+
+Select the amber component or press 4. The meter shows the fraction of granted local admission permits. The inspector separates queued requests, granted permits, estimated RAM and VRAM reservations, uncertain model reservations, and cached provider health from host measurements. Health observations expire according to the runtime's registry policy. Sampling adds no provider requests. The local samples are approximately 250 ms apart, and the window refreshes approximately once a second. Brief transitions can fall between observations.
+
+The CLI replaces one bounded `scheduler.json` in the newly created directory and leaves a final sample after its cleanup attempt. A final sample may still show reservations when unload was unrequested or unconfirmed. If the publisher stops before a final sample, Machine marks the last running sample stale. Keep the parent directory private and use the same local filesystem and clock for both processes. The file contains aggregate counts and budgets without prompts, responses, provider endpoints or credentials. Use a different directory for each invocation.
 
 ## Local task outcome journal
 

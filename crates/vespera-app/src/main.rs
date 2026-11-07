@@ -4,6 +4,7 @@ mod commands;
 mod doctor;
 mod event_commands;
 mod memory_commands;
+mod scheduler_telemetry;
 mod world_commands;
 
 use std::net::SocketAddr;
@@ -104,6 +105,9 @@ struct RunAgentArgs {
     /// Record the observed terminal outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
+    /// Publish sampled scheduler counts to a new private local directory.
+    #[arg(long)]
+    scheduler_telemetry: Option<PathBuf>,
     /// Retrieve a literal phrase from a UTF-8 file and attach matching owned memories.
     #[arg(long)]
     memory_query_file: Option<PathBuf>,
@@ -144,6 +148,9 @@ struct RunWorkflowArgs {
     /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
+    /// Publish sampled scheduler counts to a new private local directory.
+    #[arg(long)]
+    scheduler_telemetry: Option<PathBuf>,
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
     /// Strict UTF-8 JSON workflow, at most one MiB.
@@ -175,6 +182,8 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error("scheduler telemetry failed: {0}")]
+    SchedulerTelemetry(std::io::Error),
     #[error(transparent)]
     World(#[from] vespera_world::WorldError),
     #[error(transparent)]

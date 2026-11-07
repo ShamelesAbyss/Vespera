@@ -1,4 +1,5 @@
 //! CLI operation handlers; service behavior lives in the application runtime.
+use crate::scheduler_telemetry::Publisher;
 use crate::{AppError, RunAgentArgs, RunWorkflowArgs, event_commands};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -44,6 +45,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let task_id = workflow.task.id;
     let journal = event_commands::prepare(args.event_journal).await?;
     let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
+    let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let cancel = CancellationToken::new();
     let outcome = cancellable(
         Duration::from_secs(args.timeout_seconds),
@@ -54,6 +56,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let cleanup = runtime
         .cleanup(args.unload_after, Duration::from_secs(5))
         .await;
+    let telemetry = Publisher::finish(publisher).await;
     let cleanup_failed = !cleanup.drained || !cleanup.unload_errors.is_empty();
     let (workflow, error) = match outcome {
         Ok(report) => (Some(report), None),
@@ -121,7 +124,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     if cleanup_failed {
         return Err(AppError::CleanupFailed);
     }
-    Ok(())
+    telemetry
 }
 
 pub(crate) async fn cancellable<T>(
@@ -247,6 +250,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         temperature: args.temperature,
         ..Default::default()
     };
+    let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let cancel = CancellationToken::new();
     let outcome = cancellable(
         timeout,
@@ -257,6 +261,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     let cleanup = runtime
         .cleanup(args.unload_after, Duration::from_secs(5))
         .await;
+    let telemetry = Publisher::finish(publisher).await;
     let cleanup_failed = !cleanup.drained || !cleanup.unload_errors.is_empty();
     let task_state = runtime
         .agents()
@@ -360,5 +365,5 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     if cleanup_failed {
         return Err(AppError::CleanupFailed);
     }
-    Ok(())
+    telemetry
 }

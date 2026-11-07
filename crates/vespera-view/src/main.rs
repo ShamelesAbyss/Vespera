@@ -27,6 +27,9 @@ struct Options {
     /// Open the local hardware view without a broker or credentials.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world"])]
     machine: bool,
+    /// Read scheduler telemetry from this local run directory.
+    #[arg(long, requires = "machine")]
+    scheduler_telemetry: Option<PathBuf>,
     /// Open a persistent simulation world instead of the broker view.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel"])]
     world: Option<PathBuf>,
@@ -46,7 +49,7 @@ enum Update {
 fn main() -> ExitCode {
     let options = Options::parse();
     if options.machine {
-        machine_scene::run(options.reduced_motion);
+        machine_scene::run(options.scheduler_telemetry, options.reduced_motion);
         return ExitCode::SUCCESS;
     }
     if let Some(path) = options.world {

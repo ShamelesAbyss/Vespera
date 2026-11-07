@@ -129,7 +129,7 @@ Implement the central native Rust 3D orchestration and world views, evaluating B
 ### Living Intelligence Atlas sequence
 
 1. Continue evolving the Intelligence Network. State lanes, scoped attempt links, recent observations, filters, camera transitions and confirmed cancellation are implemented. Search and broader typed entity coverage remain.
-2. Machine displays local CPU and RAM observations and wgpu renderer identity. Add scheduler and provider evidence, VRAM telemetry and discovery of multiple devices. Distinguish estimates, measurements and unavailable data.
+2. Machine displays local CPU and RAM observations, wgpu renderer identity, and sampled scheduler and provider aggregates from an opted-in local run. Add per-model evidence, decision reasons, measured VRAM and multi-device discovery.
 3. Add a Swarm Perspective backed by actual delegation, authorized communication and workflow relationships.
 4. Extend the existing persistent Living World with model-driven decisions routed through the scheduler and fenced by the world revision.
 5. Connect the layers through shared navigation and retained selection context. Add replay and timeline controls with explicit retention gaps.

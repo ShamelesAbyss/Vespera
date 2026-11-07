@@ -1,10 +1,14 @@
-use std::time::{Duration, Instant};
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::sync::watch;
+use vespera_core::SchedulerSample;
 
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
 
@@ -16,6 +20,54 @@ struct Sample {
     threads: Option<usize>,
     cpu: Option<f32>,
     memory: Option<(u64, u64)>,
+    scheduler: SchedulerObservation,
+}
+
+#[derive(Clone, Copy, Default)]
+enum SchedulerObservation {
+    #[default]
+    NoSource,
+    Unavailable,
+    Stale,
+    Sample(SchedulerSample),
+}
+
+impl SchedulerObservation {
+    fn read(path: &Path) -> Self {
+        if let Some(sample) = read_scheduler_sample(path) {
+            let observed =
+                SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(sample.observed_unix_ms));
+            if !sample.finished
+                && !observed
+                    .and_then(|time| time.elapsed().ok())
+                    .is_some_and(|age| age < INTERVAL * 3)
+            {
+                return Self::Stale;
+            }
+            Self::Sample(sample)
+        } else {
+            Self::Unavailable
+        }
+    }
+}
+
+fn read_scheduler_sample(path: &Path) -> Option<SchedulerSample> {
+    let metadata = path.symlink_metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > SchedulerSample::MAX_FILE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .ok()?
+        .take(SchedulerSample::MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > SchedulerSample::MAX_FILE_BYTES {
+        return None;
+    }
+    let sample: SchedulerSample = serde_json::from_slice(&bytes).ok()?;
+    (sample.schema_version == SchedulerSample::SCHEMA_VERSION && sample.budget.validate().is_ok())
+        .then_some(sample)
 }
 
 #[derive(Resource)]
@@ -27,19 +79,17 @@ enum Device {
     Cpu,
     Memory,
     Adapter,
+    Scheduler,
 }
 
 impl Device {
     fn position(self) -> Vec3 {
-        Vec3::new(
-            match self {
-                Self::Cpu => -3.6,
-                Self::Memory => 0.0,
-                Self::Adapter => 3.6,
-            },
-            0.0,
-            0.0,
-        )
+        match self {
+            Self::Cpu => Vec3::new(-3.6, 0.0, 0.0),
+            Self::Memory => Vec3::ZERO,
+            Self::Adapter => Vec3::new(3.6, 0.0, 0.0),
+            Self::Scheduler => Vec3::new(0.0, 0.0, -3.2),
+        }
     }
 }
 
@@ -52,9 +102,10 @@ struct Meter(Device);
 #[derive(Component)]
 struct Readout;
 
-pub(super) fn run(reduced_motion: bool) {
+pub(super) fn run(telemetry_directory: Option<PathBuf>, reduced_motion: bool) {
+    let source = telemetry_directory.map(|directory| directory.join(SchedulerSample::FILE_NAME));
     let (send, receive) = watch::channel(None);
-    std::thread::spawn(move || observe(&send));
+    std::thread::spawn(move || observe(&send, source.as_deref()));
     desktop("Vespera | The Machine", Color::srgb(0.017, 0.023, 0.043))
         .insert_resource(Telemetry(receive))
         .init_resource::<Selected>()
@@ -69,7 +120,7 @@ pub(super) fn run(reduced_motion: bool) {
         .run();
 }
 
-fn observe(send: &watch::Sender<Option<Sample>>) {
+fn observe(send: &watch::Sender<Option<Sample>>, source: Option<&Path>) {
     let mut system = System::new();
     let mut have_baseline = false;
     while !send.is_closed() {
@@ -84,6 +135,7 @@ fn observe(send: &watch::Sender<Option<Sample>>) {
             cpu: (have_baseline && !system.cpus().is_empty() && (0.0..=100.0).contains(&cpu))
                 .then_some(cpu),
             memory: (total > 0 && available <= total).then_some((total, available)),
+            scheduler: source.map_or(SchedulerObservation::NoSource, SchedulerObservation::read),
         };
         if send.send(Some(sample)).is_err() {
             break;
@@ -120,6 +172,7 @@ fn setup(
         (Device::Cpu, Color::srgb(0.11, 0.70, 0.88)),
         (Device::Memory, Color::srgb(0.16, 0.77, 0.51)),
         (Device::Adapter, Color::srgb(0.62, 0.36, 0.86)),
+        (Device::Scheduler, Color::srgb(0.95, 0.57, 0.18)),
     ] {
         let point = device.position();
         let material = materials.add(color);
@@ -141,7 +194,7 @@ fn setup(
                     }
                 },
             );
-        if matches!(device, Device::Cpu | Device::Memory) {
+        if !matches!(device, Device::Adapter) {
             commands.spawn((
                 Meter(device),
                 Mesh3d(meter.clone()),
@@ -180,6 +233,7 @@ fn navigate(
         (KeyCode::Digit1, Device::Cpu),
         (KeyCode::Digit2, Device::Memory),
         (KeyCode::Digit3, Device::Adapter),
+        (KeyCode::Digit4, Device::Scheduler),
     ] {
         if keys.just_pressed(key) {
             selected.0 = device;
@@ -215,6 +269,7 @@ fn present(
     *previous = observed;
     let cpu = sample.and_then(|sample| sample.cpu);
     let memory = sample.and_then(|sample| sample.memory);
+    let scheduler = sample.map_or(SchedulerObservation::Unavailable, |sample| sample.scheduler);
     for (meter, mut transform, mut visibility) in &mut meters {
         let fraction = match meter.0 {
             Device::Cpu => cpu.map(|percent| percent / 100.0),
@@ -222,6 +277,13 @@ fn present(
                 memory.map(|(total, available)| (total - available) as f32 / total as f32)
             }
             Device::Adapter => None,
+            Device::Scheduler => match scheduler {
+                SchedulerObservation::Sample(sample) if !sample.finished => Some(
+                    (sample.admitted as f32 / sample.budget.max_concurrent_inferences as f32)
+                        .min(1.0),
+                ),
+                _ => None,
+            },
         };
         *visibility = Visibility::Hidden;
         if let Some(fraction) = fraction.filter(|fraction| *fraction > 0.0) {
@@ -269,15 +331,56 @@ fn present(
             );
             format!("WGPU RENDER ADAPTER\n\n{identity}\n\nVRAM and inference devices unavailable.")
         }
+        Device::Scheduler => scheduler_detail(scheduler),
     };
     let age = sample.map_or(
-        "Measurements unavailable",
-        |_| "Live / sampled every second",
+        "Host measurements unavailable",
+        |_| "Host measurements / live",
     );
     let text = format!(
-        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\nScheduler and provider telemetry unavailable.\n\n1 CPU | 2 Memory | 3 Adapter\nClick to select | F focus | R reset\nRight drag orbit | WASD pan | Scroll zoom"
+        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | Click to select\nF focus | R reset | WASD pan\nRight drag orbit | Scroll zoom"
     );
     if readout.0 != text {
         readout.0 = text;
     }
+}
+
+fn scheduler_detail(observation: SchedulerObservation) -> String {
+    let detail = match observation {
+        SchedulerObservation::NoSource => "No local run directory configured".into(),
+        SchedulerObservation::Unavailable => "Waiting for a readable scheduler sample".into(),
+        SchedulerObservation::Stale => "Last scheduler sample expired".into(),
+        SchedulerObservation::Sample(sample) => {
+            let state = if sample.finished {
+                "Final snapshot"
+            } else {
+                "Recent sample"
+            };
+            let queue = if sample.queue_closed {
+                "Closed"
+            } else {
+                "Open"
+            };
+            let health = sample.provider_health;
+            format!(
+                "{state}\nQueue {queue} | waiting {}\nAdmitted {} / {}\nAccounted inference slots {}\n\nEstimated reservations / budget\nRAM {} / {} bytes\nVRAM {} / {} bytes\nModels {} | uncertain {}\n\nCached provider health\nHealthy {} | degraded {}\nUnreachable {} | stale {}\nUnknown {}",
+                sample.waiting,
+                sample.admitted,
+                sample.budget.max_concurrent_inferences,
+                sample.reserved.active_inferences,
+                sample.reserved.ram_bytes,
+                sample.budget.ram_bytes,
+                sample.reserved.vram_bytes,
+                sample.budget.vram_bytes,
+                sample.model_reservations,
+                sample.uncertain_reservations,
+                health.healthy,
+                health.degraded,
+                health.unreachable,
+                health.stale,
+                health.unknown,
+            )
+        }
+    };
+    format!("SCHEDULER / ONE LOCAL RUNTIME\n\n{detail}")
 }
