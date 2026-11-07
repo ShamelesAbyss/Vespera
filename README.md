@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The ten-crate workspace has 190 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Live event delivery, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
+**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The ten-crate workspace has 192 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Broader lifecycle events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -95,7 +95,7 @@ For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in 
 | `provider-health` | Explicit bounded provider health polling, without model loading |
 | `run-agent` | One actual bounded agent task, followed by cleanup reporting |
 | `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
-| `events` | Initialize a local journal or replay a bounded JSON page |
+| `events` | Initialize, replay or follow a local event journal |
 | `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |
 
 Every command supports `--help` and `--json`; the root supports `--version`. All except `doctor` accept `--config PATH`, defaulting to `config/local.toml`. The [complete CLI reference](docs/CLI.md) documents every option, range, default, exit behavior and JSON limitation.

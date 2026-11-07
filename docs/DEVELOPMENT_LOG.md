@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-06 — Local event streaming and cursor resume
+
+Previous checkpoint `1fc484b6663d7717c9ee10704ec696a60848659f` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42334621248). Added `events follow` for newline-delimited JSON delivery from the existing read-only journal. The follower flushes one entry at a time, buffers at most one replay page and holds no database transaction while writing. Clients can resume from a consumed cursor. Expiry exits nonzero, and a cursorless start reports earlier discarded history on stderr. Optional idle and event-count bounds support unattended consumers. A blocked stdout write can outlast the idle bound.
+
+Validation passed all 192 offline workspace tests, strict Clippy and rustdoc, and the optimized workspace build. Two subprocess regressions passed in debug and release mode. They cover delivery of a commit made after following begins, disconnect and resume, idle exit and retention gaps. Broader lifecycle events, durable audit coordination and authenticated network delivery remain roadmap work.
+
 ## 2026-11-06 — Durable local completion journal
 
 Previous checkpoint `692bd44b7404997df94995ca5f992dbd070a7cd5` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42333919135). Added the `vespera-events` crate and `events init/replay` commands. SQLite transactions append events and advance retention together. Replay uses one read-only snapshot with journal-specific cursors, ordered bounded pages and explicit expiry. Duplicate IDs are idempotent for matching retained envelopes. The new crate reuses locked dependencies.

@@ -123,7 +123,7 @@ is present yet.
 ## State, clocks and remaining architecture
 
 Registry, workflow/task histories and the original agent memory buffers remain in-process. The independent memory library now persists authorized records and lineage in SQLite when explicitly opened. `MemoryNamespace`
-is the logical address used to scope a record. The CLI supports bounded multi-step workflow submission, offline memory management and opt-in single-agent retrieval and result persistence. The CLI can append typed completion envelopes to an explicit local journal and replay bounded pages. Automatic decomposition, durable task history, live event delivery, authenticated interoperability and independent deterministic world state remain required work.
+is the logical address used to scope a record. The CLI supports bounded multi-step workflow submission, offline memory management and opt-in single-agent retrieval and result persistence. The CLI can append typed completion envelopes to an explicit local journal, replay bounded pages and stream committed entries to a local consumer. Automatic decomposition, durable task history, remote event delivery, authenticated interoperability and independent deterministic world state remain required work.
 
 Keep wall-clock audit timestamps, monotonic deadlines/latency/health and logical
 simulation ticks separate. In-process monotonic instants do not survive restart.

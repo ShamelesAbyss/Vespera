@@ -57,7 +57,7 @@ enum Command {
     RunWorkflow(RunWorkflowArgs),
     /// Explicit offline durable memory operations; never start model providers.
     Memory(memory_commands::MemoryArgs),
-    /// Initialize a local event journal or replay a bounded JSON page.
+    /// Initialize, replay or follow a local event journal.
     Events(event_commands::EventArgs),
     /// Validate configuration and all references without connecting to providers.
     ValidateConfig {
@@ -152,6 +152,8 @@ struct ConfigReport {
 enum AppError {
     #[error(transparent)]
     Journal(#[from] vespera_events::JournalError),
+    #[error("cannot write event output: {0}")]
+    EventOutput(std::io::Error),
     #[error("{0}")]
     Storage(#[from] vespera_memory::StorageError),
     #[error("invalid bounded memory input: {0}")]

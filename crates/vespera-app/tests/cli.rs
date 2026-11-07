@@ -613,6 +613,146 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
 }
 
 #[test]
+fn event_follower_streams_new_commits_and_resumes_after_disconnect() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use vespera_core::{EventEnvelope, EventKind, TaskId};
+    use vespera_events::Journal;
+
+    let directory = ScratchDirectory::new();
+    let path = directory.0.join("events.sqlite3");
+    let mut journal = Journal::initialize(&path, 3).unwrap();
+    let event = || {
+        EventEnvelope::new(
+            "fixture",
+            0,
+            EventKind::TaskCompleted {
+                task_id: TaskId::new(),
+            },
+        )
+        .unwrap()
+    };
+    let first = journal.append(&event()).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "events",
+            "--journal",
+            path.to_str().unwrap(),
+            "follow",
+            "--poll-ms",
+            "10",
+            "--max-events",
+            "2",
+            "--idle-timeout-ms",
+            "5000",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if sender.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let line = receiver
+        .recv_timeout(std::time::Duration::from_secs(6))
+        .unwrap();
+    let first_line: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(first_line["cursor"], serde_json::json!(first));
+    let second = journal.append(&event()).unwrap();
+    let line = receiver
+        .recv_timeout(std::time::Duration::from_secs(6))
+        .unwrap();
+    let second_line: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(second_line["cursor"], serde_json::json!(second));
+    assert!(child.wait().unwrap().success());
+    reader.join().unwrap();
+    assert!(receiver.try_recv().is_err());
+
+    let third = journal.append(&event()).unwrap();
+    let cursor = format!("{}:{}", second.journal_id, second.sequence);
+    let resumed = execute(&[
+        "events",
+        "--journal",
+        path.to_str().unwrap(),
+        "follow",
+        "--after",
+        &cursor,
+        "--max-events",
+        "1",
+        "--idle-timeout-ms",
+        "100",
+    ]);
+    assert!(resumed.status.success());
+    let entry: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    assert_eq!(entry["cursor"], serde_json::json!(third));
+}
+
+#[test]
+fn event_follower_reports_expired_cursors_and_can_exit_on_idle() {
+    use vespera_core::{EventEnvelope, EventKind, TaskId};
+    use vespera_events::Journal;
+
+    let directory = ScratchDirectory::new();
+    let path = directory.0.join("events.sqlite3");
+    let mut journal = Journal::initialize(&path, 1).unwrap();
+    let journal_path = path.to_str().unwrap();
+    let idle = execute(&[
+        "events",
+        "--journal",
+        journal_path,
+        "follow",
+        "--idle-timeout-ms",
+        "20",
+    ]);
+    assert!(idle.status.success());
+    assert!(idle.stdout.is_empty());
+    let empty_cursor = journal.replay(None, 1).unwrap().next_cursor;
+    for _ in 0..2 {
+        journal
+            .append(
+                &EventEnvelope::new(
+                    "fixture",
+                    0,
+                    EventKind::TaskCompleted {
+                        task_id: TaskId::new(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let cursor = format!("{}:{}", empty_cursor.journal_id, empty_cursor.sequence);
+    let expired = execute(&[
+        "events",
+        "--journal",
+        journal_path,
+        "follow",
+        "--after",
+        &cursor,
+        "--max-events",
+        "1",
+    ]);
+    assert!(!expired.status.success());
+    assert!(expired.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&expired.stderr).contains("cursor expired"));
+    let retained = execute(&[
+        "events",
+        "--journal",
+        journal_path,
+        "follow",
+        "--max-events",
+        "1",
+    ]);
+    assert!(retained.status.success());
+    assert!(String::from_utf8_lossy(&retained.stderr).contains("discarded through sequence 1"));
+}
+
+#[test]
 fn workflow_cli_executes_dependencies_and_reports_provenance_and_cleanup() {
     for compatible in [false, true] {
         let fixture = HttpFixture::new(false);

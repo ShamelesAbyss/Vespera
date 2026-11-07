@@ -1,4 +1,6 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -31,6 +33,21 @@ enum EventCommand {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=256))]
         limit: u32,
     },
+    /// Follow committed events as newline-delimited JSON.
+    Follow {
+        /// Resume after this journal-UUID:sequence cursor.
+        #[arg(long)]
+        after: Option<Cursor>,
+        /// Wait between reads when caught up.
+        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(10..=60_000))]
+        poll_ms: u64,
+        /// Stop successfully after printing this many events.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_events: Option<u64>,
+        /// Stop successfully after this long without emitting an event.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(10..=3_600_000))]
+        idle_timeout_ms: Option<u64>,
+    },
 }
 
 pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
@@ -43,10 +60,73 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
             let page = Journal::open_reader(&args.journal)?.replay(after, limit)?;
             Ok(serde_json::to_value(page)?)
         }
+        EventCommand::Follow {
+            after,
+            poll_ms,
+            max_events,
+            idle_timeout_ms,
+        } => {
+            follow(args.journal, after, poll_ms, max_events, idle_timeout_ms)?;
+            Ok(serde_json::Value::Null)
+        }
     })
     .await
     .map_err(|_| JournalError::Database)??;
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    if !output.is_null() {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+    Ok(())
+}
+
+fn follow(
+    path: PathBuf,
+    mut cursor: Option<Cursor>,
+    poll_ms: u64,
+    max_events: Option<u64>,
+    idle_timeout_ms: Option<u64>,
+) -> Result<(), AppError> {
+    let mut journal = Journal::open_reader(&path)?;
+    let mut output = io::stdout().lock();
+    let poll = Duration::from_millis(poll_ms);
+    let idle = idle_timeout_ms.map(Duration::from_millis);
+    let mut last_emission = Instant::now();
+    let mut remaining = max_events.unwrap_or(u64::MAX);
+    while remaining > 0 {
+        let page = journal.replay(
+            cursor,
+            remaining.min(vespera_events::MAX_PAGE.into()) as u32,
+        )?;
+        if cursor.is_none() && page.discarded_through > 0 {
+            eprintln!(
+                "Journal history was discarded through sequence {}",
+                page.discarded_through
+            );
+        }
+        for entry in page.entries {
+            let line = serde_json::to_string(&entry)?;
+            let written = writeln!(output, "{line}").and_then(|()| output.flush());
+            match written {
+                Ok(()) => (),
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+                Err(error) => return Err(AppError::EventOutput(error)),
+            }
+            remaining -= 1;
+            last_emission = Instant::now();
+        }
+        cursor = Some(page.next_cursor);
+        if remaining == 0 {
+            break;
+        }
+        if !page.has_more {
+            let wait = idle.map_or(poll, |timeout| {
+                poll.min(timeout.saturating_sub(last_emission.elapsed()))
+            });
+            if wait.is_zero() {
+                break;
+            }
+            std::thread::sleep(wait);
+        }
+    }
     Ok(())
 }
 

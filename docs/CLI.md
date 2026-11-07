@@ -16,7 +16,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
-| `events` | Initialize a local journal or replay a JSON page | None. Local SQLite access. |
+| `events` | Initialize, replay or follow a local event journal | None. Local SQLite access. |
 
 Every command supports `--help`; the root supports `--version`. All except
 `doctor` take `--config <PATH>` (default `config/local.toml`). Each command supports
@@ -228,4 +228,14 @@ New-Item -ItemType Directory -Force data | Out-Null
 
 Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to append a successful completion to an initialized journal. Single-agent runs emit `inference_completed`. Workflows emit `task_completed` for the root. Reports include the committed cursor or an append error in `event_publication`. Append failure returns nonzero while preserving the execution report. Publication is a separate post-execution transaction, so a process exit between execution and publication can leave a gap.
 
-Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. This interface provides pull-based history. Live subscriptions and broader lifecycle events are separate roadmap work.
+Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. Use `follow` for local streaming and `replay` for discrete pages. Network subscriptions and broader lifecycle events remain roadmap work.
+
+### Follow committed events
+
+```powershell
+.\target\release\vespera.exe events --journal data/events.sqlite3 follow --poll-ms 250
+```
+
+Each stdout line contains one JSON entry with its event and cursor. The follower flushes each entry and reads at most one page ahead. It waits between reads when caught up, without holding a read transaction while writing to stdout. Save the last fully consumed cursor and pass `--after <journal-UUID:sequence>` to resume. Without a cursor it starts from the oldest retained entry and reports any earlier discarded history on stderr. If a saved cursor expires while following, the command exits nonzero and reports the retention boundary.
+
+`--poll-ms` defaults to 250 and accepts 10 to 60,000. The command continues until interrupted or until it reaches an optional `--max-events <N>` or `--idle-timeout-ms <N>` bound. The idle timeout accepts 10 to 3,600,000 milliseconds and applies while waiting for new entries. A closed stdout pipe ends delivery. Consumers control how quickly the command can write to stdout, so an idle timeout does not bound writes to a stalled consumer.
