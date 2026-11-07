@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-06 — Context-aware native model preparation
+
+Previous verified checkpoint: `fd6596e` (current onboarding and live evidence), pushed. Added provider-port `load_model_with_context` with backward-compatible default behavior and an Ollama override validating the context before HTTP I/O. Scheduler-driven initial loads now transmit the admitted context as `options.num_ctx`; inference already transmitted that same value. Direct legacy preload and unload remain unchanged, and no allocation support is invented for compatible providers.
+
+The executable HTTP fixture checks preload and inference both carry 512 tokens and unload omits allocation options. Invalid contextual preload bounds are rejected before a connection attempt. All 138 offline tests pass (one live health test ignored), along with formatting, all-target check, strict Clippy, strict rustdoc and release workspace build.
+
+A fresh live native release task returned `OK` in 3,719 ms. Provider residency reported exactly 512 allocated context tokens and 4,547,149,823 VRAM bytes. A separate explicit native unload was acknowledged and final residency was empty. Evidence is in `artifacts/live-ollama-context-2026-11-06.json`; this is a single bounded sample, not a benchmark or universal guarantee. Compatible allocation control remains unsupported; reused model context changes, external activity and overhead accounting remain unresolved. Next priority: reject invalid inference requests before any model load, then advance orchestration and durable services.
+
 ## 2026-11-06 — Live execution and current onboarding
 
 Verified source checkpoint: `136e1b3214b2b910683d869fe74d054c0dcffb24`, pushed. Ubuntu CI [42323808303](https://github.com/ShamelesAbyss/Vespera/actions/runs/42323808303) passed. Windows release CLI executed two bounded nonstreaming tasks against Ollama 0.40.13 / hermes3:8b: native and compatible `/v1` both returned exactly `OK`, with 20 prompt tokens and two output tokens. Native execution took 18,505 ms overall; the separate compatible sample took 7,582 ms. Different residency/context conditions prevent comparative benchmark claims.

@@ -87,3 +87,5 @@ cargo test -p vespera-scheduler --locked
 The deterministic fake provider covers admission, reuse, acknowledged pressure
 eviction, unsupported/failed/unacknowledged unload, coordinated loading, failed
 load, and task abort during load or unload. It does not prove live model fit.
+
+Scheduler-driven native Ollama preload now carries the admitted context, matching native inference. A live 512-token run reported a 512-token allocation; see [evidence](../artifacts/live-ollama-context-2026-11-06.json). This is provider-specific and does not add allocation control to compatible APIs or reconcile reused/external allocations.

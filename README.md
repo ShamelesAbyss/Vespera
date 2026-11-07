@@ -2,7 +2,7 @@
 
 A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
 
-**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The seven-crate workspace has 137 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Multi-step orchestration, durable memory/events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
+**Development status:** bounded single-agent inference works through Ollama and OpenAI-compatible HTTP adapters. The seven-crate workspace has 138 passing offline tests, Windows release validation and successful Ubuntu CI. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Multi-step orchestration, durable memory/events, external agents, simulation, native 3D and experiments remain required roadmap work; this is not a finished platform.
 
 [CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
 
@@ -74,7 +74,7 @@ Both resource values are mandatory for admission. Zero VRAM is an explicit CPU-o
 
 For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in its provider entry and supply that environment variable privately. Never put literal credentials in TOML. Offline commands do not resolve credentials. Loopback is the default network policy; remote access requires `network.allow_remote = true`, and plaintext remote HTTP additionally requires `allow_insecure_http = true`. Redirects, embedded URL credentials, query strings and fragments are rejected. See [provider contracts](docs/PROVIDERS.md).
 
-**Context limitation:** the compatible API provides no portable context-allocation control. A live task admitted at 512 tokens caused Ollama's compatible backend to allocate 65,536 tokens. Admission is a logical bound, not proof of backend allocation. Native inference sends its context setting, but its current preload can use backend defaults before inference. External allocations and context-dependent overhead are not yet reconciled into scheduler accounting. These are active engineering gaps, not whole-device capacity guarantees.
+**Context limitation:** the compatible API provides no portable context-allocation control. A live task admitted at 512 tokens caused Ollama's compatible backend to allocate 65,536 tokens. Admission is a logical bound, not proof of backend allocation. Native scheduler-driven preload and inference now both send the admitted context setting; a backend acknowledgement still does not establish measured allocation. External allocations and context-dependent overhead are not yet reconciled into scheduler accounting. These are active engineering gaps, not whole-device capacity guarantees.
 
 ## Inspect and execute
 

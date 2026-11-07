@@ -488,8 +488,9 @@ impl ResourceScheduler {
                 == LifecycleCapabilityState::Supported;
             if explicit {
                 let outcome = provider
-                    .load_model(
+                    .load_model_with_context(
                         &model.provider_model_identifier,
+                        context_tokens,
                         Some(self.policy.default_keep_alive),
                         cancel.clone(),
                     )

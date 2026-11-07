@@ -490,6 +490,19 @@ pub trait InferenceProvider: Send + Sync + 'static {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<ModelLifecycleOutcome, ProviderError>>;
 
+    /// Preload for a known inference context. The default preserves existing provider
+    /// behavior; support for this hint is provider-specific, not an allocation guarantee.
+    fn load_model_with_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        context_tokens: u32,
+        keep_alive: Option<Duration>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<ModelLifecycleOutcome, ProviderError>> {
+        let _ = context_tokens;
+        self.load_model(model_name, keep_alive, cancel)
+    }
+
     /// Explicitly unloads/evicts a model from VRAM/RAM immediately.
     fn unload_model<'a>(
         &'a self,

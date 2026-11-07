@@ -405,6 +405,8 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
             "/api/generate"
         ]
     );
+    let preload: serde_json::Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(preload["options"]["num_ctx"], 512);
     let inference: serde_json::Value = serde_json::from_str(&requests[2].body).unwrap();
     assert_eq!(inference["model"], "fixture-model");
     assert_eq!(
@@ -415,6 +417,7 @@ fn ollama_cli_executes_the_complete_path_and_confirms_opt_in_unload() {
     assert_eq!(inference["options"]["num_ctx"], 512);
     let unload: serde_json::Value = serde_json::from_str(&requests[3].body).unwrap();
     assert_eq!(unload["keep_alive"], 0);
+    assert!(unload.get("options").is_none());
     assert_eq!(
         fs::read_to_string(directory.0.join("test.toml")).unwrap(),
         config

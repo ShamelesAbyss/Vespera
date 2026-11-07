@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-11-06",
+  "base_commit": "fd6596e",
+  "change": "Scheduler passes admitted context to native Ollama preload and inference",
+  "platform": "Windows x86_64",
+  "provider": "Ollama 0.40.13",
+  "model": "hermes3:8b",
+  "command": "run-agent with max-output-tokens 8, context-tokens 512, timeout-seconds 120, temperature 0; same private limits as the earlier live artifact",
+  "content": "OK",
+  "runtime_elapsed_ms": 3719,
+  "requested_context_tokens": 512,
+  "provider_reported_allocated_context_tokens": 512,
+  "provider_reported_vram_bytes": 4547149823,
+  "cleanup": {
+    "method": "explicit out-of-band native operator unload after residency observation",
+    "acknowledged": true,
+    "provider_reported_resident_models_after": 0
+  },
+  "limitations": [
+    "One model and backend version; not a benchmark or a universal allocation guarantee.",
+    "Provider-reported residency is distinct from scheduler estimates.",
+    "Compatible APIs still have no portable allocation control.",
+    "Reused models, backend rounding, concurrent external activity and per-request overhead remain separate concerns."
+  ]
+}

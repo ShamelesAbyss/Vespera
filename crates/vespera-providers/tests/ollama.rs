@@ -486,3 +486,18 @@ async fn enumeration_and_explicit_lifecycle_parse_provider_responses() {
         assert!(outcome.acknowledged);
     }
 }
+
+#[tokio::test]
+async fn contextual_preload_rejects_invalid_context_before_network_io() {
+    let p = OllamaProvider::new(
+        OllamaConfig::loopback_default(sample_provider_id(), "http://127.0.0.1:1").unwrap(),
+    )
+    .unwrap();
+    for tokens in [0, 63, 1_048_577, u32::MAX] {
+        assert!(matches!(
+            p.load_model_with_context("fixture", tokens, None, CancellationToken::new())
+                .await,
+            Err(ProviderError::RequestValidation { .. })
+        ));
+    }
+}

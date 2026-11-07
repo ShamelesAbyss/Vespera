@@ -372,8 +372,37 @@ impl InferenceProvider for OllamaProvider {
         Box::pin(async move {
             let secs = keep_alive.map_or(300, |d| d.as_secs().max(1));
             let keep_alive_str = format!("{secs}s");
-            self.execute_lifecycle_generate(model_name, Value::String(keep_alive_str), &cancel)
-                .await
+            self.execute_lifecycle_generate(
+                model_name,
+                Value::String(keep_alive_str),
+                None,
+                &cancel,
+            )
+            .await
+        })
+    }
+
+    fn load_model_with_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        context_tokens: u32,
+        keep_alive: Option<Duration>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<ModelLifecycleOutcome, ProviderError>> {
+        Box::pin(async move {
+            if !(64..=1_048_576).contains(&context_tokens) {
+                return Err(ProviderError::RequestValidation {
+                    reason: "context must be between 64 and 1048576 tokens".into(),
+                });
+            }
+            let secs = keep_alive.map_or(300, |d| d.as_secs().max(1));
+            self.execute_lifecycle_generate(
+                model_name,
+                Value::String(format!("{secs}s")),
+                Some(context_tokens),
+                &cancel,
+            )
+            .await
         })
     }
 
@@ -383,7 +412,7 @@ impl InferenceProvider for OllamaProvider {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<ModelLifecycleOutcome, ProviderError>> {
         Box::pin(async move {
-            self.execute_lifecycle_generate(model_name, Value::Number(0.into()), &cancel)
+            self.execute_lifecycle_generate(model_name, Value::Number(0.into()), None, &cancel)
                 .await
         })
     }
@@ -526,6 +555,7 @@ impl OllamaProvider {
         &self,
         model_name: &str,
         keep_alive: Value,
+        context_tokens: Option<u32>,
         cancel: &CancellationToken,
     ) -> Result<ModelLifecycleOutcome, ProviderError> {
         if model_name.trim().is_empty() {
@@ -541,6 +571,7 @@ impl OllamaProvider {
             prompt: "",
             stream: false,
             keep_alive,
+            options: context_tokens.map(|tokens| serde_json::json!({ "num_ctx": tokens })),
         });
 
         let (resp, elapsed_ms): (OllamaLifecycleResponse, u64) = self
@@ -828,6 +859,8 @@ struct OllamaLifecycleRequest<'a> {
     prompt: &'a str,
     stream: bool,
     keep_alive: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<Value>,
 }
 
 #[derive(Deserialize)]
