@@ -362,17 +362,168 @@ async fn transport_policy_blocks_http_redirects_and_redacts_secrets() {
 }
 
 #[tokio::test]
-#[ignore = "requires live local Ollama instance on 127.0.0.1:11434; run with --ignored"]
+#[ignore = "requires an idle local Ollama and VESPERA_LIVE_OLLAMA_MODEL; run with --ignored"]
 async fn live_ollama_smoke_test() {
     let provider_id = sample_provider_id();
-    let cfg = OllamaConfig::loopback_default(provider_id, "http://127.0.0.1:11434")
+    let model = std::env::var("VESPERA_LIVE_OLLAMA_MODEL").expect("select an installed text model");
+    let mut cfg = OllamaConfig::loopback_default(provider_id, "http://127.0.0.1:11434")
         .expect("loopback config");
+    cfg.stream_total_timeout = Duration::from_secs(90);
     let provider = OllamaProvider::new(cfg).expect("provider");
+    let token = CancellationToken::new;
     let report = provider
-        .health_check(CancellationToken::new())
+        .health_check(token())
         .await
         .expect("live health check");
     assert_eq!(report.status, ProviderHealthStatus::Healthy);
+    let models = provider
+        .enumerate_models(token())
+        .await
+        .expect("live enumeration");
+    assert!(
+        models
+            .iter()
+            .any(|entry| entry.provider_model_name == model)
+    );
+    let metadata = provider
+        .model_metadata(&model, token())
+        .await
+        .expect("live metadata");
+    assert_eq!(metadata.provider_model_name, model);
+    let before = provider
+        .query_residency(token())
+        .await
+        .expect("initial residency");
+    assert!(
+        before.resident_models.is_empty(),
+        "the live check requires an idle backend"
+    );
+
+    let request = |prompt: &str, tokens| {
+        BoundedInferenceRequest::new(
+            &model,
+            vec![ChatMessage {
+                role: ChatRole::User,
+                content: prompt.into(),
+            }],
+            tokens,
+            512,
+            Some(0.0),
+            None,
+        )
+        .expect("valid bounded request")
+    };
+    let exercise = async {
+        let load = provider
+            .load_model_with_context(&model, 512, Some(Duration::from_secs(45)), token())
+            .await?;
+        let resident = provider.query_residency(token()).await?;
+        let mut stream = provider
+            .infer_stream(request("Reply with a short greeting.", 32), token())
+            .await?;
+        let mut terminal = None;
+        let mut text_chunks = 0_u32;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            text_chunks += u32::from(!chunk.delta.is_empty());
+            if chunk.done {
+                terminal = Some(chunk);
+            }
+        }
+        let cancel = token();
+        let mut stream = provider
+            .infer_stream(
+                request("Write the numbers from one to one hundred in order.", 128),
+                cancel.clone(),
+            )
+            .await?;
+        let mut cancelled_after_delta = false;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if !chunk.done && !chunk.delta.is_empty() {
+                cancel.cancel();
+                cancelled_after_delta = matches!(
+                    stream.next().await,
+                    Some(Err(ProviderError::Cancelled { .. }))
+                );
+                break;
+            }
+        }
+        Ok::<_, ProviderError>((load, resident, terminal, text_chunks, cancelled_after_delta))
+    }
+    .await;
+    let unload = provider
+        .unload_model(&model, token())
+        .await
+        .expect("live unload");
+    assert!(unload.acknowledged);
+    assert_eq!(unload.provider_model_name, model);
+    let mut after = provider
+        .query_residency(token())
+        .await
+        .expect("final residency");
+    for _ in 0..20 {
+        if after
+            .resident_models
+            .iter()
+            .all(|entry| entry.provider_model_name != model)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        after = provider
+            .query_residency(token())
+            .await
+            .expect("final residency");
+    }
+    assert!(
+        after
+            .resident_models
+            .iter()
+            .all(|entry| entry.provider_model_name != model)
+    );
+
+    let (load, resident, terminal, text_chunks, cancelled) = exercise.expect("live streaming");
+    assert!(load.acknowledged);
+    assert_eq!(load.provider_model_name, model);
+    let reservation = resident
+        .resident_models
+        .iter()
+        .find(|entry| entry.provider_model_name == model)
+        .expect("selected model reported resident after load");
+    assert!(text_chunks > 0);
+    let terminal = terminal.expect("explicit terminal stream event");
+    assert!(matches!(
+        terminal.finish_reason,
+        Some(InferenceFinishReason::Stop | InferenceFinishReason::Length)
+    ));
+    let metrics = terminal.metrics.expect("terminal metrics");
+    assert!(
+        metrics
+            .completion_tokens
+            .is_some_and(|tokens| tokens > 0 && tokens <= 32)
+    );
+    assert!(
+        cancelled,
+        "local stream returned typed cancellation after a text delta"
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "server_version": report.version,
+            "model": model,
+            "context_requested": 512,
+            "context_reported": reservation.allocated_context_tokens,
+            "vram_reported_bytes": reservation.vram_resident_bytes,
+            "text_chunks": text_chunks,
+            "completion_tokens": metrics.completion_tokens,
+            "terminal": terminal.done,
+            "local_cancellation_after_delta": cancelled,
+            "load_acknowledged": load.acknowledged,
+            "unload_acknowledged": unload.acknowledged,
+            "target_resident_after_unload": false
+        })
+    );
 }
 
 async fn json_fixture(body: &str) -> String {

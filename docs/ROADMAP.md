@@ -1,11 +1,13 @@
 # Roadmap
 
+Use the [milestone acceptance ledger](MILESTONE_LEDGER.md) for requirement status, implementation evidence, blockers and next actions in dependency order.
+
 The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner's full-platform directive. The historical [INITIAL_PLAN.md](INITIAL_PLAN.md) describes the initial foundation, not a reduction of the current product scope. Status was re-audited on 2026-11-06; source and checkpoint evidence in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) are authoritative. Gates below remain acceptance criteria, not blanket completion claims.
 
 | Milestone | Current status and remaining evidence |
 | --- | --- |
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
-| 2: provider contract and Ollama | Adapter and offline protocol/transport fixtures pass; framing, completion, metadata, residency arithmetic, aggregate bounds, whole deadlines and direct loopback transport implemented. Native nonstreaming execution and acknowledged unload verified on Ollama 0.40.13 / hermes3:8b; other versions/streaming remain fixture-only. |
+| 2: provider contract and Ollama | Original gates verified on Ollama 0.40.13 / hermes3:8b. Live checks include nonstreaming inference, streamed completion, local cancellation, discovery, metadata and acknowledged unload. Offline fixtures cover transport policy and failure paths. |
 | 3: additional providers | OpenAI-compatible SSE/payload/prefix/auth/error fixtures pass. Compatible nonstreaming execution verified against that same Ollama version/model only; portable context allocation remains unsupported. Bionic blocked on exact product/version and authoritative protocol. |
 | 4: registry | In-process identity/update/removal, selected polling and effective-health behavior tested; CLI explicitly refreshes relevant health. No persistent background monitor or restart state yet. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |

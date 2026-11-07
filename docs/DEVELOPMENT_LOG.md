@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-07 — Milestone audit and native Ollama streaming
+
+Audited Milestones 0–14 from the clean `7a7edba` baseline against the original gates. The [acceptance ledger](MILESTONE_LEDGER.md) records evidence, gaps and dependency-ordered actions. The Atlas benchmark was at inspection stage and was deferred without source changes.
+
+The opt-in Rust test passed on Windows against Ollama 0.40.13 and installed `hermes3:8b`. It verified live health, model listing, metadata, explicit load, 9 text deltas and a terminal event reporting 10 tokens, typed local cancellation after a text delta, and acknowledged unload. The backend reported 512 allocated context tokens and 4,547,149,823 VRAM bytes after load, and the model was absent after unload. Twelve Ollama offline fixtures passed. Server compute cessation and other model/backend versions were outside this run.
+
 ## 2026-11-07 — Request memory in Atlas
 
 Verified implementation checkpoint `1c8e6eab3aa9c42451c9cb17065631e71ab2b86c` was pushed to `main` and passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42422206226).

@@ -103,6 +103,16 @@ must map them into the runtime endpoint policy.
 
 ## Verification and live scope
 
+The opt-in native Ollama test uses an already installed text model and an idle loopback backend on port 11434. It explicitly loads and unloads that model. Run it while other clients are idle.
+
+```powershell
+$env:VESPERA_LIVE_OLLAMA_MODEL = 'hermes3:8b'
+cargo test --locked -p vespera-providers --test ollama live_ollama_smoke_test -- --exact --ignored --nocapture
+Remove-Item Env:VESPERA_LIVE_OLLAMA_MODEL
+```
+
+On Windows, Ollama 0.40.13 with `hermes3:8b` passed live health, enumeration, metadata, explicit load, bounded stream completion, local cancellation after a text delta, and acknowledged unload. The completion reported 10 output tokens over 9 nonempty deltas. Residency reported 512 allocated context tokens and 4,547,149,823 VRAM bytes after load, with the target absent after unload. Cancellation verified the client result. Remote compute cessation was unmeasured. [Ollama chat](https://docs.ollama.com/api/chat) · [Ollama streaming](https://docs.ollama.com/api/streaming) · [Ollama lifecycle request](https://docs.ollama.com/api/generate)
+
 ```powershell
 cargo test -p vespera-providers --locked
 # Opt-in health check against a running local Ollama daemon:
