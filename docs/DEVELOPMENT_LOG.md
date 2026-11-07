@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — In-flight workflow evidence in Swarm
 
+Verified implementation checkpoint `8834c8ad0662414359f5977eefd24e60a4b3d734` was pushed to `main`.
+
 The signed mailbox checkpoint `2060d53ecf0284f7a58b9f9d7cce497dca19e6ec` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42347328245). Opt-in workflow observation writes acceptance and known terminal task states to the local journal as execution progresses. An acceptance includes the actual predecessor attempt and agent IDs used to assemble its prompt. Swarm shows green dependency links and inspects attempt and root outcomes independently. The post-run delegation batch remains available.
 
 Windows validation passed 219 offline workspace tests, the SDK doctest, graphics tests, strict workspace and graphics Clippy, and the graphics build. CLI subprocess coverage verified acceptance before completion, predecessor identity, payload exclusion and cancellation without a second attempt. A desktop workflow with a held fixture response showed accepted work before completion. Releasing the response produced the green dependency link, both attempt IDs and the final completed states in the same window.
