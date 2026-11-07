@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-11-06 — Atomic registry lifecycle and effective provider health
+
+Previous verified checkpoint: `d37c4aac6cc78035e4e8a0d9e01f9d75afe87a3e`, pushed to the recovery branch.
+
+Registry mutations now use a single state lock and reject duplicate provider IDs, model IDs and provider/model-name aliases. Controlled metadata updates preserve immutable provider bindings; model removal does not claim unload and provider removal rejects live model references. Input validation rejects empty names/identifiers and known zero context windows without echoing payloads.
+
+Separated operator metadata (`get_registration`) from effective routing availability. Routing requires a fresh healthy provider poll; unknown, degraded, unreachable and stale observations remain inspectable but unavailable. Defaults are a 30-second freshness window and a bounded five-second per-provider poll. Polls snapshot handles and release all registry locks before I/O; poll generations and provider-instance checks fence out delayed results. Cancellation preserves previous observations until expiry, while timeout, failed poll or mismatched provider identity records unreachable. Operator-disabled models remain disabled after recovery.
+
+Scheduler reservations now retain their original provider handles. Removing/re-registering registry entries cannot redirect unload or silently reuse a changed provider/binding/resource estimate. Known model context ceilings are enforced independently of the operator budget; unspecified context defaults to the smaller applicable ceiling. Existing leased work is not silently revoked by a registry health change.
+
+Added Tokio's test-only `test-util` feature for deterministic health time tests, with no new runtime library. Seven registry tests and 13 scheduler tests pass, including duplicate races, health expiry/recovery/operator disablement, timeout/cancellation, stalled/newer/replacement polls and unload after inventory removal. Full workspace validation passed: formatting, all-target check, all 84 tests, strict Clippy, rustdoc and optimized workspace build. See `REGISTRY.md` and the updated dependency/roadmap records.
+
+Limitations: explicit polling is a library operation, not yet an application background monitor; health is provider-level rather than model-specific readiness; observations and registry state are not persisted. Next work is enabling the dormant provider fixtures, then actual bounded agent inference and application integration.
+
 ## 2026-11-06 — Bounded priority admission and shutdown drain
 
 Previous verified checkpoint: `46b9e5c2f50bba844be410e05c5e51cad33b4fcd`, pushed to the recovery branch.

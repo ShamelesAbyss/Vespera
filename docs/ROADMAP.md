@@ -7,7 +7,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
 | 2: provider contract and Ollama | Adapter implemented. Existing protocol fixtures are not yet discovered by Cargo; live interoperability remains unverified. |
 | 3: additional providers | OpenAI-compatible adapter implemented but lacks verified fixture coverage. Bionic blocked on exact product/version and authoritative protocol. |
-| 4: registry | Partial: storage/capability matching present; duplicate protection, controlled updates/removal, effective health and recovery need work. |
+| 4: registry | In-process identity/update/removal and effective-health behavior implemented with deterministic expiry, recovery, timeout, cancellation and stale-result fencing tests. Live provider interoperability and continuous application polling remain unverified/unwired. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Partial: conservative estimates, coordinated load, transactional unload, owned leases, bounded priority/fairness queue, cancellation, bounded shutdown drain tested. Per-request overhead, telemetry reconciliation, external activity and restart recovery remain. |
 | 6: master orchestration | Pending; no bounded multi-step orchestrator yet. |
 | 7: agents | Partial: identities, permissions, in-memory records/messages, delegated task preparation, ownership and execution-state guards tested. Actual task inference, bounded histories and persistence remain. |

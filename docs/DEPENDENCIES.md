@@ -1,6 +1,6 @@
 # Dependency decisions
 
-Milestone 1 uses seven direct third-party libraries shared through the root Cargo workspace. `Cargo.lock` records the exact dependency graph. Cargo metadata and the complete declared license inventory are retained in `artifacts/cargo-metadata.json` and `artifacts/dependency-licenses.tsv`. Version and license statements below were obtained from that resolved metadata, not guessed from search results.
+The initial Milestone 1 foundation used seven direct third-party libraries shared through the root Cargo workspace. The current runtime also uses Tokio, Reqwest, Futures and Bytes. `Cargo.lock` records the current exact dependency graph; historical metadata/license artifacts may describe the initial foundation and must be regenerated for a release audit.
 
 ## Introduced dependencies
 
@@ -20,21 +20,25 @@ Milestone 1 uses seven direct third-party libraries shared through the root Carg
 
 These libraries were selected for narrow responsibilities, documentation, portable Rust APIs, and compatible permissive declared licenses. Compilation, strict Clippy, tests, and documentation generation validate architectural fit on the recorded toolchain. This is not a complete vulnerability, provenance, legal, or long-term maintenance audit. Review advisories, upstream maintenance, dependency licenses, and release impact before publication or deployment. Lockfile entries for other target platforms do not imply a JavaScript or Python runtime in the native application.
 
+## Runtime dependencies and test features
+
+Tokio supplies asynchronous provider I/O, coordination, timeouts and bounded admission. Reqwest supplies HTTP with Rustls TLS and redirect prohibition. Futures core/util and Bytes support provider streaming. These are implemented dependencies in the workspace manifest and lockfile; their presence does not establish complete protocol or transport-policy verification. The registry's dev dependency enables Tokio `test-util` solely for deterministic virtual-clock health expiry/timeout regressions. No new runtime library was added for registry hardening.
+
 ## Deferred dependencies
 
-Tokio is a future asynchronous control-plane candidate, not needed for deterministic types or read-only CLI commands. Axum and WebSockets belong at a later authenticated API boundary. Reqwest or another Rust HTTP transport should be evaluated in Milestone 2 against streaming cancellation, timeout, redirect, TLS, and endpoint-policy requirements.
+Axum and WebSockets belong at a later authenticated API boundary.
 
 SQLite, through a chosen Rust database layer, is deferred until memory transactions, schema migration, namespaces, provenance, and recovery can be tested. Start with structured storage and text search; introduce vector retrieval only when embedding dimensions, model versions, indexing, resource limits, and retrieval quality are specified.
 
-Bevy and wgpu are deferred until the optional native visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC is deferred: REST plus WebSockets is the initial draft interoperability direction, not a deployed server.
+Bevy and wgpu are deferred until the required native 3D visualization has a stable event subscription contract. They must not become dependencies of core orchestration or headless operation. gRPC is deferred: REST plus WebSockets is the initial draft interoperability direction, not a deployed server.
 
-No Python runtime, Python orchestration backend, JS frontend, local model weights, provider SDK, GPU runtime, or LLM API call was introduced. Node.js was used only as a development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements.
+No Python runtime, Python orchestration backend, JS frontend, local model weights, vendor SDK, or GPU runtime is required by the current first-party application. Node.js was used only as an initial development-environment utility to format Cargo metadata; it is not part of the repository's build or application requirements. Provider calls are available through the Rust library adapters, not yet wired into CLI task execution.
 
 ## Toolchain and reproducibility
 
-The installed and tested stable toolchain is Rust/Cargo 1.99.1. `rust-toolchain.toml` pins that exact release. Package metadata requests Rust 1.99; older Rust versions were not tested. Workspace resolver 3, shared dependency declarations, a committed-ready lockfile, and `--locked` validation follow Cargo's workspace facilities [5]. These reproduce resolution, not byte-identical artifacts across different operating systems or compilers.
+The installed and tested toolchain is Rust/Cargo 1.99.1. `rust-toolchain.toml` and package metadata pin that release; older Rust versions were not tested. Workspace resolver 2, shared dependency declarations, a committed lockfile, and `--locked` validation follow Cargo's workspace facilities [5]. These reproduce resolution, not byte-identical artifacts across different operating systems or compilers.
 
-Unsafe Rust is forbidden for workspace code. This lint does not claim that third-party crates contain no unsafe implementation. Release builds use thin LTO and symbol stripping. Performance benchmarks and hardware-fit profiling remain later milestones.
+Unsafe Rust is forbidden for workspace code. This lint does not claim that third-party crates contain no unsafe implementation. Release builds currently use Cargo's default optimized profile; no thin-LTO or symbol-stripping profile is configured. Performance benchmarks and hardware-fit profiling remain later milestones.
 
 ## References
 

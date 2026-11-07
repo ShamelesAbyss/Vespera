@@ -73,7 +73,9 @@ async fn unknown_estimates_are_rejected_without_changing_accounting() {
     let provider_id = ProviderId::new();
     registry
         .register_provider(Arc::new(MockProvider::new(provider_id)))
-        .await;
+        .await
+        .unwrap();
+    registry.health_check_all(CancellationToken::new()).await;
     let scheduler = ResourceScheduler::new(
         registry.clone(),
         SchedulingPolicy {
@@ -266,7 +268,8 @@ async fn fixture() -> (
     use vespera_scheduler::{ResourceScheduler, SchedulingPolicy};
     let registry = Arc::new(ModelRegistry::new());
     let provider = Arc::new(MockProvider::new(ProviderId::new()));
-    registry.register_provider(provider.clone()).await;
+    registry.register_provider(provider.clone()).await.unwrap();
+    registry.health_check_all(CancellationToken::new()).await;
     let a = ModelId::new();
     let b = ModelId::new();
     for model_id in [a, b] {
@@ -544,4 +547,93 @@ async fn scheduler_shutdown_closes_queued_work_and_preserves_charged_models() {
             .unwrap()
     );
     assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 0);
+}
+
+#[tokio::test]
+async fn registry_removal_and_rebinding_do_not_redirect_reserved_model_unload() {
+    use std::time::Duration;
+    use vespera_core::ResourceBudget;
+    use vespera_scheduler::{ResourceScheduler, SchedulerError, SchedulingPolicy};
+    let registry = Arc::new(ModelRegistry::new());
+    let original = Arc::new(MockProvider::new(ProviderId::new()));
+    registry.register_provider(original.clone()).await.unwrap();
+    registry.health_check_all(CancellationToken::new()).await;
+    let model_id = ModelId::new();
+    let mut registration = ModelRegistration {
+        model_id,
+        provider_id: original.id,
+        name: "fixture".into(),
+        provider_model_identifier: "original".into(),
+        parameter_size: None,
+        quantization: None,
+        context_window: Some(512),
+        capabilities: BTreeSet::new(),
+        estimated_resources: ResourceEstimate {
+            ram_bytes: Some(100),
+            vram_bytes: Some(0),
+        },
+        available: true,
+    };
+    registry.register_model(registration.clone()).await.unwrap();
+    let scheduler = ResourceScheduler::new(
+        registry.clone(),
+        SchedulingPolicy {
+            queue: Default::default(),
+            budget: ResourceBudget::default(),
+            default_keep_alive: Duration::from_secs(30),
+            evict_idle_on_pressure: true,
+        },
+    );
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(model_id, Some(1024), CancellationToken::new())
+            .await,
+        Err(SchedulerError::BudgetExceeded(_))
+    ));
+    let admission = scheduler
+        .admit_and_prepare(model_id, None, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(admission.context_tokens, 512);
+    drop(admission);
+    registration.estimated_resources.ram_bytes = Some(200);
+    registry.update_model(registration.clone()).await.unwrap();
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(model_id, None, CancellationToken::new())
+            .await,
+        Err(SchedulerError::RegistrationChanged { .. })
+    ));
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 100);
+    registry.remove_model(model_id).await.unwrap();
+    registry.remove_provider(original.id).await.unwrap();
+    let replacement = Arc::new(MockProvider::new(original.id));
+    registry
+        .register_provider(replacement.clone())
+        .await
+        .unwrap();
+    registry.health_check_all(CancellationToken::new()).await;
+    registration.provider_model_identifier = "replacement".into();
+    registry.register_model(registration).await.unwrap();
+    assert!(matches!(
+        scheduler
+            .admit_and_prepare(model_id, None, CancellationToken::new())
+            .await,
+        Err(SchedulerError::RegistrationChanged { .. })
+    ));
+    assert!(
+        scheduler
+            .evict_model(model_id, CancellationToken::new())
+            .await
+            .unwrap()
+    );
+    assert_eq!(original.unloads.load(Ordering::SeqCst), 1);
+    assert_eq!(replacement.unloads.load(Ordering::SeqCst), 0);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 0);
+    let _new = scheduler
+        .admit_and_prepare(model_id, None, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(replacement.loads.load(Ordering::SeqCst), 1);
+    assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 200);
 }

@@ -16,6 +16,9 @@ thiserror.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

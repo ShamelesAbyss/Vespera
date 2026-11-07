@@ -24,6 +24,12 @@ use vespera_providers::{
 /// Typed admission and lifecycle failures.
 #[derive(Debug, Error)]
 pub enum SchedulerError {
+    /// Inventory was rebound while this scheduler still has a reservation.
+    #[error("model {model_id} binding changed while a reservation exists; evict before reuse")]
+    RegistrationChanged {
+        /// Target model.
+        model_id: ModelId,
+    },
     /// Bounded admission queue rejected or cancelled the request.
     #[error("{0}")]
     Queue(#[from] QueueError),
@@ -180,12 +186,23 @@ impl fmt::Debug for ScheduledInference {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct SchedulerState {
     usage: ResourceUsage,
     resident_models: BTreeMap<ModelId, ResidentModel>,
     logical_tick: u64,
     leases: BTreeMap<uuid::Uuid, ModelId>,
+    // Retain the actual provider instance so removal/re-registration cannot redirect unload.
+    bound_providers: BTreeMap<ModelId, Arc<dyn InferenceProvider>>,
+}
+impl fmt::Debug for SchedulerState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SchedulerState")
+            .field("usage", &self.usage)
+            .field("resident_models", &self.resident_models)
+            .field("leases", &self.leases)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Marks an interrupted transition unknown synchronously, including future/task abort.
@@ -329,9 +346,23 @@ impl ResourceScheduler {
             return Err(SchedulerError::ModelUnavailable { model_id });
         }
         let provider = self.registry.get_provider(model.provider_id).await?;
-        let context_tokens = requested_context_tokens
-            .or(model.context_window)
-            .unwrap_or(self.policy.budget.max_context_tokens);
+        let context_tokens = requested_context_tokens.unwrap_or_else(|| {
+            model
+                .context_window
+                .unwrap_or(self.policy.budget.max_context_tokens)
+                .min(self.policy.budget.max_context_tokens)
+        });
+        if let Some(limit) = model.context_window
+            && context_tokens > limit
+        {
+            return Err(SchedulerError::BudgetExceeded(
+                DomainError::ResourceLimitExceeded {
+                    resource: ResourceKind::ContextTokens,
+                    requested: u64::from(context_tokens),
+                    limit: u64::from(limit),
+                },
+            ));
+        }
         let (Some(ram_bytes), Some(vram_bytes)) = (
             model.estimated_resources.ram_bytes,
             model.estimated_resources.vram_bytes,
@@ -346,6 +377,18 @@ impl ResourceScheduler {
             let decision = {
                 let mut state = lock(&self.state);
                 let existing = state.resident_models.get(&model_id);
+                if existing.is_some_and(|entry| {
+                    entry.provider_id != model.provider_id
+                        || entry.provider_model_identifier != model.provider_model_identifier
+                        || entry.ram_bytes != ram_bytes
+                        || entry.vram_bytes != vram_bytes
+                }) || state
+                    .bound_providers
+                    .get(&model_id)
+                    .is_some_and(|bound| !Arc::ptr_eq(bound, &provider))
+                {
+                    return Err(SchedulerError::RegistrationChanged { model_id });
+                }
                 if existing.is_some_and(|entry| {
                     !matches!(
                         entry.residency,
@@ -369,6 +412,7 @@ impl ResourceScheduler {
                             entry.active_inferences += 1;
                             entry.last_used_tick = tick;
                         } else {
+                            state.bound_providers.insert(model_id, provider.clone());
                             state.resident_models.insert(
                                 model_id,
                                 ResidentModel {
@@ -506,7 +550,11 @@ impl ResourceScheduler {
                 _ => return Ok(false),
             }
         };
-        let provider = self.registry.get_provider(model.provider_id).await?;
+        let provider = lock(&self.state)
+            .bound_providers
+            .get(&model_id)
+            .cloned()
+            .ok_or(SchedulerError::UncertainResidency { model_id })?;
         if provider.lifecycle_support().explicit_model_unload != LifecycleCapabilityState::Supported
         {
             return Err(ProviderError::UnsupportedOperation {
@@ -541,6 +589,7 @@ impl ResourceScheduler {
             state.usage.ram_bytes -= entry.ram_bytes;
             state.usage.vram_bytes -= entry.vram_bytes;
         }
+        state.bound_providers.remove(&model_id);
         transition.armed = false;
         Ok(true)
     }

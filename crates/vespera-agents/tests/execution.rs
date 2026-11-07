@@ -228,7 +228,8 @@ async fn runtime_fixture() -> (
 ) {
     let registry = Arc::new(ModelRegistry::new());
     let provider = Arc::new(MockProvider::new(ProviderId::new()));
-    registry.register_provider(provider.clone()).await;
+    registry.register_provider(provider.clone()).await.unwrap();
+    registry.health_check_all(CancellationToken::new()).await;
     let model_id = ModelId::new();
     registry
         .register_model(ModelRegistration {
