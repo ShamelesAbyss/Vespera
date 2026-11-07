@@ -2,6 +2,8 @@
 
 ## 2026-11-06 — Authenticated loopback worker HTTP service
 
+Verified implementation checkpoint `58837796c27b7e59f013f4ffaaa6800629dc93e5` is on `origin/main` and is the repository's default branch tip at publication. [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42337036931) was in progress when this checkpoint was recorded.
+
 Previous checkpoint `ba0cf36581074fe196b584820c6dd70436a22f80` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42335796654). Added `vespera serve` and two versioned HTTP/1 endpoints for operator and worker actions. The access file approves identities and capabilities and references distinct environment credentials. The authenticated credential determines the worker identity. Revocation removes its credential and fences the attempt in one serialized operation. The listener requires numeric loopback and caps connections, header time, total connection time and body bytes. HTTP/1 server support adds one transitive package, `httpdate`.
 
 Windows validation passed all 199 offline tests, formatting, strict Clippy and rustdoc, and the optimized workspace build. Two subprocess tests passed in debug and release, covering credential scope, strict decoding, body limits, non-loopback rejection, revocation/reassignment, fenced renewal and result retries. The documented PowerShell submit, claim, complete and inspect example returned the expected result. See the [wire contract](PROTOCOL.md#implemented-loopback-worker-api).
