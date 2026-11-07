@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,9 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::sync::watch;
-use vespera_core::SchedulerSample;
+use vespera_core::{
+    ModelId, ModelReservationSample, ProviderId, ReservationState, SchedulerSample,
+};
 
 use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
@@ -17,7 +20,7 @@ type Focus = CameraFocus<{ Layer::Machine as usize }>;
 
 const INTERVAL: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Sample {
     observed: Instant,
     threads: Option<usize>,
@@ -26,7 +29,7 @@ struct Sample {
     scheduler: SchedulerObservation,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 enum SchedulerObservation {
     #[default]
     NoSource,
@@ -69,8 +72,7 @@ fn read_scheduler_sample(path: &Path) -> Option<SchedulerSample> {
         return None;
     }
     let sample: SchedulerSample = serde_json::from_slice(&bytes).ok()?;
-    (sample.schema_version == SchedulerSample::SCHEMA_VERSION && sample.budget.validate().is_ok())
-        .then_some(sample)
+    sample.is_supported().then_some(sample)
 }
 
 #[derive(Resource)]
@@ -96,8 +98,56 @@ impl Device {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Target {
+    Device(Device),
+    Runtime(RuntimeNode),
+}
+
+#[derive(Resource)]
+struct Selected(Target);
+
+impl Default for Selected {
+    fn default() -> Self {
+        Self(Target::Device(Device::Cpu))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RuntimeNode {
+    Provider(ProviderId),
+    Model(ModelId),
+}
+
 #[derive(Resource, Default)]
-struct Selected(Device);
+struct RuntimeGraph {
+    nodes: BTreeMap<RuntimeNode, (Entity, Vec3)>,
+    sample: Option<Sample>,
+}
+
+impl RuntimeGraph {
+    fn scheduler(&self) -> &SchedulerObservation {
+        self.sample
+            .as_ref()
+            .map_or(&SchedulerObservation::Unavailable, |sample| {
+                &sample.scheduler
+            })
+    }
+
+    fn models(&self) -> &[ModelReservationSample] {
+        match self.scheduler() {
+            SchedulerObservation::Sample(sample) => sample.models.as_deref().unwrap_or_default(),
+            _ => &[],
+        }
+    }
+}
+
+#[derive(Resource)]
+struct RuntimeMeshes {
+    provider: Handle<Mesh>,
+    model: Handle<Mesh>,
+    material: [Handle<StandardMaterial>; 4],
+}
 
 #[derive(Component)]
 struct Meter(Device);
@@ -122,6 +172,7 @@ pub(super) fn install(app: &mut App, telemetry_directory: Option<PathBuf>, reduc
     std::thread::spawn(move || observe(&send, source.as_deref()));
     app.insert_resource(Telemetry(receive))
         .init_resource::<Selected>()
+        .init_resource::<RuntimeGraph>()
         .insert_resource(Focus {
             point: None,
             home_point: Vec3::new(1.6, 0.0, 0.0),
@@ -131,7 +182,13 @@ pub(super) fn install(app: &mut App, telemetry_directory: Option<PathBuf>, reduc
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (navigate, camera::<{ Layer::Machine as usize }>, present)
+            (
+                sync_runtime,
+                navigate,
+                camera::<{ Layer::Machine as usize }>,
+                draw_runtime,
+                present,
+            )
                 .chain()
                 .run_if(|layers: Res<Layers>| layers.active == Layer::Machine),
         );
@@ -173,6 +230,23 @@ fn setup(
     let chip = meshes.add(Cuboid::new(1.35, 0.5, 1.35));
     let meter = meshes.add(Cuboid::new(1.0, 0.10, 0.20));
     let base = materials.add(Color::srgb(0.085, 0.12, 0.19));
+    commands.insert_resource(RuntimeMeshes {
+        provider: meshes.add(Sphere::new(0.40)),
+        model: meshes.add(Cuboid::new(0.62, 0.48, 0.62)),
+        material: [
+            Color::srgb(0.56, 0.40, 0.88),
+            Color::srgb(0.26, 0.69, 0.55),
+            Color::srgb(0.20, 0.82, 0.98),
+            Color::srgb(0.98, 0.64, 0.24),
+        ]
+        .map(|base_color| {
+            materials.add(StandardMaterial {
+                base_color,
+                unlit: true,
+                ..default()
+            })
+        }),
+    });
     let camera = commands
         .spawn((
             Layer::Machine,
@@ -218,7 +292,7 @@ fn setup(
             .observe(
                 move |event: On<PointerClick>, mut selected: ResMut<Selected>| {
                     if event.button == PointerButton::Primary {
-                        selected.0 = device;
+                        selected.0 = Target::Device(device);
                     }
                 },
             );
@@ -240,7 +314,7 @@ fn setup(
             position_type: PositionType::Absolute,
             top: px(20.0),
             right: px(20.0),
-            width: px(350.0),
+            width: px(400.0),
             padding: UiRect::all(px(18.0)),
             ..default()
         },
@@ -254,10 +328,98 @@ fn setup(
     ));
 }
 
+fn sync_runtime(
+    mut commands: Commands,
+    telemetry: Res<Telemetry>,
+    layers: Res<Layers>,
+    meshes: Res<RuntimeMeshes>,
+    mut graph: ResMut<RuntimeGraph>,
+    mut previous: Local<Option<Instant>>,
+) {
+    let source = telemetry.0.borrow();
+    let sample = source
+        .as_ref()
+        .filter(|sample| sample.observed.elapsed() < INTERVAL * 3);
+    let observed = sample.map(|sample| sample.observed);
+    if *previous == observed {
+        return;
+    }
+    *previous = observed;
+    graph.sample = sample.cloned();
+    let mut models: Vec<_> = graph.models().iter().collect();
+    models.sort_unstable_by_key(|model| model.model_id);
+    let providers = graph
+        .models()
+        .iter()
+        .map(|model| model.provider_id)
+        .collect::<BTreeSet<_>>();
+    let position = |index: usize, z: f32| {
+        Vec3::new(
+            (index % 6) as f32 * 1.65 - 3.8,
+            0.56,
+            z - (index / 6) as f32,
+        )
+    };
+    let mut nodes = BTreeMap::new();
+    for (index, id) in providers.into_iter().enumerate() {
+        nodes.insert(
+            RuntimeNode::Provider(id),
+            (position(index, -5.2), &meshes.provider, 0),
+        );
+    }
+    for (index, model) in models.into_iter().enumerate() {
+        let material = match model.state {
+            ReservationState::Loading | ReservationState::Unloading | ReservationState::Unknown => {
+                3
+            }
+            _ if model.issued_leases > 0 => 2,
+            _ => 1,
+        };
+        nodes.insert(
+            RuntimeNode::Model(model.model_id),
+            (position(index, -8.6), &meshes.model, material),
+        );
+    }
+    graph.nodes.retain(|node, (entity, _)| {
+        if nodes.contains_key(node) {
+            return true;
+        }
+        commands.entity(*entity).despawn();
+        false
+    });
+    for (node, (point, mesh, material)) in nodes {
+        let material = MeshMaterial3d(meshes.material[material].clone());
+        if let Some((entity, prior)) = graph.nodes.get_mut(&node) {
+            commands
+                .entity(*entity)
+                .insert((Transform::from_translation(point), material));
+            *prior = point;
+        } else {
+            let entity = commands
+                .spawn((
+                    layers.parent(Layer::Machine),
+                    Mesh3d(mesh.clone()),
+                    material,
+                    Transform::from_translation(point),
+                ))
+                .observe(
+                    move |click: On<PointerClick>, mut selected: ResMut<Selected>| {
+                        if click.button == PointerButton::Primary {
+                            selected.0 = Target::Runtime(node);
+                        }
+                    },
+                )
+                .id();
+            graph.nodes.insert(node, (entity, point));
+        }
+    }
+}
+
 fn navigate(
     keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<Selected>,
     mut focus: ResMut<Focus>,
+    graph: Res<RuntimeGraph>,
 ) {
     for (key, device) in [
         (KeyCode::Digit1, Device::Cpu),
@@ -266,29 +428,88 @@ fn navigate(
         (KeyCode::Digit4, Device::Scheduler),
     ] {
         if keys.just_pressed(key) {
-            selected.0 = device;
+            selected.0 = Target::Device(device);
+        }
+    }
+    for (key, provider) in [(KeyCode::Digit5, false), (KeyCode::Digit6, true)] {
+        if keys.just_pressed(key) {
+            let mut nodes = graph
+                .nodes
+                .keys()
+                .copied()
+                .filter(|node| matches!(node, RuntimeNode::Provider(_)) == provider);
+            let mut cycle = nodes.clone();
+            if let Some(node) = cycle
+                .find(|node| match selected.0 {
+                    Target::Runtime(prior)
+                        if matches!(prior, RuntimeNode::Provider(_)) == provider =>
+                    {
+                        *node > prior
+                    }
+                    _ => true,
+                })
+                .or_else(|| nodes.next())
+            {
+                selected.0 = Target::Runtime(node);
+            }
         }
     }
     if keys.just_pressed(KeyCode::KeyF) {
-        focus.point = Some(selected.0.position());
+        focus.point = match selected.0 {
+            Target::Device(device) => Some(device.position()),
+            Target::Runtime(node) => graph.nodes.get(&node).map(|(_, point)| *point),
+        };
+    }
+}
+
+fn draw_runtime(graph: Res<RuntimeGraph>, selected: Res<Selected>, mut gizmos: Gizmos) {
+    let accounting = Color::srgb(0.35, 0.33, 0.53);
+    for (node, (_, point)) in &graph.nodes {
+        if matches!(node, RuntimeNode::Provider(_)) {
+            gizmos.line(
+                Device::Scheduler.position() + Vec3::Y * 0.58,
+                *point,
+                accounting,
+            );
+        }
+    }
+    for model in graph.models() {
+        let (_, from) = graph.nodes[&RuntimeNode::Provider(model.provider_id)];
+        let (_, to) = graph.nodes[&RuntimeNode::Model(model.model_id)];
+        let color = if model.issued_leases > 0 {
+            Color::srgb(0.20, 0.82, 0.98)
+        } else {
+            accounting
+        };
+        gizmos.line(from, to, color);
+    }
+    let outline = match selected.0 {
+        Target::Device(device) => Some((
+            device.position() + Vec3::Y * 0.13,
+            Vec3::new(3.02, 0.30, 2.55),
+        )),
+        Target::Runtime(node) => graph
+            .nodes
+            .get(&node)
+            .map(|(_, point)| (*point, Vec3::splat(0.91))),
+    };
+    if let Some((point, scale)) = outline {
+        gizmos.cube(
+            Transform::from_translation(point).with_scale(scale),
+            Color::srgb(0.88, 0.94, 1.0),
+        );
     }
 }
 
 fn present(
-    telemetry: Res<Telemetry>,
+    graph: Res<RuntimeGraph>,
     selected: Res<Selected>,
     adapter: Option<Res<RenderAdapterInfo>>,
     mut readout: Single<&mut Text, With<Readout>>,
     mut meters: Query<(&Meter, &mut Transform, &mut Visibility)>,
-    mut gizmos: Gizmos,
     mut previous: Local<Option<Instant>>,
 ) {
-    gizmos.cube(
-        Transform::from_translation(selected.0.position() + Vec3::Y * 0.13)
-            .with_scale(Vec3::new(3.02, 0.30, 2.55)),
-        Color::srgb(0.88, 0.94, 1.0),
-    );
-    let sample = (*telemetry.0.borrow()).filter(|sample| sample.observed.elapsed() < INTERVAL * 3);
+    let sample = graph.sample.as_ref();
     let observed = sample.map(|sample| sample.observed);
     if *previous == observed
         && !selected.is_changed()
@@ -299,7 +520,7 @@ fn present(
     *previous = observed;
     let cpu = sample.and_then(|sample| sample.cpu);
     let memory = sample.and_then(|sample| sample.memory);
-    let scheduler = sample.map_or(SchedulerObservation::Unavailable, |sample| sample.scheduler);
+    let scheduler = graph.scheduler();
     for (meter, mut transform, mut visibility) in &mut meters {
         let fraction = match meter.0 {
             Device::Cpu => cpu.map(|percent| percent / 100.0),
@@ -323,7 +544,7 @@ fn present(
         }
     }
     let detail = match selected.0 {
-        Device::Cpu => {
+        Target::Device(Device::Cpu) => {
             let threads = sample
                 .and_then(|sample| sample.threads)
                 .map_or_else(|| "Unavailable".into(), |count| count.to_string());
@@ -333,7 +554,7 @@ fn present(
                 "CPU  /  LOCAL HOST\n\nProcess-available logical threads  {threads}\nHost CPU utilization  {utilization}"
             )
         }
-        Device::Memory => {
+        Target::Device(Device::Memory) => {
             let capacity = memory.map_or_else(
                 || "Memory measurement unavailable".into(),
                 |(total, available)| {
@@ -349,7 +570,7 @@ fn present(
                 "MEMORY  /  LOCAL HOST\n\n{capacity}\n\nHost values may exceed container limits."
             )
         }
-        Device::Adapter => {
+        Target::Device(Device::Adapter) => {
             let identity = adapter.map_or_else(
                 || "Adapter unavailable".into(),
                 |adapter| {
@@ -361,21 +582,22 @@ fn present(
             );
             format!("WGPU RENDER ADAPTER\n\n{identity}\n\nVRAM and inference devices unavailable.")
         }
-        Device::Scheduler => scheduler_detail(scheduler),
+        Target::Device(Device::Scheduler) => scheduler_detail(scheduler),
+        Target::Runtime(node) => runtime_detail(node, graph.models(), scheduler),
     };
     let age = sample.map_or(
         "Host measurements unavailable",
         |_| "Host measurements / live",
     );
     let text = format!(
-        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | Click to select\nF focus | R reset | WASD pan\nRight drag orbit | Scroll zoom"
+        "VESPERA  /  THE MACHINE\n{age}\n\n{detail}\n\n1 CPU | 2 Memory | 3 Adapter\n4 Scheduler | 5 Models | 6 Providers\nClick to select | F focus | R reset\nWASD pan | Right drag orbit\nScroll zoom"
     );
     if readout.0 != text {
         readout.0 = text;
     }
 }
 
-fn scheduler_detail(observation: SchedulerObservation) -> String {
+fn scheduler_detail(observation: &SchedulerObservation) -> String {
     let detail = match observation {
         SchedulerObservation::NoSource => "No local run directory configured".into(),
         SchedulerObservation::Unavailable => "Waiting for a readable scheduler sample".into(),
@@ -392,8 +614,18 @@ fn scheduler_detail(observation: SchedulerObservation) -> String {
                 "Open"
             };
             let health = sample.provider_health;
+            let detail = sample.models.as_ref().map_or_else(
+                || "This sample has aggregate counts only".into(),
+                |models| {
+                    format!(
+                        "Showing {} of {} model reservations",
+                        models.len(),
+                        sample.model_reservations
+                    )
+                },
+            );
             format!(
-                "{state}\nQueue {queue} | waiting {}\nAdmitted {} / {}\nAccounted inference slots {}\n\nEstimated reservations / budget\nRAM {} / {} bytes\nVRAM {} / {} bytes\nModels {} | uncertain {}\n\nCached provider health\nHealthy {} | degraded {}\nUnreachable {} | stale {}\nUnknown {}",
+                "{state}\nQueue {queue} | waiting {}\nAdmitted {} / {}\nAccounted inference slots {}\n\nEstimated reservations / budget\nRAM {} / {} bytes\nVRAM {} / {} bytes\nModels {} | uncertain {}\n{detail}\n\nCached provider health\nHealthy {} | degraded {}\nUnreachable {} | stale {}\nUnknown {}",
                 sample.waiting,
                 sample.admitted,
                 sample.budget.max_concurrent_inferences,
@@ -413,4 +645,52 @@ fn scheduler_detail(observation: SchedulerObservation) -> String {
         }
     };
     format!("SCHEDULER / ONE LOCAL RUNTIME\n\n{detail}")
+}
+
+fn runtime_detail(
+    node: RuntimeNode,
+    models: &[ModelReservationSample],
+    source: &SchedulerObservation,
+) -> String {
+    let status = match source {
+        SchedulerObservation::Sample(sample) if sample.finished => "Final snapshot",
+        SchedulerObservation::Sample(_) => "Recent sample",
+        SchedulerObservation::Stale => "Last scheduler sample expired",
+        _ => "Scheduler sample unavailable",
+    };
+    let detail = match node {
+        RuntimeNode::Model(id) => {
+            if let Some(model) = models.iter().find(|model| model.model_id == id) {
+                let state = match model.state {
+                    ReservationState::Loading => "Loading",
+                    ReservationState::Loaded => "Load acknowledged",
+                    ReservationState::ProviderManaged => "Provider managed",
+                    ReservationState::Unloading => "Unloading",
+                    ReservationState::Unknown => "Residency uncertain",
+                };
+                format!(
+                    "MODEL RESERVATION\n{id}\n\nProvider\n{}\n\n{state}\nIssued local leases {}\nCharged slots {}\n\nEstimated reservation\nRAM {} bytes\nVRAM {} bytes",
+                    model.provider_id,
+                    model.issued_leases,
+                    model.charged_slots,
+                    model.ram_bytes,
+                    model.vram_bytes,
+                )
+            } else {
+                format!("MODEL RESERVATION\n{id}\n\nOutside the displayed sample")
+            }
+        }
+        RuntimeNode::Provider(id) => {
+            let mut count = 0;
+            let mut leases = 0_u64;
+            for model in models.iter().filter(|model| model.provider_id == id) {
+                count += 1;
+                leases += u64::from(model.issued_leases);
+            }
+            format!(
+                "PROVIDER ACCOUNTING\n{id}\n\nDisplayed reservations {count}\nIssued local leases {leases}"
+            )
+        }
+    };
+    format!("{status}\n\n{detail}")
 }

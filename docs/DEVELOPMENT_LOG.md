@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Model and provider reservations in Machine
+
+The unified Atlas checkpoint `fbb47a8f9ab30b0ba4209fceae0e75c92c01ac1c` passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42419896754). Machine now connects the scheduler to providers and model reservations observed in one opted-in runtime. Each model shows its lifecycle state, charged slots, issued leases and estimated memory. Version 2 telemetry includes up to 16 model rows, with charged reservations first. Version 1 still displays aggregate counts.
+
+Windows validation included the offline workspace suite, the SDK doctest, seven graphics tests, strict workspace and graphics Clippy, and the graphics build. A held Ollama-compatible HTTP fixture let the native Atlas window observe an amber loading model with one charged slot and zero issued leases. After load acknowledgement, the same model and provider showed one issued lease and a cyan link. Acknowledged unload removed both nodes and the final sample reported zero reservations. The CLI regression matched both UUIDs, lifecycle and accounting values, verified the legacy schema, and checked final cleanup.
+
+The graph covers one local scheduler and the providers represented by its displayed reservations. Physical VRAM, provider-side progress and local task ownership are outside this sample. Task-to-model links need an ownership projection from the agent runtime.
+
 ## 2026-11-07 — Unified native Atlas navigation
 
 Verified implementation checkpoint `fbb47a8f9ab30b0ba4209fceae0e75c92c01ac1c` was pushed to `main`.

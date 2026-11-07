@@ -13,8 +13,10 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
+pub use vespera_core::ReservationState as ResidencyState;
 use vespera_core::{
-    DomainError, ModelId, ProviderId, ResourceBudget, ResourceKind, ResourceRequest, ResourceUsage,
+    DomainError, ModelId, ModelReservationSample, ProviderId, ResourceBudget, ResourceKind,
+    ResourceRequest, ResourceUsage, SchedulerSample,
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
@@ -83,21 +85,6 @@ pub struct SchedulingPolicy {
     pub default_keep_alive: Duration,
     /// Attempt acknowledged idle eviction when memory admission fails.
     pub evict_idle_on_pressure: bool,
-}
-
-/// Scheduler knowledge of a model's provider lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResidencyState {
-    /// Load in flight; no usable inference lease has been issued.
-    Loading,
-    /// Provider acknowledged explicit load; memory amounts remain estimates.
-    Loaded,
-    /// Provider controls loading; physical residency is unverified.
-    ProviderManaged,
-    /// Unload in flight; memory remains charged.
-    Unloading,
-    /// Error, cancellation or dropped operation left provider state uncertain.
-    Unknown,
 }
 
 /// Accounted model reservation (not physical telemetry).
@@ -202,6 +189,26 @@ struct SchedulerState {
     // Retain the actual provider instance so removal/re-registration cannot redirect unload.
     bound_providers: BTreeMap<ModelId, Arc<dyn InferenceProvider>>,
 }
+
+impl SchedulerState {
+    fn reservation_counts(&self) -> (usize, usize) {
+        let uncertain = self
+            .resident_models
+            .values()
+            .filter(|model| model.residency == ResidencyState::Unknown)
+            .count();
+        (self.resident_models.len(), uncertain)
+    }
+}
+
+/// One consistent accounting snapshot with bounded, credential-free model detail.
+pub struct ReservationObservation {
+    pub budget: ResourceBudget,
+    pub usage: ResourceUsage,
+    pub total: usize,
+    pub uncertain: usize,
+    pub models: Vec<ModelReservationSample>,
+}
 impl fmt::Debug for SchedulerState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SchedulerState")
@@ -282,17 +289,45 @@ impl ResourceScheduler {
     /// Capture reservation counters and model states under one accounting lock.
     pub fn reservation_snapshot(&self) -> (ResourceBudget, ResourceUsage, usize, usize) {
         let state = lock(&self.state);
-        let uncertain = state
+        let (total, uncertain) = state.reservation_counts();
+        (self.policy.budget, state.usage, total, uncertain)
+    }
+
+    pub fn observe_reservations(&self) -> ReservationObservation {
+        let state = lock(&self.state);
+        let (total, uncertain) = state.reservation_counts();
+        let mut leases = BTreeMap::<ModelId, u32>::new();
+        for &model in state.leases.values() {
+            *leases.entry(model).or_default() += 1;
+        }
+        let models = state
             .resident_models
             .values()
-            .filter(|model| model.residency == ResidencyState::Unknown)
-            .count();
-        (
-            self.policy.budget,
-            state.usage,
-            state.resident_models.len(),
+            .filter(|model| model.active_inferences > 0)
+            .chain(
+                state
+                    .resident_models
+                    .values()
+                    .filter(|model| model.active_inferences == 0),
+            )
+            .take(SchedulerSample::MAX_MODELS)
+            .map(|model| ModelReservationSample {
+                model_id: model.model_id,
+                provider_id: model.provider_id,
+                state: model.residency,
+                ram_bytes: model.ram_bytes,
+                vram_bytes: model.vram_bytes,
+                charged_slots: model.active_inferences,
+                issued_leases: leases.get(&model.model_id).copied().unwrap_or_default(),
+            })
+            .collect();
+        ReservationObservation {
+            budget: self.policy.budget,
+            usage: state.usage,
+            total,
             uncertain,
-        )
+            models,
+        }
     }
 
     /// Configured logical context ceiling, not a measured backend allocation.

@@ -169,8 +169,38 @@ impl ResourceUsage {
     }
 }
 
-/// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
+/// Scheduler knowledge of a reservation, distinct from physical residency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservationState {
+    /// Load in flight; no usable inference lease has been issued.
+    Loading,
+    /// Provider acknowledged explicit load; memory amounts remain estimates.
+    Loaded,
+    /// Provider controls loading; physical residency is unverified.
+    ProviderManaged,
+    /// Unload in flight; memory remains charged.
+    Unloading,
+    /// Error, cancellation or dropped operation left provider state uncertain.
+    Unknown,
+}
+
+/// Identity and accounting from one local scheduler reservation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelReservationSample {
+    pub model_id: crate::ModelId,
+    pub provider_id: crate::ProviderId,
+    pub state: ReservationState,
+    pub ram_bytes: u64,
+    pub vram_bytes: u64,
+    /// Charged slots include preparation before a lease has been issued.
+    pub charged_slots: u32,
+    pub issued_leases: u32,
+}
+
+/// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchedulerSample {
     pub schema_version: u32,
@@ -186,12 +216,40 @@ pub struct SchedulerSample {
     pub model_reservations: usize,
     pub uncertain_reservations: usize,
     pub provider_health: ProviderHealthCounts,
+    /// Version 1 carried only aggregate counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<ModelReservationSample>>,
 }
 
 impl SchedulerSample {
-    pub const SCHEMA_VERSION: u32 = 1;
+    pub const SCHEMA_VERSION: u32 = 2;
     pub const FILE_NAME: &str = "scheduler.json";
-    pub const MAX_FILE_BYTES: u64 = 4096;
+    pub const MAX_FILE_BYTES: u64 = 8192;
+    pub const MAX_MODELS: usize = 16;
+
+    pub fn is_supported(&self) -> bool {
+        if self.budget.validate().is_err() {
+            return false;
+        }
+        match (self.schema_version, &self.models) {
+            (1, None) => true,
+            (Self::SCHEMA_VERSION, Some(models)) => {
+                models.len() == self.model_reservations.min(Self::MAX_MODELS)
+                    && models.iter().all(|model| {
+                        model.model_id.validate().is_ok()
+                            && model.provider_id.validate().is_ok()
+                            && model.issued_leases <= model.charged_slots
+                    })
+                    && models
+                        .iter()
+                        .map(|model| model.model_id)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        == models.len()
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Effective observations already held by this runtime's provider registry.

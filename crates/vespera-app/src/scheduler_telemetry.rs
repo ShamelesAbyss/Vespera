@@ -52,8 +52,7 @@ impl Publisher {
                 };
                 let provider_health = registry.provider_health_counts().await;
                 let queue = scheduler.queue_snapshot();
-                let (budget, reserved, model_reservations, uncertain_reservations) =
-                    scheduler.reservation_snapshot();
+                let reservations = scheduler.observe_reservations();
                 let observed_unix_ms = SystemTime::UNIX_EPOCH
                     .elapsed()
                     .map_err(io::Error::other)?
@@ -67,11 +66,12 @@ impl Publisher {
                     waiting: queue.waiting,
                     admitted: queue.active,
                     queue_closed: queue.closed,
-                    budget,
-                    reserved,
-                    model_reservations,
-                    uncertain_reservations,
+                    budget: reservations.budget,
+                    reserved: reservations.usage,
+                    model_reservations: reservations.total,
+                    uncertain_reservations: reservations.uncertain,
                     provider_health,
+                    models: Some(reservations.models),
                 };
                 let directory = directory.clone();
                 tokio::task::spawn_blocking(move || publish(directory, sample))

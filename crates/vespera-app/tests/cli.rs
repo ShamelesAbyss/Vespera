@@ -194,6 +194,7 @@ struct HttpFixture {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
     inference_delay_ms: std::sync::Arc<AtomicU64>,
+    lifecycle_delay_ms: std::sync::Arc<AtomicU64>,
     health_delay_ms: std::sync::Arc<AtomicU64>,
 }
 impl HttpFixture {
@@ -217,6 +218,8 @@ impl HttpFixture {
         let stopped = stop.clone();
         let inference_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
         let delay = inference_delay_ms.clone();
+        let lifecycle_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
+        let lifecycle_delay = lifecycle_delay_ms.clone();
         let health_delay_ms = std::sync::Arc::new(AtomicU64::new(0));
         let health_delay = health_delay_ms.clone();
         let worker = std::thread::spawn(move || {
@@ -298,6 +301,7 @@ impl HttpFixture {
                 let inference =
                     matches!(request.path.as_str(), "/api/chat" | "/v1/chat/completions");
                 let health = matches!(request.path.as_str(), "/api/version" | "/v1/models");
+                let lifecycle = request.path == "/api/generate";
                 capture.lock().unwrap().push(request);
                 if inference {
                     std::thread::sleep(std::time::Duration::from_millis(
@@ -306,6 +310,10 @@ impl HttpFixture {
                 } else if health {
                     std::thread::sleep(std::time::Duration::from_millis(
                         health_delay.load(Ordering::SeqCst),
+                    ));
+                } else if lifecycle {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        lifecycle_delay.load(Ordering::SeqCst),
                     ));
                 }
                 let response = format!(
@@ -321,6 +329,7 @@ impl HttpFixture {
             stop,
             worker: Some(worker),
             inference_delay_ms,
+            lifecycle_delay_ms,
             health_delay_ms,
         }
     }
@@ -735,10 +744,11 @@ fn run_fixture_agent(directory: &ScratchDirectory, config: &str, extra: &[&str])
 #[test]
 fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     use std::time::{Duration, Instant};
-    use vespera_core::SchedulerSample;
+    use vespera_core::{ReservationState, SchedulerSample};
 
     let fixture = HttpFixture::new(false);
     fixture.inference_delay_ms.store(2200, Ordering::SeqCst);
+    fixture.lifecycle_delay_ms.store(900, Ordering::SeqCst);
     let directory = ScratchDirectory::new();
     let target = directory.0.join("observation");
     let path = target.join(SchedulerSample::FILE_NAME);
@@ -757,12 +767,21 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
             )
         });
         let deadline = Instant::now() + Duration::from_secs(12);
+        let mut saw_loading = false;
         let active = loop {
             if let Ok(bytes) = fs::read(&path) {
                 let sample: SchedulerSample =
                     serde_json::from_slice(&bytes).expect("atomic sample");
-                if sample.admitted > 0 && sample.reserved.active_inferences > 0 {
-                    break Some(sample);
+                assert!(sample.is_supported());
+                if let Some(model) = sample.models.as_ref().and_then(|models| models.first()) {
+                    if model.state == ReservationState::Loading {
+                        assert_eq!(model.charged_slots, 1);
+                        assert_eq!(model.issued_leases, 0);
+                        saw_loading = true;
+                    }
+                    if model.issued_leases == 1 {
+                        break Some(sample);
+                    }
                 }
                 if sample.finished {
                     break None;
@@ -773,7 +792,7 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
             }
             std::thread::sleep(Duration::from_millis(50));
         };
-        (child.join().unwrap(), active)
+        (child.join().unwrap(), active, saw_loading)
     });
     assert!(
         output.0.status.success(),
@@ -783,18 +802,37 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     let active = output
         .1
         .expect("inference was observed while its lease was active");
+    assert!(output.2);
     assert_eq!(active.schema_version, SchedulerSample::SCHEMA_VERSION);
     assert!(!active.finished);
     assert_eq!(active.admitted, 1);
     assert_eq!(active.reserved.ram_bytes, 100);
     assert_eq!(active.model_reservations, 1);
     assert_eq!(active.provider_health.healthy, 1);
+    let model = active.models.as_ref().unwrap()[0];
+    assert_eq!(model.state, ReservationState::Loaded);
+    assert_eq!(
+        model.model_id.to_string(),
+        "22222222-2222-4222-8222-222222222222"
+    );
+    assert_eq!(
+        model.provider_id.to_string(),
+        "11111111-1111-4111-8111-111111111111"
+    );
+    assert_eq!((model.ram_bytes, model.vram_bytes), (100, 0));
+    assert_eq!((model.charged_slots, model.issued_leases), (1, 1));
+    let mut legacy = serde_json::to_value(&active).unwrap();
+    legacy["schema_version"] = 1.into();
+    legacy.as_object_mut().unwrap().remove("models");
+    let legacy: SchedulerSample = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.is_supported() && legacy.models.is_none());
     let final_bytes = fs::read(&path).unwrap();
     let final_sample: SchedulerSample = serde_json::from_slice(&final_bytes).unwrap();
     assert!(final_sample.finished && final_sample.queue_closed);
     assert_eq!(final_sample.admitted, 0);
     assert_eq!(final_sample.reserved, Default::default());
     assert_eq!(final_sample.model_reservations, 0);
+    assert!(final_sample.models.unwrap().is_empty());
     assert!(
         !String::from_utf8(final_bytes.clone())
             .unwrap()

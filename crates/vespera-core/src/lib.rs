@@ -32,8 +32,8 @@ pub use id::{AgentId, EventId, MemoryId, ModelId, ProviderId, TaskId};
 pub use memory::{MemoryLayer, MemoryNamespace, MemoryRecord};
 pub use model::{ModelAvailability, ModelDescriptor, ProviderKind};
 pub use resource::{
-    ProviderHealthCounts, ResourceBudget, ResourceEstimate, ResourceKind, ResourceRequest,
-    ResourceUsage, SchedulerSample,
+    ModelReservationSample, ProviderHealthCounts, ReservationState, ResourceBudget,
+    ResourceEstimate, ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample,
 };
 pub use task::{Task, TaskState};
 
