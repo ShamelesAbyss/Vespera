@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-07 — Measured NVIDIA VRAM in Machine
+
+Verified implementation checkpoint `9d07027463237725f2ac9ea451d26074d159b518`, pushed to `main`. The Swarm receipt checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42439913893).
+
+Machine samples device-wide NVIDIA VRAM from NVML and lets users cycle accessible devices by PCI address. The wgpu renderer and scheduler reservations remain separate. Windows formatting, headless workspace tests, graphics tests, both strict Clippy passes and the graphics build passed. Fixtures verified device cycling, removal and unavailable readings. The live probe read the RTX 4070 Laptop GPU at PCI `00000000:01:00.0` with 1,692,897,280 bytes used, 6,641,184,768 free and 8,585,740,288 total. The subsequent NVIDIA utility reading matched at whole MiB resolution. The native window launched. The Windows automation helper returned `foreground window did not report a process id` twice, so interactive validation of the new panel remains open. There was one accessible NVIDIA GPU.
+
 ## 2026-11-07 — Native Swarm acknowledgement evidence
 
 Verified implementation checkpoint `f77d2841c0ac69a69945623071ab30a78467dfee`, pushed to `main`. The Atlas timing checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42439252028).
