@@ -120,11 +120,11 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view
 1. Start Ollama or a compatible local server with a text model available. Open Vespera and choose **Models & Providers**.
 2. Choose the adapter, check the endpoint, and select **Test & discover**. The default native Ollama URL is `http://127.0.0.1:11434`. The compatible preset uses `http://127.0.0.1:1234/v1`, which can be edited.
 3. Choose **New agent** and press the number next to an exposed model. Enter the agent name, role, and credible RAM and VRAM estimates in MiB.
-4. Choose **Run agent task**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
+4. Choose **Run agent task** or press **P**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
 
 For a loopback server that requires authentication, set the token in the desktop launch environment and choose **Credential reference** before discovery. Enter the environment variable name. [PowerShell and Bash setup](docs/CLI.md#discover-local-models-in-the-desktop)
 
-Home also opens Hardware and a starter world before any provider is configured. **F5** returns Home. **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review**. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
+Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review** or press **G** in Models & Providers. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 
 To explore the island, choose **Create or resume world** on Home. Right-drag to orbit, scroll to zoom, and use **WASD** to pan. Click an entity to inspect it. **F** focuses the camera and **R** returns to the overview. **Space** commits one tick and **P** toggles playback. [Living World controls and replay](docs/WORLD_VISUALS.md)
 
@@ -331,6 +331,8 @@ The offline suites use local fixtures. Opt-in live tests require their named dae
 ## Roadmap and project status
 
 Vespera is under active development. The Windows desktop has verified Home, hardware inspection, persistent world controls, native and compatible inference, durable agent history, branded installation and a live two-agent workflow. Headless tests run in Ubuntu CI.
+
+The `0.1.1` Windows x64 internal candidate passed archive integrity, all four Atlas views, and a per-user MSI install, upgrade and restore rehearsal. A Windows SDK client also verified authenticated TLS recovery with an Ubuntu WSL2 broker on the same physical machine. [Candidate validation](docs/RELEASE.md#validated-windows-x64-candidate) · [TLS rehearsal](docs/PROTOCOL.md#rehearse-a-non-loopback-tls-deployment)
 
 The rebuilt Living World was exercised from Home and Atlas on Windows. At 1200×800 on an RTX 4070 Laptop GPU, the development build recorded p95 update intervals of 11.63 ms for the example settlement and 12.66 ms for a 64×64 fixture. The samples cover steady views on that adapter. [Fixture details and measurement scope](docs/WORLD_VISUALS.md#windows-validation)
 

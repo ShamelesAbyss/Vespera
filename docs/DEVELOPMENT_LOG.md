@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-08 — Verified internal Windows x64 candidate
+
+The optimized `0.1.1` package records source checkpoint `3d232672abacbfac1f0467cbbc5c64e58157702d`. Its 41 archive files passed SHA-256 and size verification after extraction. Windows Installer extracted all ten MSI payloads with the staged hashes, and WiX built the corresponding Setup bundle. The archive, MSI and Setup checksums are recorded in the release guide. [Windows candidate](RELEASE.md#validated-windows-x64-candidate)
+
+The extracted executable rendered all four Atlas layers. The final Network view displayed its official header separately and left gaps between the task nodes. Living World committed revision 97, replayed revision 96, then reopened the live state through the CLI. The console-free launcher reopened a fresh test profile's saved world at revision 1. The update sample covers 120 focused frames per layer at 1200×800 on the RTX 4070 Laptop GPU.
+
+The Windows desktop discovered Ollama, registered `hermes3:8b`, and saved a binding in a fresh test profile. The keyboard-control build completed a native task and reopened its durable record. On a copied profile, the two-agent draft and review completed under their saved owners. Workflow history focused Swarm on the new run and showed its three observed links. Ollama reported zero resident models after cleanup. The packaged CLI reported an unreachable loopback provider with exit code 1.
+
+The first hosted MSI rehearsal failed at Windows Installer path parsing. The corrected checkpoint `c2074bc69b60331e0fc045390d3cd9ef11cc7f66` uses a resolved native path and checks product registration through Windows Installer. Both GitHub jobs passed on the corrected checkpoint. The isolated runner installed, upgraded, rejected a downgrade, restored the earlier version, and preserved its committed world. [Windows runner log](https://github.com/ShamelesAbyss/Vespera/actions/runs/42484231483/job/128742500430)
+
 ## 2026-11-08 — Windows candidate stabilization
 
 The `0.1.1` installer checkpoint `594bd40297ed1f14891c0ee84b9bcb251a2ddca2` was pushed to `main`. It gives the candidate a distinct three-component product version and schedules old-product removal inside the MSI transaction. WiX 5.0.2 built the installer and the Windows Installer tables placed removal between initialization and finalization. An administrative extraction matched the checked executable, icon and art-notice hashes. The per-user lifecycle rehearsal runs in the disposable Windows CI profile. The [earlier CI checkpoint](https://github.com/ShamelesAbyss/Vespera/actions/runs/42481878887) passed both Ubuntu and Windows native jobs.

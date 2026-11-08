@@ -156,6 +156,8 @@ The [world policy runner](CLI.md#compare-two-world-policies) compares roster pol
 
 Release only after integrated behavior and limitations are verified.
 
+The `0.1.1` Windows x64 internal candidate passed optimized archive and MSI payload verification, portable backup recovery, and the per-user installer lifecycle on Windows CI. Remaining release qualification includes signing, distribution notices, the owner's licensing decision, and other platforms. [Candidate validation](RELEASE.md#validated-windows-x64-candidate)
+
 - Run offline tests plus an explicit live-provider matrix; record CPU-only operation, optional GPUs, permission checks, and interruption recovery.
 - Validate packaging, owner licensing decision, dependencies, migration/backup recovery, protocol compatibility, and a fresh-user walkthrough.
 - Publish measured performance, resource limits, unresolved issues, upgrade/rollback instructions, and support scope; optimize against recorded baselines.

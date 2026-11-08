@@ -70,7 +70,7 @@ Use a higher three-component product version for each MSI upgrade. The `0.1.1` c
 
 ## Upgrade and recovery
 
-Stage the new binaries in a fresh directory. Stop Vespera writers before making operator backups. Use `memory-admin backup` for the memory store. For stores without a Vespera backup command, preserve a consistent stopped-state SQLite copy, including associated WAL and SHM files when present. Keep each database with its own backup set.
+Stage the new binaries in a fresh directory. Stop Vespera writers before making operator backups. Use `memory-admin backup` for the memory store. For stores without a Vespera backup command, preserve a consistent stopped-state SQLite copy, including associated WAL and SHM files when present. Keep each database with its own backup set. Include the desktop profile's `reduced-motion.enabled` marker when present.
 
 Rehearse the new binaries on copies of the backed-up stores. Verify the catalog, tasks, workflow results and journal cursor ranges you rely on before switching the live paths. Broker migrations run on startup with `--broker-db`. Broker schema 3 adds durable mailboxes. Event schema 8 adds optional mailbox acknowledgement events and requires updated readers when enabled. [Broker recovery and compatibility](PROTOCOL.md#durable-broker-recovery)
 
@@ -83,4 +83,18 @@ For rollback, use the previous binaries with their pre-upgrade backups and compa
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
-The local Windows archive walkthrough verified 27 files, native Atlas on an RTX 4070 Laptop GPU and offline world replay. The broker rollback rehearsal used an actual prior schema 2 binary and a stopped-state copy including its SQLite sidecars. The prior binary refused the migrated store and reopened a restored backup. [Development log](DEVELOPMENT_LOG.md)
+### Validated Windows x64 candidate
+
+The optimized `0.1.1` archive was built from `3d232672abacbfac1f0467cbbc5c64e58157702d`. All 41 manifest entries verified after fresh extraction. The packaged CLI passed configuration validation and host diagnostics. Windows Installer's administrative extraction matched all 10 staged files carried by the MSI.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| `vespera-0.1.1-rc2-windows-x64.zip` | `21896DD54F7E7527EA857400FF79AE9803974E18667A58C1F6603A66F1A0BF78` |
+| `vespera-0.1.1.msi` | `739B1293CB0877EA524D11957A808FA5B9E8DC17DB4132900303161FF727B46B` |
+| `Vespera-Setup-0.1.1.exe` | `2E776B571A69C71F27D6D858EF4AF2E72AD1666BB86A9AD09BED399E95B35CE3` |
+
+The Windows runner installed a per-user MSI fixture at `0.1.0`, upgraded to `0.1.1`, verified the downgrade guard, then removed the candidate and restored the earlier fixture. The saved world stayed byte-identical and reopened at revision 3. That rehearsal used debug payloads built in the runner. The local portable rollback separately reopened an actual `0.1.0` backup with the earlier binary. [Windows CI evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42484231483/job/128742500430)
+
+The final optimized archive opened all four Atlas views. At 1200×800 on an RTX 4070 Laptop GPU with Vulkan and FIFO presentation, p95 application update intervals were 7.81 ms for Machine, 7.50 ms for Intelligence Network, 7.32 ms for Swarm, and 7.35 ms for Living World. Each sample used 120 focused updates after 120 warmup updates. Living World committed revision 97, displayed revision 96 in replay, and reopened the live revision through the packaged CLI. These measurements cover steady views on one adapter.
+
+The Windows walkthrough also covered local model discovery and registration, a live Ollama task, delegated workflow execution, and retained workflow history. Other graphics platforms, deployment between separate physical hosts, signing, and the distribution notice and owner licensing decisions remain release gates. [Development log](DEVELOPMENT_LOG.md)
