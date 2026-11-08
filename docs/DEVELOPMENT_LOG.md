@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Recoverable agent terminal events
+
+Verified implementation checkpoint `06eb99408e908f493a95c9ed3444905de6d10dcc`, pushed to `main`.
+
+New terminal task checkpoints commit the sanitized event envelope, outcome and task state in one SQLite update. An injected journal insert failure left a completed task and recoverable event. Independent CLI invocations published the exact envelope, and retries reused its cursor while retained. A separate injected task checkpoint failure left no terminal envelope. Windows formatting, strict Clippy and offline workspace tests passed. The previous backup checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42434059504).
+
+Live Ollama completed and unloaded a task. Two recovery invocations produced one replay entry with the original event UUID and cursor. The source event is stored for new terminal checkpoints only. Journal retention can remove an entry, and explicit recovery can then append the same event UUID at a new cursor. Broader lifecycle audit and replay remain open in Milestone 9.
+
 ## 2026-11-07 — Verified SQLite memory backup and restore
 
 Verified implementation checkpoint `a5617d48dabb82b9f14023e94a051eca7f525d78`, pushed to `main`.
