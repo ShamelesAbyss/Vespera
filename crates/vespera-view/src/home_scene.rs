@@ -30,6 +30,7 @@ enum Action {
     World,
     Providers,
     Swarm,
+    Workflows,
 }
 
 #[derive(Component)]
@@ -50,7 +51,8 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
     machine_scene::install(&mut app, None, reduced_motion);
     world_scene::install_scene(&mut app, reduced_motion);
     if let Some(dir) = data_dir.clone() {
-        swarm_scene::install_desktop(&mut app, dir, reduced_motion);
+        swarm_scene::install_desktop(&mut app, dir.clone(), reduced_motion);
+        crate::workflow_history_scene::install(&mut app, dir);
     }
     provider_scene::install(&mut app, data_dir);
     atlas::register(&mut app, Layer::Home);
@@ -169,7 +171,8 @@ fn setup(
                         button(Action::Machine, "Open Hardware  [F1]"),
                         button(Action::World, "Create or resume world  [Enter]"),
                         button(Action::Providers, "Models & Providers  [F6]"),
-                        button(Action::Swarm, "Open Swarm  [F3]")
+                        button(Action::Swarm, "Open Swarm  [F3]"),
+                        button(Action::Workflows, "Workflow history  [F7]")
                     ]
                 ),
                 (
@@ -204,6 +207,7 @@ fn setup(
                         Ok(Action::World) => local.open_requested = true,
                         Ok(Action::Providers) => layers.request(Layer::Providers),
                         Ok(Action::Swarm) => layers.request(Layer::Swarm),
+                        Ok(Action::Workflows) => layers.request(Layer::Workflows),
                         Err(_) => {}
                     }
                 }

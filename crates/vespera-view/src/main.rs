@@ -11,6 +11,7 @@ mod scene;
 mod scene_measurement;
 mod swarm_scene;
 mod task_timeline;
+mod workflow_history_scene;
 mod world_scene;
 
 use std::net::SocketAddr;

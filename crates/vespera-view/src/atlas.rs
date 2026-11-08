@@ -12,16 +12,18 @@ pub(super) enum Layer {
     World,
     Home,
     Providers,
+    Workflows,
 }
 
 impl Layer {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Machine,
         Self::Network,
         Self::Swarm,
         Self::World,
         Self::Home,
         Self::Providers,
+        Self::Workflows,
     ];
 
     pub(super) fn name(self) -> &'static str {
@@ -32,6 +34,7 @@ impl Layer {
             Self::World => "Living World",
             Self::Home => "Home",
             Self::Providers => "Providers",
+            Self::Workflows => "Workflows",
         }
     }
 }
@@ -108,6 +111,7 @@ fn setup(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             left: px(18),
+            right: px(18),
             bottom: px(14),
             padding: UiRect::axes(px(12), px(8)),
             ..default()
@@ -143,6 +147,7 @@ fn switch(
             KeyCode::F4,
             KeyCode::F5,
             KeyCode::F6,
+            KeyCode::F7,
         ])
         .find_map(|(layer, key)| {
             (keys.just_pressed(key) && layers.available(layer)).then_some(layer)
@@ -171,7 +176,7 @@ fn switch(
                 Layer::Network => crate::scene::selected_agent(world),
                 Layer::Swarm => crate::swarm_scene::selected_agent(world),
                 Layer::World => crate::world_scene::selected_agent(world),
-                Layer::Home | Layer::Providers => None,
+                Layer::Home | Layer::Providers | Layer::Workflows => None,
             };
             world.resource_mut::<Layers>().incoming = agent;
         });
@@ -193,7 +198,8 @@ fn switch(
         .iter()
         .enumerate()
         .filter(|&(_, layer)| {
-            !matches!(layer, Layer::Home | Layer::Providers) || layers.roots.contains_key(layer)
+            !matches!(layer, Layer::Home | Layer::Providers | Layer::Workflows)
+                || layers.roots.contains_key(layer)
         })
         .map(|(index, layer)| {
             let name = layer.name();

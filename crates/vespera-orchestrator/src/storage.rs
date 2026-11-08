@@ -60,6 +60,12 @@ pub struct StoredWorkflow {
     pub interrupted: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StoredWorkflowSummary {
+    pub id: TaskId,
+    pub interrupted: bool,
+}
+
 pub struct WorkflowStore {
     connection: Mutex<Connection>,
     claimed: Mutex<BTreeSet<TaskId>>,
@@ -253,23 +259,9 @@ impl WorkflowStore {
             .connection
             .lock()
             .map_err(|_| WorkflowStoreError::Database)?;
-        let mut query = connection
-            .prepare("SELECT task_id FROM workflows ORDER BY rowid LIMIT ?1")
-            .map_err(db)?;
-        let tasks = query
-            .query_map([MAX_WORKFLOWS + 1], |row| row.get::<_, String>(0))
-            .map_err(db)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(db)?;
-        if tasks.len() > MAX_WORKFLOWS as usize {
-            return Err(WorkflowStoreError::InvalidCheckpoint);
-        }
         let mut history = Vec::new();
-        for task in tasks {
-            let task = task
-                .parse()
-                .map_err(|_| WorkflowStoreError::InvalidCheckpoint)?;
-            if let Some(events) = audit::read(&connection, task)? {
+        for task in retained_workflows(&connection)?.into_iter().rev() {
+            if let Some(events) = audit::read(&connection, task.id)? {
                 history.extend(events);
             }
         }
@@ -327,6 +319,16 @@ impl WorkflowStore {
     /// Read a checkpoint after acquiring the exclusive database connection.
     pub fn inspect(path: &Path, task_id: TaskId) -> Result<StoredWorkflow, WorkflowStoreError> {
         Self::connect(path, false, false)?.read(task_id)
+    }
+
+    /// List retained workflow identities, newest accepted first, without reading payloads.
+    pub fn recent(path: &Path) -> Result<Vec<StoredWorkflowSummary>, WorkflowStoreError> {
+        let store = Self::connect(path, false, false)?;
+        let connection = store
+            .connection
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
+        retained_workflows(&connection)
     }
 
     pub(crate) fn claim_resume(
@@ -425,6 +427,34 @@ impl WorkflowStore {
     }
 }
 
+fn retained_workflows(
+    connection: &Connection,
+) -> Result<Vec<StoredWorkflowSummary>, WorkflowStoreError> {
+    let mut query = connection
+        .prepare("SELECT task_id, terminal FROM workflows ORDER BY rowid DESC LIMIT ?1")
+        .map_err(db)?;
+    let tasks = query
+        .query_map([MAX_WORKFLOWS + 1], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+        })
+        .map_err(db)?;
+    let tasks = tasks
+        .map(|row| {
+            let (id, terminal) = row.map_err(db)?;
+            Ok(StoredWorkflowSummary {
+                id: id
+                    .parse()
+                    .map_err(|_| WorkflowStoreError::InvalidCheckpoint)?,
+                interrupted: !terminal,
+            })
+        })
+        .collect::<Result<Vec<_>, WorkflowStoreError>>()?;
+    if tasks.len() > MAX_WORKFLOWS as usize {
+        return Err(WorkflowStoreError::InvalidCheckpoint);
+    }
+    Ok(tasks)
+}
+
 fn unix_ms() -> Result<i64, WorkflowStoreError> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -479,6 +509,10 @@ mod tests {
         let store = WorkflowStore::open(&path).unwrap();
         store.begin(&workflow, &report).unwrap();
         drop(store);
+        let summaries = WorkflowStore::recent(&path).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, workflow.task.id);
+        assert!(summaries[0].interrupted);
         let store = WorkflowStore::open_for_resume(&path).unwrap();
         store.ensure_resumable(&workflow).unwrap();
         let (resumed, _) = store.resumable_report(&workflow).unwrap();

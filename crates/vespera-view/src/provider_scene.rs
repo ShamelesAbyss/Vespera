@@ -924,7 +924,7 @@ fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> Stri
     summary
 }
 
-fn preview(value: &str, limit: usize) -> String {
+pub(super) fn preview(value: &str, limit: usize) -> String {
     value
         .split_whitespace()
         .flat_map(|word| word.chars().filter(|c| !c.is_control()).chain([' ']))

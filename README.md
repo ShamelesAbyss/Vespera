@@ -109,7 +109,7 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view
 3. Choose **New agent** and press the number next to an exposed model. Enter the agent name, role, and credible RAM and VRAM estimates in MiB.
 4. Choose **Run agent task**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
 
-Home also opens Hardware and a starter world before any provider is configured. **F5** returns Home. **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review**. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow)
+Home also opens Hardware and a starter world before any provider is configured. **F5** returns Home. **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review**. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 
 ## Commands and examples
 
@@ -317,7 +317,7 @@ Vespera is under active development. The Windows desktop has verified Home, hard
 
 | Next area | Work underway or still open |
 | --- | --- |
-| **Desktop and Atlas** | Broader workflow authoring and history navigation, authenticated provider management, and persistent settings |
+| **Desktop and Atlas** | Broader workflow authoring, authenticated provider management, and persistent settings |
 | **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
 | **Release** | Signing, a supported production installer toolchain, macOS packaging and the owner's license decision |
 

@@ -211,6 +211,32 @@ impl Evidence {
             })
     }
 
+    fn for_workflow(mut self, root: TaskId) -> Self {
+        let mut tasks = BTreeSet::from([root]);
+        self.edges.retain(|edge| match edge.relation {
+            Relation::Delegation {
+                task,
+                workflow: Some(workflow),
+                ..
+            } if workflow == root => {
+                tasks.insert(task);
+                true
+            }
+            Relation::Dependency {
+                upstream,
+                downstream,
+                workflow: Some(workflow),
+            } if workflow == root => {
+                tasks.extend([upstream, downstream]);
+                true
+            }
+            _ => false,
+        });
+        self.outcomes.retain(|(_, task, _)| tasks.contains(task));
+        self.statuses.clear();
+        self
+    }
+
     fn agent_status(&self, agent: AgentId) -> Option<(u64, AgentStatus)> {
         self.statuses
             .iter()
@@ -243,6 +269,9 @@ struct Feed {
     evidence: Evidence,
     frozen: Option<Frozen>,
 }
+
+#[derive(Resource, Default)]
+pub(super) struct WorkflowSelection(pub Option<TaskId>);
 
 struct Frozen {
     captured: Evidence,
@@ -439,6 +468,7 @@ fn install(
         frozen: None,
     })
     .init_resource::<Layout>()
+    .init_resource::<WorkflowSelection>()
     .insert_resource(Focus {
         point: None,
         home_point: Vec3::new(2.0, 0.0, 0.0),
@@ -562,19 +592,28 @@ fn sync(
     mesh: Res<AgentMesh>,
     keys: Res<ButtonInput<KeyCode>>,
     layers: Res<Layers>,
+    mut selected_workflow: ResMut<WorkflowSelection>,
 ) {
     let changed = feed.input.has_changed().unwrap_or(false);
     let toggle = keys.just_pressed(KeyCode::KeyT);
     let earlier = keys.just_pressed(KeyCode::BracketLeft);
     let later = keys.just_pressed(KeyCode::BracketRight) && feed.frozen.is_some();
-    if !(changed || toggle || earlier || later) {
+    if selected_workflow.0.is_some() && keys.just_pressed(KeyCode::Backspace) {
+        selected_workflow.0 = None;
+    }
+    let focus_changed = selected_workflow.is_changed();
+    if !(changed || toggle || earlier || later || focus_changed) {
         return;
     }
     if changed {
         let latest = feed.input.borrow_and_update().clone();
         feed.live = latest;
     }
-    if toggle {
+    if focus_changed {
+        feed.frozen = None;
+        layout.selected = None;
+        layout.filter = Filter::All;
+    } else if toggle {
         feed.frozen = if feed.frozen.is_some() {
             None
         } else {
@@ -590,10 +629,17 @@ fn sync(
     } else if feed.frozen.is_some() {
         return;
     }
-    feed.evidence = feed
-        .frozen
-        .as_ref()
-        .map_or_else(|| feed.live.clone(), Frozen::projection);
+    feed.evidence = feed.frozen.as_ref().map_or_else(
+        || {
+            let live = feed.live.clone();
+            if let Some(root) = selected_workflow.0 {
+                live.for_workflow(root)
+            } else {
+                live
+            }
+        },
+        Frozen::projection,
+    );
     let agents = feed.evidence.visible_agents();
     layout.agents.retain(|id, (entity, _)| {
         if agents.contains(id) {
@@ -710,7 +756,12 @@ fn draw(feed: Res<Feed>, layout: Res<Layout>, mut gizmos: Gizmos) {
     }
 }
 
-fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, With<Readout>>) {
+fn inspect(
+    feed: Res<Feed>,
+    layout: Res<Layout>,
+    selected_workflow: Res<WorkflowSelection>,
+    mut readout: Single<&mut Text, With<Readout>>,
+) {
     if !feed.is_changed() && !layout.is_changed() {
         return;
     }
@@ -809,8 +860,11 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
     } else {
         String::new()
     };
+    let workflow = selected_workflow.0.map_or_else(String::new, |root| {
+        format!("Workflow focus\n{root}\nBackspace clears workflow focus\n")
+    });
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
@@ -822,6 +876,52 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
 mod tests {
     use super::*;
     use vespera_core::WorkflowDependency;
+
+    #[test]
+    fn workflow_focus_keeps_only_the_selected_workflows_links_and_outcomes() {
+        let roots = [TaskId::new(), TaskId::new()];
+        let tasks = [TaskId::new(), TaskId::new()];
+        let owner = AgentId::new();
+        let peers = [AgentId::new(), AgentId::new()];
+        let mut evidence = Evidence::default();
+        for index in 0..2 {
+            for (offset, kind) in [
+                (
+                    1,
+                    EventKind::WorkflowAttemptAccepted {
+                        task_id: tasks[index],
+                        from_agent_id: owner,
+                        to_agent_id: peers[index],
+                        dependencies: vec![],
+                    },
+                ),
+                (
+                    2,
+                    EventKind::WorkflowAttemptFinished {
+                        task_id: tasks[index],
+                        state: TaskState::Completed,
+                    },
+                ),
+                (
+                    3,
+                    EventKind::TaskCompleted {
+                        task_id: roots[index],
+                    },
+                ),
+            ] {
+                let mut event = EventEnvelope::new("workflow-store", 0, kind).unwrap();
+                event.correlation_task_id = Some(roots[index]);
+                evidence.push(index as u64 * 3 + offset, event);
+            }
+        }
+        let focused = evidence.for_workflow(roots[0]);
+        assert_eq!(focused.edges.len(), 1);
+        assert_eq!(focused.visible_agents(), BTreeSet::from([owner, peers[0]]));
+        assert_eq!(focused.outcome(roots[0], 0), Some(TaskState::Completed));
+        assert_eq!(focused.outcome(tasks[0], 0), Some(TaskState::Completed));
+        assert_eq!(focused.outcome(roots[1], 0), None);
+        assert_eq!(focused.outcome(tasks[1], 0), None);
+    }
 
     #[test]
     fn receipt_adds_a_reverse_link_only_at_its_observed_sequence() {
