@@ -51,3 +51,8 @@ jobs:
         run: cargo build --locked -p vespera-view --features graphics --bins
       - name: Portable packaging tests
         run: cargo test --locked -p vespera-app --example package-local
+      - name: Build installer CLI fixture
+        run: cargo build --locked -p vespera-app --bin vespera
+      - name: Rehearse per-user install, upgrade and restore
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1

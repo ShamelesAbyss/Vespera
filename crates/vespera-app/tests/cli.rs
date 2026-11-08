@@ -285,7 +285,10 @@ fn runtime_help_advertises_only_supported_commands_and_requires_execution_inputs
 fn version_is_available() {
     let output = execute(&["--version"]);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("vespera 0.1.0"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(concat!("vespera ", env!("CARGO_PKG_VERSION")))
+    );
 }
 
 #[derive(Clone)]

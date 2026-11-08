@@ -5532,7 +5532,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vespera-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5548,7 +5548,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "http-body-util",
@@ -5570,7 +5570,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "nvml-wrapper",
@@ -5600,7 +5600,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -5612,7 +5612,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5622,7 +5622,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-events"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5634,7 +5634,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5645,7 +5645,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-model-registry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5659,7 +5659,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-orchestrator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5675,7 +5675,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -5692,7 +5692,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-scheduler"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5707,7 +5707,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "reqwest",
@@ -5725,7 +5725,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-view"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bevy",
  "cc",
@@ -5750,7 +5750,7 @@ dependencies = [
 
 [[package]]
 name = "vespera-world"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",

@@ -1,7 +1,8 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Vespera" Manufacturer="Vespera" Version="$(Version)"
            UpgradeCode="81BA1438-9EAE-4707-AB97-66D09CAD81DD" Scope="perUser">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Vespera is already installed." />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Vespera is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="vespera.ico" SourceFile="$(Stage)\assets\branding\vespera.ico" />
     <Property Id="ARPPRODUCTICON" Value="vespera.ico" />
@@ -12,6 +13,9 @@
           <Directory Id="BinFolder" Name="bin" />
           <Directory Id="AssetFolder" Name="assets">
             <Directory Id="BrandingFolder" Name="branding" />
+            <Directory Id="WorldArtFolder" Name="world">
+              <Directory Id="WorldArtSpaceBaseFolder" Name="space-base" />
+            </Directory>
           </Directory>
         </Directory>
       </Directory>
@@ -43,6 +47,12 @@
       </Component>
       <Component Directory="BrandingFolder">
         <File Source="$(Stage)\assets\branding\vespera.icns" />
+      </Component>
+      <Component Directory="WorldArtFolder">
+        <File Source="$(Stage)\assets\world\ATTRIBUTION.md" />
+      </Component>
+      <Component Directory="WorldArtSpaceBaseFolder">
+        <File Source="$(Stage)\assets\world\space-base\LICENSE.txt" />
       </Component>
       <Component Directory="INSTALLFOLDER" Guid="B035E275-8657-4F30-A6F1-09A4C4BB76F4">
         <Shortcut Id="VesperaStart" Directory="ProgramMenuFolder" Name="Vespera"

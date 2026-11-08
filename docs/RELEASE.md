@@ -58,6 +58,16 @@ wix build -arch x64 -ext WixToolset.BootstrapperApplications.wixext -d "Stage=$s
 
 `Vespera-Setup.exe` shows the official icon and installs the desktop, launcher, CLI, and branding assets under `%LOCALAPPDATA%\Programs\Vespera`. Both the Start Menu and desktop shortcuts target the console-free launcher. The desktop's world and agent data stay in its separate per-user data directory. Signing and public distribution remain release gates.
 
+For an authorized local install, close Vespera and back up its data before starting Setup. From the repository root, run the following commands and complete the per-user installer.
+
+```powershell
+Get-FileHash -Algorithm SHA256 target/vespera.msi,target/Vespera-Setup.exe
+Start-Process -FilePath (Resolve-Path target/Vespera-Setup.exe).Path -Wait
+& (Join-Path $env:LOCALAPPDATA 'Programs/Vespera/bin/vespera-launcher.exe')
+```
+
+Use a higher three-component product version for each MSI upgrade. The `0.1.1` candidate supersedes the earlier `0.1.0` rehearsal. Old-product removal is part of the Windows Installer transaction. Use the same committed candidate for both the MSI and its Setup bundle.
+
 ## Upgrade and recovery
 
 Stage the new binaries in a fresh directory. Stop Vespera writers before making operator backups. Use `memory-admin backup` for the memory store. For stores without a Vespera backup command, preserve a consistent stopped-state SQLite copy, including associated WAL and SHM files when present. Keep each database with its own backup set.
