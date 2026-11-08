@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Native Atlas timing and process memory
+
+Verified checkpoint `2b29b4c2df8ce9ae25d02dc0187b0ca4b3a23ccc`, pushed to `main`. The world-scale checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42438908986).
+
+Atlas now emits opt-in bounded update interval samples after 120 warm-up updates. Formatting, strict graphics Clippy, eight executable tests, one library test and the Windows graphics build passed. A debug build rendered at 1200×800 on an RTX 4070 Laptop GPU using Vulkan, NVIDIA driver 617.42 and requested FIFO presentation. The 600-update Machine sample measured p50 7.11 ms, p95 7.86 ms and 500,219,904 resident process bytes. The Living World sample measured p50 8.33 ms, p95 9.00 ms and 515,915,776 resident process bytes. Three Windows GPU Process Memory samples per layer each reported 261,414,912 dedicated and 126,812,160 shared bytes for the Atlas process. These timings measure app updates. The memory counters cover the whole view process with both layers loaded.
+
+The same window rendered the live run's three residents at tick 24 and revision 30. Picking Rowan displayed his two relationships and committed model choice at revision 25. Freezing and stepping backward reached revision 29 while retaining Rowan's selection. The next graphics gate is measuring Network and Swarm with active sources and closing the remaining observability and control gaps.
+
 ## 2026-11-07 — World scale and independent resident replay
 
 Verified checkpoint `07413f24bf0dd8a68855d39de4929e2c82f3eea4`, pushed to `main`. The external mailbox implementation also passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42438622628).
