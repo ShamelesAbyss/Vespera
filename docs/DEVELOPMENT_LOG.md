@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Linux graphics CI and candidate gallery
+
+Checkpoint `330c770aa471d4adeef2294f71f683067e53eb00` added an Ubuntu graphics job. The hosted job passed strict graphics Clippy, desktop tests, both graphics executable builds and a check for exit status 1 with the exact diagnostic when `DISPLAY` is absent. The positive WSLg walkthrough remains separate runtime evidence. [Linux CI job](https://github.com/ShamelesAbyss/Vespera/actions/runs/42527628229/job/128874647373)
+
+Checkpoint `ddea05cf8e60a0cfd9fef36bbc440c59865cd77c` captured the Windows `0.1.1` candidate connected to a scratch broker with two workers, 47 completed tasks and one cancellation at sequence 191. The README gallery uses the native client-area capture. GitHub Markdown rendered its image and existing Mermaid blocks, and GitHub served the committed JPEG. The package test passed and an optimized headless staging run matched the screenshot's manifest size and SHA-256. The previously verified Windows archive remains tied to its recorded source revision and checksum.
+
 ## 2026-11-08 — Linux graphical startup and replay
 
 Checkpoint `268b5dc7514d16cc3c1047b10edb7bb9ee615b35` adds a Linux X11 preflight. On Ubuntu 24.04 WSL2, the graphics build exited with status 1 and an actionable error both without `DISPLAY` and without the X11 keyboard library. Both paths exited before Winit initialization. Strict graphics Clippy passed and the graphics test suite passed 28 tests with one hardware-specific test ignored.
