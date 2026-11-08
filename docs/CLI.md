@@ -676,6 +676,8 @@ In **Models & Providers**, select a saved coordinator, grant it **Allow delegati
 
 Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. Each step receives the preceding result as untrusted input. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
 
+Use **Ctrl+V** in a task or workflow prompt to append text from the system clipboard. The editor flattens line breaks and tabs into spaces and applies the same 1,200-character limit as typing. Pasting keeps the prompt in the editor until you submit it.
+
 ### Browse retained desktop workflows
 
 Open **Workflow history** from Home or press **F7**. Use **Newer workflow** and **Older workflow**, or **Up** and **Down**, to inspect retained checkpoints in acceptance order. The panel shows the root ID, status, coordinator, step owners, and a preview of the selected response. Nonterminal records are marked interrupted after the writer exits. If the database is busy, use **Refresh** or **R** after the writer finishes. The history reader does not start providers.

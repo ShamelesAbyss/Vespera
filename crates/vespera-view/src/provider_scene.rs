@@ -2,7 +2,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use bevy::input::{ButtonState, keyboard::KeyboardInput};
+use bevy::clipboard::Clipboard;
+use bevy::input::{
+    ButtonState,
+    keyboard::{KeyboardFocusLost, KeyboardInput},
+};
 use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
@@ -22,6 +26,7 @@ use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
 const TASKS_PER_PAGE: u32 = 8;
+const PROMPT_LIMIT: usize = 1200;
 const ENDPOINT_LIMIT: usize = 160;
 const OLLAMA: &str = "http://127.0.0.1:11434";
 const COMPATIBLE: &str = "http://127.0.0.1:1234/v1";
@@ -499,20 +504,56 @@ async fn discover(
 
 fn keyboard(
     mut input: MessageReader<KeyboardInput>,
+    mut focus_lost: MessageReader<KeyboardFocusLost>,
+    mut modifiers: Local<ButtonInput<KeyCode>>,
+    mut clipboard: Option<ResMut<Clipboard>>,
     layers: Res<Layers>,
     mut panel: ResMut<Panel>,
 ) {
+    if focus_lost.read().count() != 0 {
+        modifiers.reset_all();
+        input.clear();
+    }
     if layers.active != Layer::Providers || panel.closing {
         if panel.draft.is_some() {
             panel.draft = None;
         }
         input.clear();
+        modifiers.reset_all();
         return;
     }
-    for event in input
-        .read()
-        .filter(|event| event.state == ButtonState::Pressed)
-    {
+    let primary = if cfg!(target_os = "macos") {
+        [KeyCode::SuperLeft, KeyCode::SuperRight]
+    } else {
+        [KeyCode::ControlLeft, KeyCode::ControlRight]
+    };
+    for event in input.read() {
+        if primary.contains(&event.key_code)
+            || matches!(event.key_code, KeyCode::AltLeft | KeyCode::AltRight)
+        {
+            match event.state {
+                ButtonState::Pressed => modifiers.press(event.key_code),
+                ButtonState::Released => modifiers.release(event.key_code),
+            }
+            continue;
+        }
+        if event.state != ButtonState::Pressed {
+            continue;
+        }
+        // Read the modifier events in order. The press and release can share one frame.
+        if modifiers.any_pressed(primary)
+            && !modifiers.any_pressed([KeyCode::AltLeft, KeyCode::AltRight])
+        {
+            if event.key_code == KeyCode::KeyV
+                && !event.repeat
+                && let Some(edit) = panel.draft.as_mut()
+            {
+                paste_prompt(edit, || {
+                    clipboard.as_mut()?.fetch_text().poll_result()?.ok()
+                });
+            }
+            continue;
+        }
         if panel.draft.is_none() {
             if !event.repeat {
                 if event.key_code == KeyCode::Escape {
@@ -556,6 +597,32 @@ fn keyboard(
                 }
             }
         }
+    }
+}
+
+fn paste_prompt(edit: &mut Edit, read: impl FnOnce() -> Option<String>) {
+    let prompt = match edit {
+        Edit::Prompt(prompt) => prompt,
+        Edit::Workflow {
+            fields,
+            index: index @ (1 | 2),
+        } => &mut fields[*index],
+        Edit::Chain(draft) if draft.assignee.is_some() => &mut draft.input,
+        _ => return,
+    };
+    if let Some(text) = read() {
+        prompt.extend(
+            text.chars()
+                .map(|c| {
+                    if matches!(c, '\r' | '\n' | '\t') {
+                        ' '
+                    } else {
+                        c
+                    }
+                })
+                .filter(|c| !c.is_control())
+                .take(PROMPT_LIMIT.saturating_sub(prompt.chars().count())),
+        );
     }
 }
 
@@ -678,14 +745,16 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
         Edit::Registration { fields, index, .. } => {
             (&mut fields[*index], 8, |c| c.is_ascii_digit())
         }
-        Edit::Prompt(value) => (value, 1200, |c| !c.is_control()),
+        Edit::Prompt(value) => (value, PROMPT_LIMIT, |c| !c.is_control()),
         Edit::Workflow { fields, index: 0 } => (&mut fields[0], 2, |c| c.is_ascii_digit()),
-        Edit::Workflow { fields, index } => (&mut fields[*index], 1200, |c| !c.is_control()),
+        Edit::Workflow { fields, index } => {
+            (&mut fields[*index], PROMPT_LIMIT, |c| !c.is_control())
+        }
         Edit::Chain(draft) if draft.count == Some(draft.steps.len()) => return,
         Edit::Chain(draft) if draft.assignee.is_none() => {
             (&mut draft.input, 2, |c| c.is_ascii_digit())
         }
-        Edit::Chain(draft) => (&mut draft.input, 1200, |c| !c.is_control()),
+        Edit::Chain(draft) => (&mut draft.input, PROMPT_LIMIT, |c| !c.is_control()),
     };
     match event.key_code {
         KeyCode::Backspace => {
@@ -1415,6 +1484,80 @@ mod tests {
     }
 
     #[test]
+    fn paste_only_reads_prompt_fields_and_respects_the_character_limit() {
+        let mut prompt = Edit::Prompt("x".repeat(PROMPT_LIMIT - 4));
+        paste_prompt(&mut prompt, || Some("é\n\u{0}β\tz".into()));
+        assert!(
+            matches!(prompt, Edit::Prompt(text) if text.chars().count() == PROMPT_LIMIT && text.ends_with("é β "))
+        );
+
+        let mut chain = Edit::Chain(ChainDraft {
+            count: Some(2),
+            assignee: Some(0),
+            ..default()
+        });
+        paste_prompt(&mut chain, || Some("Use the preceding result".into()));
+        assert!(matches!(chain, Edit::Chain(draft) if draft.input == "Use the preceding result"));
+
+        for mut edit in [
+            Edit::Credential(String::new()),
+            Edit::Endpoint(String::new()),
+            Edit::Workflow {
+                fields: Default::default(),
+                index: 0,
+            },
+            Edit::Chain(ChainDraft::default()),
+        ] {
+            paste_prompt(&mut edit, || panic!("clipboard read outside a prompt"));
+        }
+    }
+
+    #[test]
+    fn a_same_frame_paste_chord_does_not_type_the_shortcut_character() {
+        let mut app = App::new();
+        app.insert_resource(Layers::new(Layer::Providers))
+            .add_message::<KeyboardInput>()
+            .add_message::<KeyboardFocusLost>();
+        install(&mut app, None);
+        app.world_mut().resource_mut::<Panel>().draft = Some(Edit::Prompt(String::new()));
+        // The hosted Linux job supplies a private Xvfb clipboard.
+        let expected = if cfg!(target_os = "linux")
+            && std::env::var_os("VESPERA_TEST_ISOLATED_X11_CLIPBOARD").is_some()
+        {
+            let mut clipboard = Clipboard::default();
+            clipboard.set_text("native fixture ").unwrap();
+            app.insert_resource(clipboard);
+            "native fixture v"
+        } else {
+            "v"
+        };
+        let primary = if cfg!(target_os = "macos") {
+            KeyCode::SuperLeft
+        } else {
+            KeyCode::ControlLeft
+        };
+        for (key_code, state, text) in [
+            (primary, ButtonState::Pressed, None),
+            (KeyCode::KeyV, ButtonState::Pressed, Some("v".into())),
+            (primary, ButtonState::Released, None),
+            (KeyCode::KeyV, ButtonState::Pressed, Some("v".into())),
+        ] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code,
+                logical_key: Key::Character("v".into()),
+                state,
+                text,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        }
+        app.world_mut().run_system_once(keyboard).unwrap();
+        assert!(
+            matches!(&app.world().resource::<Panel>().draft, Some(Edit::Prompt(text)) if text == expected)
+        );
+    }
+
+    #[test]
     fn closing_cancels_provider_work_and_waits_for_its_result() {
         let mut app = App::new();
         app.insert_resource(Layers::new(Layer::Providers))
@@ -1492,7 +1635,8 @@ mod tests {
             });
             let mut app = App::new();
             app.insert_resource(Layers::new(Layer::Providers))
-                .add_message::<KeyboardInput>();
+                .add_message::<KeyboardInput>()
+                .add_message::<KeyboardFocusLost>();
             install(&mut app, None);
             {
                 let mut panel = app.world_mut().resource_mut::<Panel>();
