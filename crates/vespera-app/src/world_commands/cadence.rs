@@ -11,8 +11,8 @@ use vespera_world::{
     ReasoningPhase, ReasoningStatus, World, WorldChange, WorldError, WorldFence, WorldStore,
 };
 
-use super::{DecisionAttempt, execution_options, plan};
-use crate::AppError;
+use super::{DecisionAttempt, execution_options, plan, publish_advance};
+use crate::{AppError, event_commands};
 
 #[derive(Debug, Args)]
 pub(super) struct RunArgs {
@@ -42,6 +42,9 @@ pub(super) struct RunArgs {
     resume: bool,
     #[arg(long)]
     unload_after: bool,
+    /// Publish each committed tick to an existing local journal.
+    #[arg(long)]
+    event_journal: Option<PathBuf>,
 }
 
 #[derive(Default, Serialize)]
@@ -147,15 +150,18 @@ async fn advance(
     progress: &mut Progress,
 ) -> Result<(), AppError> {
     let timeout = Duration::from_secs(args.timeout_seconds);
+    let mut journal = event_commands::prepare(args.event_journal.clone()).await?;
     for tick in 1..=args.ticks {
         tokio::time::sleep(Duration::from_millis(args.tick_ms)).await;
-        world = WorldStore::commit(
+        let (advanced, event) = WorldStore::commit_observed(
             database,
             WorldFence::Snapshot(&world),
             WorldChange::Advance { ticks: 1 },
         )?;
+        world = advanced;
         progress.committed_ticks = tick;
-        progress.last_committed_revision = world.snapshot().revision;
+        progress.last_committed_revision = world.revision();
+        publish_advance(journal.as_mut(), event, progress.last_committed_revision)?;
         if tick % args.reason_every != 0 {
             continue;
         }

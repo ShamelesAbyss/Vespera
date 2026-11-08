@@ -4,8 +4,9 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 use crate::{ReasoningStatus, World, WorldError};
-use vespera_core::TaskId;
+use vespera_core::{EventEnvelope, TaskId};
 
+mod audit;
 mod history;
 use crate::WorldChange;
 pub use history::Replay;
@@ -165,6 +166,7 @@ impl WorldStore {
             operation(world)?;
             Ok(None)
         })
+        .map(|(world, _)| world)
     }
 
     /// Apply and record a typed transition in the same transaction as the world state.
@@ -173,6 +175,15 @@ impl WorldStore {
         fence: WorldFence<'_>,
         change: WorldChange,
     ) -> Result<World, WorldError> {
+        Self::commit_observed(path, fence, change).map(|(world, _)| world)
+    }
+
+    /// Return the exact event committed with a tick-advancing transition.
+    pub fn commit_observed(
+        path: &Path,
+        fence: WorldFence<'_>,
+        change: WorldChange,
+    ) -> Result<(World, Option<EventEnvelope>), WorldError> {
         Self::write(path, |world| {
             if match fence {
                 WorldFence::Current => false,
@@ -184,6 +195,18 @@ impl WorldStore {
             change.apply(world)?;
             Ok(Some(change))
         })
+    }
+
+    /// Read the retained advance event for a specific committed world revision.
+    pub fn advance_event(path: &Path, revision: u64) -> Result<Option<EventEnvelope>, WorldError> {
+        let mut connection = open(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let tx = connection.transaction().map_err(db)?;
+        if identity(&tx)? != (APPLICATION_ID, VERSION) {
+            return Err(WorldError::Format);
+        }
+        let event = audit::read(&tx, revision)?;
+        tx.commit().map_err(db)?;
+        Ok(event)
     }
 
     pub fn replay(path: &Path, revision: Option<u64>) -> Result<Replay, WorldError> {
@@ -212,7 +235,7 @@ impl WorldStore {
     fn write(
         path: &Path,
         operation: impl FnOnce(&mut World) -> Result<Option<WorldChange>, WorldError>,
-    ) -> Result<World, WorldError> {
+    ) -> Result<(World, Option<EventEnvelope>), WorldError> {
         let mut connection = open(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -224,13 +247,18 @@ impl WorldStore {
         if world != before {
             history::append(&tx, &before, &world, change)?;
         }
+        let event = if world.tick > before.tick {
+            Some(audit::append(&tx, world.revision, world.tick)?)
+        } else {
+            None
+        };
         tx.execute(
             "UPDATE world_state SET payload = ?1 WHERE singleton = 1",
             [bytes],
         )
         .map_err(db)?;
         tx.commit().map_err(db)?;
-        Ok(world)
+        Ok((world, event))
     }
 }
 

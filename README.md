@@ -144,7 +144,7 @@ For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in 
 | `agent-task-history` | Inspect durable task ownership and outcomes offline |
 | `agent-inbox` | Send or list private durable messages with current communication grants |
 | `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
-| `events` | Initialize, replay or follow a local journal and recover committed agent terminal events |
+| `events` | Initialize, replay or follow a local journal and recover committed agent or simulation events |
 | `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |
 | `memory-admin` | Verified whole-database backup and restore to new files |
 

@@ -37,6 +37,99 @@ fn json(output: Output) -> Value {
 }
 
 #[test]
+fn world_advance_event_recovers_after_journal_failure_and_rolls_back_with_world() {
+    use vespera_core::EventKind;
+    use vespera_events::Journal;
+    use vespera_world::WorldStore;
+
+    let database = Database::new();
+    let journal = Database::new();
+    let journal_path = journal.0.to_str().unwrap();
+    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/world.example.json");
+    json(world(
+        &database,
+        &["init", "--spec", spec.to_str().unwrap()],
+    ));
+    assert!(WorldStore::advance_event(&database.0, 0).unwrap().is_none());
+    drop(Journal::initialize(&journal.0, 8).unwrap());
+    let injector = rusqlite::Connection::open(&journal.0).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_event BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let failed = world(
+        &database,
+        &["advance", "--ticks", "2", "--event-journal", journal_path],
+    );
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("world revision 2 committed"));
+    let committed: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(committed["tick"], 2);
+    assert_eq!(json(world(&database, &["inspect"])), committed);
+    let mut reader = Journal::open_reader(&journal.0).unwrap();
+    assert!(reader.replay(None, 8).unwrap().entries.is_empty());
+    injector
+        .execute_batch("DROP TRIGGER reject_fixture_event")
+        .unwrap();
+    let recover = |revision| {
+        Command::new(env!("CARGO_BIN_EXE_vespera"))
+            .args([
+                "events",
+                "--journal",
+                journal_path,
+                "recover-world-advance",
+                "--database",
+            ])
+            .arg(&database.0)
+            .args(["--revision", revision])
+            .output()
+            .unwrap()
+    };
+    assert_eq!(json(recover("2")), json(recover("2")));
+    assert!(!recover("1").status.success());
+    assert_eq!(
+        json(world(
+            &database,
+            &["advance", "--event-journal", journal_path]
+        ))["tick"],
+        3
+    );
+    let entries = reader.replay(None, 8).unwrap().entries;
+    assert_eq!(entries.len(), 2);
+    let mut identities = Vec::new();
+    for (revision, entry) in [2, 3].into_iter().zip(entries) {
+        assert_eq!(
+            WorldStore::advance_event(&database.0, revision).unwrap(),
+            Some(entry.event.clone())
+        );
+        let EventKind::SimulationAdvanced {
+            simulation_id,
+            tick,
+        } = entry.event.kind
+        else {
+            panic!("expected simulation advance")
+        };
+        assert_eq!(tick, revision);
+        assert!(entry.event.correlation_task_id.is_none());
+        identities.push(simulation_id);
+    }
+    assert_eq!(identities[0], identities[1]);
+
+    let world_injector = rusqlite::Connection::open(&database.0).unwrap();
+    world_injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_world BEFORE UPDATE ON world_state
+         BEGIN SELECT RAISE(ABORT, 'fixture world failure'); END;",
+        )
+        .unwrap();
+    assert!(!world(&database, &["advance"]).status.success());
+    assert_eq!(json(world(&database, &["inspect"]))["revision"], 3);
+    assert!(WorldStore::advance_event(&database.0, 4).unwrap().is_none());
+}
+
+#[test]
 fn replay_retention_keeps_a_deterministic_checkpoint_and_labels_older_gaps() {
     use vespera_world::{ReplayDirection, World, WorldStore};
 

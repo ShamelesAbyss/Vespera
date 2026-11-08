@@ -337,6 +337,11 @@ enum AppError {
     SchedulerTelemetry(std::io::Error),
     #[error(transparent)]
     World(#[from] vespera_world::WorldError),
+    #[error("world revision {revision} committed but event publication failed: {source}")]
+    WorldEventPublication {
+        revision: u64,
+        source: vespera_events::JournalError,
+    },
     #[error("model did not return one valid world action choice")]
     InvalidWorldChoice,
     #[error(transparent)]

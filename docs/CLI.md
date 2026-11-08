@@ -23,7 +23,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
-| `events` | Initialize, replay, follow or recover a terminal event into a local journal | None. Local SQLite access. |
+| `events` | Initialize, replay or follow a local journal and recover agent or world events | None. Local SQLite access. |
 
 Every command supports `--help`. The root supports `--version`. Provider,
 inventory and inference commands use `--config <PATH>` (default
@@ -375,14 +375,14 @@ cargo run --locked -p vespera-app -- world --database data/world.sqlite3 inspect
 | --- | --- |
 | `init` | `--spec <path>` reads a strict JSON world up to 64 KiB |
 | `inspect` | Returns committed public world state as JSON |
-| `advance` | `--ticks <1..1000>` defaults to one. All requested ticks commit together |
+| `advance` | `--ticks <1..1000>` defaults to one. All requested ticks commit together. Optional `--event-journal <PATH>` publishes the advance |
 | `set-active` | `--resident <UUID> --active <true/false> --revision <n>` suspends or reactivates a resident |
 | `move` | `--resident <UUID> --x <n> --z <n> --revision <n>` moves an active resident to an adjacent cell |
 | `memory` | `--resident <UUID>` reads that resident's last 24 recorded actions or encounters as the local database operator |
 
 The specification sets a seed, grid dimensions of 2 to 64 cells per axis, one depot, 1 to 32 residents and up to 64 resource sites. Roles are `forager` and `builder`. Seed and tick determine a rotating resident turn order. Foragers gather from the nearest stocked site, carry up to four units and deliver to the depot. Builders spend six depot units per shelter. Active residents within one cell of each other accumulate encounter counts. Sites regenerate per tick. [Example world specification](../config/world.example.json)
 
-Logical ticks are independent of wall time. A control increments the revision without advancing the tick. Controls reject stale revisions, and an inactive resident stays in place while the rest of the world advances. Public snapshots omit resident memories. The local database is operator-owned and its filesystem permissions govern access. Model-driven resident actions remain in development.
+Logical ticks are independent of wall time. A control increments the revision without advancing the tick. Controls reject stale revisions, and an inactive resident stays in place while the rest of the world advances. Public snapshots omit resident memories. The local database is operator-owned and its filesystem permissions govern access.
 
 ### Graphical world controls
 
@@ -417,6 +417,10 @@ cargo run --locked -p vespera-app -- world --database $world run --revision $sta
 `--ticks` and `--reason-every` accept 1–1000. Choose values that schedule 1–32 model requests per run. `--tick-ms` adds a delay of 0–5000 ms before each tick and defaults to 200. `--timeout-seconds` applies to each model request, accepts 1–120 and defaults to 10. `--resume` activates configured agents once at startup. `--unload-after` requests cleanup of idle model reservations at the end.
 
 This command commits ticks and legal choices. At each reasoning boundary it waits up to the request deadline before resuming ticks. Invalid choices, provider failures and request deadlines appear in the attempt report, and the run continues with deterministic ticks. A competing world writer can make a pending action or next tick stale. The run then stops, preserving commits already made. Ctrl+C also stops the run and reports its committed progress. Use the read-only 3D window to observe changes from the running CLI.
+
+Add `--event-journal <PATH>` to publish each committed tick to an existing
+local journal. A publication failure stops the run and reports the last
+committed revision. See [world event recovery](#recover-a-world-advance-event).
 
 In World Mode, an amber outline marks a resident preparing a model request, which can include health checks, queueing and loading. A cyan outline marks an observed active local inference lease. Select the resident to inspect the phase and task. This is runtime evidence alongside simulated state. It describes local activity, and provider-side progress is unavailable. Short phases can fall between samples. The status leaves the view after completion, a revision change or two seconds without a heartbeat. The last committed choice stays in the resident inspector. This live display applies to scheduled runs.
 
@@ -658,3 +662,24 @@ publish the same event UUID at a new cursor. Replay order is publication
 order, so a recovered event can carry an earlier occurrence timestamp.
 Interrupted tasks and tasks from older schemas without an envelope cannot
 produce a terminal event through this command.
+
+### Recover a world advance event
+
+```powershell
+$world = 'data/world.sqlite3'
+$journal = 'data/events.sqlite3'
+.\target\release\vespera.exe world --database $world advance --ticks 3 --event-journal $journal
+.\target\release\vespera.exe events --journal $journal recover-world-advance --database $world --revision $revision
+```
+
+Set `$revision` to the committed world revision reported by the advance or
+scheduled run. The world database retains its last 512 tick-advancing commits
+as metadata-only envelopes. A batched advance records one event with the
+final logical tick. Movement, activity changes and model decisions can advance
+the revision without advancing the tick. Recover by world revision, which
+can differ from the tick shown in the event.
+
+The envelope includes a stable simulation UUID, the logical tick and the
+commit timestamp. Recovery keeps the original event UUID. If the journal
+already retains the event, the command returns its existing cursor. Older
+world revisions written before event storage was added have no envelope.

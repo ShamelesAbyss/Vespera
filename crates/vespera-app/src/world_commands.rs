@@ -7,13 +7,14 @@ use clap::{ArgAction, Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use vespera_agents::ExecutionOptions;
 use vespera_app::runtime::{CleanupReport, RuntimeError, VesperaRuntime};
-use vespera_core::{AgentId, Capability, Task, TaskId, TaskState};
+use vespera_core::{AgentId, Capability, EventEnvelope, Task, TaskId, TaskState};
+use vespera_events::{Journal, JournalError};
 use vespera_providers::CancellationToken;
 use vespera_world::{
     Decision, DecisionSource, Position, World, WorldChange, WorldError, WorldFence, WorldStore,
 };
 
-use crate::AppError;
+use crate::{AppError, event_commands};
 
 mod cadence;
 
@@ -45,6 +46,9 @@ enum WorldCommand {
     Advance {
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=1000))]
         ticks: u32,
+        /// Publish the committed tick event to an existing local journal.
+        #[arg(long)]
+        event_journal: Option<PathBuf>,
     },
     /// Activate or suspend one resident at an observed world revision.
     SetActive {
@@ -123,11 +127,19 @@ pub(super) async fn run(args: WorldArgs) -> Result<(), AppError> {
             );
             return Ok(());
         }
-        WorldCommand::Advance { ticks } => WorldStore::commit(
-            database,
-            WorldFence::Current,
-            WorldChange::Advance { ticks },
-        )?,
+        WorldCommand::Advance {
+            ticks,
+            event_journal,
+        } => {
+            let mut journal = event_commands::prepare(event_journal).await?;
+            let (world, event) = WorldStore::commit_observed(
+                database,
+                WorldFence::Current,
+                WorldChange::Advance { ticks },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&world.snapshot())?);
+            return publish_advance(journal.as_mut(), event, world.revision());
+        }
         WorldCommand::SetActive {
             resident,
             active,
@@ -159,6 +171,20 @@ pub(super) async fn run(args: WorldArgs) -> Result<(), AppError> {
         WorldCommand::Run(args) => return cadence::run(database, args).await,
     };
     println!("{}", serde_json::to_string_pretty(&world.snapshot())?);
+    Ok(())
+}
+
+fn publish_advance(
+    journal: Option<&mut Journal>,
+    event: Option<EventEnvelope>,
+    revision: u64,
+) -> Result<(), AppError> {
+    if let Some(journal) = journal {
+        event
+            .ok_or(JournalError::Invalid("missing world advance event"))
+            .and_then(|event| journal.append(&event))
+            .map_err(|source| AppError::WorldEventPublication { revision, source })?;
+    }
     Ok(())
 }
 

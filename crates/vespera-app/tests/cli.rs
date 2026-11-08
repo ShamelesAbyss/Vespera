@@ -540,6 +540,8 @@ fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
         let config_path = directory.write_config(&format!("{config}\n[[agents]]{peer}"));
         let database = directory.0.join(format!("{name}.sqlite3"));
         WorldStore::initialize(&database, &initial).unwrap();
+        let journal = directory.0.join(format!("{name}-events.sqlite3"));
+        drop(vespera_events::Journal::initialize(&journal, 8).unwrap());
         let output = execute(&[
             "world",
             "--database",
@@ -561,6 +563,8 @@ fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
             PEER,
             "--resume",
             "--unload-after",
+            "--event-journal",
+            journal.to_str().unwrap(),
         ]);
         assert!(
             output.status.success(),
@@ -579,6 +583,14 @@ fn world_run_rotates_sparse_decisions_and_keeps_ticking_on_invalid_output() {
         let snapshot = persisted.snapshot();
         assert_eq!(snapshot.tick, 5);
         assert_eq!(snapshot.revision, expected_revision);
+        let mut reader = vespera_events::Journal::open_reader(&journal).unwrap();
+        let entries = reader.replay(None, 8).unwrap().entries;
+        assert_eq!(entries.len(), 5);
+        for (index, entry) in entries.into_iter().enumerate() {
+            assert!(
+                matches!(entry.event.kind, vespera_core::EventKind::SimulationAdvanced { tick, .. } if tick == index as u64 + 1)
+            );
+        }
         let replay = execute(&["world", "--database", database.to_str().unwrap(), "replay"]);
         assert!(
             replay.status.success(),

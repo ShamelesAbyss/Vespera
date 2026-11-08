@@ -33,6 +33,13 @@ enum EventCommand {
         #[arg(long)]
         task: TaskId,
     },
+    /// Publish the retained tick-advance event for a committed world revision.
+    RecoverWorldAdvance {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        revision: u64,
+    },
     /// Read events after a cursor and print one JSON page.
     Replay {
         /// Cursor in journal-UUID:sequence form. Omit for the oldest retained event.
@@ -67,6 +74,13 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
         EventCommand::RecoverAgentTask { task_store, task } => {
             let event = vespera_agents::AgentTaskStore::inspect_terminal_event(&task_store, task)?
                 .ok_or(JournalError::Invalid("durable terminal event unavailable"))?;
+            let cursor = Journal::open_writer(&args.journal)?.append(&event)?;
+            Ok(serde_json::json!({"cursor": cursor, "event_id": event.event_id}))
+        }
+        EventCommand::RecoverWorldAdvance { database, revision } => {
+            let event = vespera_world::WorldStore::advance_event(&database, revision)?.ok_or(
+                JournalError::Invalid("durable world advance event unavailable"),
+            )?;
             let cursor = Journal::open_writer(&args.journal)?.append(&event)?;
             Ok(serde_json::json!({"cursor": cursor, "event_id": event.event_id}))
         }
