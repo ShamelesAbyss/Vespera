@@ -25,15 +25,17 @@ $previous = '0.1.0'
 if ([version]$version -le [version]$previous) { throw 'Expected a newer installer version.' }
 
 foreach ($productVersion in $previous,$version) {
+    $package = Join-Path $fixture "$productVersion.msi"
     $wixArguments = @('build','-arch','x64','-d',"Stage=$stage",'-d',"Version=$productVersion",
-        '-o',"$fixture/$productVersion.msi",'packaging/windows/vespera.wxs')
+        '-o',$package,'packaging/windows/vespera.wxs')
     & "$fixture/tools/wix.exe" @wixArguments
     if ($LASTEXITCODE -ne 0) { throw "MSI build failed for $productVersion." }
 }
 
 function Invoke-Installer($Operation, $ProductVersion, $Phase, $Expected = 0) {
     $log = Join-Path $fixture "$Phase.log"
-    $installerArguments = '{0} "{1}" /qn /norestart /l*v "{2}"' -f $Operation, "$fixture/$ProductVersion.msi", $log
+    $package = (Resolve-Path -LiteralPath (Join-Path $fixture "$ProductVersion.msi")).Path
+    $installerArguments = '{0} "{1}" /qn /norestart /l*v "{2}"' -f $Operation, $package, $log
     $process = Start-Process msiexec.exe -ArgumentList $installerArguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne $Expected) {
         Get-Content -LiteralPath $log -Tail 45
@@ -41,12 +43,17 @@ function Invoke-Installer($Operation, $ProductVersion, $Phase, $Expected = 0) {
     }
 }
 
+$msiInspector = New-Object -ComObject WindowsInstaller.Installer
+$upgradeCode = '{81BA1438-9EAE-4707-AB97-66D09CAD81DD}'
 function Assert-Version($Expected) {
-    $versions = @(Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/*' |
-        Where-Object DisplayName -eq 'Vespera' | ForEach-Object DisplayVersion)
-    if ($versions.Count -ne 1 -or [version]$versions[0] -ne [version]$Expected) {
+    $products = $msiInspector.GetType().InvokeMember('RelatedProducts','GetProperty',$null,$msiInspector,@($upgradeCode))
+    $count = $products.GetType().InvokeMember('Count','GetProperty',$null,$products,$null)
+    if ($count -ne 1) {
         throw "Expected one installed product at version $Expected."
     }
+    $product = $products.GetType().InvokeMember('Item','GetProperty',$null,$products,@(0))
+    $actual = $msiInspector.GetType().InvokeMember('ProductInfo','GetProperty',$null,$msiInspector,@($product,'VersionString'))
+    if ([version]$actual -ne [version]$Expected) { throw "Expected version $Expected, found $actual." }
 }
 
 Invoke-Installer /i $previous 'install'
