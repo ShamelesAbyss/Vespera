@@ -10,7 +10,7 @@ cargo tree --locked -p vespera-app -p vespera-view --features vespera-view/graph
 
 For a headless candidate, omit `-p vespera-view --features vespera-view/graphics`. On Linux, use the target triple for the build. The tree reports declared license expressions, including build dependencies. Review license files and required notices for the actual artifact before distribution.
 
-The Windows x64 `0.1.1` candidate inventory contained 436 distinct package/version rows after removing repeated nodes, including 14 workspace packages. All 422 third-party rows declared a license expression. This count covers Cargo declarations. The distribution notice review covers the actual binaries and art separately.
+The Windows x64 `0.1.1` candidate inventory contained 436 distinct package/version rows after removing repeated nodes, including 14 workspace packages. All 422 third-party rows declared a license expression. The [recorded inventory](../licenses/windows-x64-cargo-inventory.txt) removes workspace rows and Cargo's repeated-node suffix. The [third-party notices](../THIRD_PARTY_NOTICES.md) track embedded assets and outstanding artifact-specific review.
 
 ## Introduced dependencies
 

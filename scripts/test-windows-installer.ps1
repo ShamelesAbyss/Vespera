@@ -15,7 +15,8 @@ $stage = Join-Path $fixture 'stage'
 New-Item -ItemType Directory -Path "$stage/bin","$stage/assets" | Out-Null
 Copy-Item -LiteralPath @('target/debug/vespera.exe','target/debug/vespera-view.exe','target/debug/vespera-launcher.exe') -Destination "$stage/bin"
 Copy-Item -LiteralPath 'assets/branding','assets/world' -Destination "$stage/assets" -Recurse
-Copy-Item -LiteralPath 'LICENSE' -Destination $stage
+Copy-Item -LiteralPath 'LICENSE','THIRD_PARTY_NOTICES.md' -Destination $stage
+Copy-Item -LiteralPath 'licenses' -Destination $stage -Recurse
 
 $env:DOTNET_ROLL_FORWARD = 'Major'
 dotnet tool install wix --version 5.0.2 --tool-path "$fixture/tools"
@@ -78,6 +79,12 @@ $worldHash = (Get-FileHash -LiteralPath $world).Hash
 
 Invoke-Installer /i $version 'upgrade'
 Assert-Version $version
+foreach ($notice in 'LICENSE','THIRD_PARTY_NOTICES.md','licenses/FiraMono-LICENSE.txt','licenses/windows-x64-cargo-inventory.txt') {
+    if ((Get-FileHash -LiteralPath (Join-Path $installed $notice)).Hash -ne
+        (Get-FileHash -LiteralPath (Join-Path $stage $notice)).Hash) {
+        throw "Installed notice differs from staged file: $notice"
+    }
+}
 Invoke-Installer /i $previous 'downgrade' 1603
 Assert-Version $version
 if (!(Select-String -Path "$fixture/downgrade.log" -Pattern 'A newer version of Vespera is already installed' -Quiet)) {

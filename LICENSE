@@ -1,8 +1,83 @@
-VESPERA
+Vespera Proprietary Freeware License v1.0
+PROVISIONAL DRAFT — PENDING OWNER AND LEGAL APPROVAL
 
-All rights reserved by the respective copyright holders.
+Proposed copyright notice: Copyright © 2026 Christopher Dodd, solely
+for original Vespera material that he owns. Other rights holders retain
+their respective rights. Ownership and authority to license remain
+subject to confirmation.
 
-No open-source license or permission to redistribute this project is granted
-by this file. The project owner must choose and approve a license before
-publication or external distribution. Cargo package publication is disabled.
-Third-party dependencies retain their own licenses.
+Status and scope
+
+This draft describes the intended terms for official Vespera software.
+It takes effect only if the authorized rights holders approve it and
+expressly apply it to an official release. Posting this draft or making
+source visible grants no additional permission and authorizes no public
+distribution. Existing separate licenses and statutory rights continue
+to apply.
+
+1. Permitted use
+
+Under the approved terms, you may download an authorized official copy
+free of charge, install and run it, and make a reasonable backup for
+your own use. Personal, educational, research, and commercial use are
+permitted, including using Vespera in a business and building and
+monetizing your own independent AI projects. The permission is
+nonexclusive, nontransferable, and subject to these terms.
+
+2. Ownership and user work
+
+Vespera's proprietary code, documentation, and branding remain the
+property of their respective rights holders. Use of Vespera does not
+transfer ownership in either direction. You retain any rights you have
+in your data, prompts, workflows, outputs, and independently created
+work. Rights in third-party inputs, models, and outputs remain subject
+to applicable law and their own terms.
+
+3. Restrictions
+
+Except with the relevant rights holder's separate written permission or
+as permitted by applicable law or a component's own license, you may not
+modify Vespera, create derivative versions of it, distribute or
+redistribute it or a derivative version, resell it, sublicense it, or
+repackage it. These restrictions apply to Vespera itself. No open-source
+license to Vespera or right to publish modified builds is granted. This
+license grants no right to imply endorsement or use Vespera branding as
+your own.
+
+4. Interoperability
+
+You may develop, distribute, and monetize independent integrations that
+use supported interfaces without incorporating proprietary Vespera
+material. Nothing in this license restricts non-waivable rights,
+including applicable rights to study, test, or obtain information needed
+for interoperability.
+
+5. Third-party components
+
+Third-party software, fonts, and assets retain their own terms. This
+license does not supersede those terms or limit permissions they grant.
+See THIRD_PARTY_NOTICES.md and the applicable upstream notices.
+Separately obtained services, models, and model weights have their own
+terms.
+
+6. Termination
+
+To the extent permitted by law, the permissions under this license end
+if you materially breach its terms and fail to cure the breach within
+30 days after written notice. On termination, stop using the proprietary
+software and remove copies under your control except where retention is
+required or permitted by law. Your rights in independent work and
+third-party components are unaffected. Ownership, disclaimers, and
+liability limits survive termination to the extent permitted by law.
+
+7. Warranty and liability
+
+To the extent permitted by applicable law, Vespera is provided as is and
+as available, without express or implied warranties, including
+merchantability, fitness for a particular purpose, and noninfringement.
+To that same extent, the Vespera rights holders are not liable for
+indirect, incidental, special, or consequential damages, or for loss of
+data, profits, or business arising from use of or inability to use the
+software. Nothing here excludes or limits liability, remedies, or
+consumer protections that applicable law does not allow to be excluded
+or limited.

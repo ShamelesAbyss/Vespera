@@ -15,6 +15,7 @@ use serde_json::Value;
 const DOCUMENTS: &[&str] = &[
     "LICENSE",
     "README.md",
+    "THIRD_PARTY_NOTICES.md",
     "artifacts/live-ollama-2026-11-06.json",
     "artifacts/live-ollama-context-2026-11-06.json",
     "artifacts/live-workflow-2026-11-06.json",
@@ -51,6 +52,8 @@ const DOCUMENTS: &[&str] = &[
     "docs/ROADMAP.md",
     "docs/SCHEDULER.md",
     "docs/WORLD_VISUALS.md",
+    "licenses/FiraMono-LICENSE.txt",
+    "licenses/windows-x64-cargo-inventory.txt",
     "rust-toolchain.toml",
 ];
 

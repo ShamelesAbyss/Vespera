@@ -12,7 +12,7 @@
   <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.99.1-7357D9?logo=rust" alt="Rust 1.99.1"></a>
   <a href="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml"><img src="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml/badge.svg?branch=main" alt="Rust foundation CI"></a>
   <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/desktop-Windows%20verified-2563A5" alt="Windows desktop verified"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-all%20rights%20reserved-654A87" alt="All rights reserved"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-proprietary%20freeware%20draft-654A87" alt="Provisional proprietary freeware license"></a>
 </p>
 
 <p align="center">
@@ -349,10 +349,10 @@ The rebuilt Living World was exercised from Home and Atlas on Windows. At 1200×
 | --- | --- |
 | **Desktop and Atlas** | Broader workflow authoring, OS-backed credential management, and persistent settings |
 | **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
-| **Release** | Signing, a supported production installer toolchain, macOS packaging and the owner's license decision |
+| **Release** | Signing, a supported production installer toolchain, macOS packaging, and approval of the provisional license and distribution notices |
 
 [Milestone ledger](docs/MILESTONE_LEDGER.md) · [Roadmap](docs/ROADMAP.md) · [Verified checkpoints](docs/DEVELOPMENT_LOG.md)
 
 For contributions, start with the architecture and relevant contract, preserve the headless and native entry points, and include scoped validation evidence. Keep credentials, private TOML, model outputs and user databases out of commits. Development lands on `main`. The original baseline is retained on [old-dead-code](https://github.com/ShamelesAbyss/Vespera/tree/old-dead-code).
 
-**License.** Vespera is currently all rights reserved. The repository's license does not grant redistribution rights. Third-party dependencies retain their own licenses. [Project license](LICENSE) · [Release scope](docs/RELEASE.md)
+**License.** The provisional Vespera Proprietary Freeware License v1.0 proposes free personal, educational, research, and commercial use of official builds, including monetizing independent projects and integrations. Users retain their rights in their data and work. The draft reserves redistribution and modification rights for Vespera itself, subject to applicable law and separate component licenses. The proposed terms require owner and legal approval before they apply to an official release. [Provisional license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release scope](docs/RELEASE.md)

@@ -11,6 +11,7 @@
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="Vespera">
           <Directory Id="BinFolder" Name="bin" />
+          <Directory Id="LicenseFolder" Name="licenses" />
           <Directory Id="AssetFolder" Name="assets">
             <Directory Id="BrandingFolder" Name="branding" />
             <Directory Id="WorldArtFolder" Name="world">
@@ -35,6 +36,15 @@
       </Component>
       <Component Directory="INSTALLFOLDER">
         <File Source="$(Stage)\LICENSE" />
+      </Component>
+      <Component Directory="INSTALLFOLDER">
+        <File Source="$(Stage)\THIRD_PARTY_NOTICES.md" />
+      </Component>
+      <Component Directory="LicenseFolder">
+        <File Source="$(Stage)\licenses\FiraMono-LICENSE.txt" />
+      </Component>
+      <Component Directory="LicenseFolder">
+        <File Source="$(Stage)\licenses\windows-x64-cargo-inventory.txt" />
       </Component>
       <Component Directory="BrandingFolder">
         <File Source="$(Stage)\assets\branding\vespera-original.jpg" />
