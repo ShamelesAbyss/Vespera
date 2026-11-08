@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Living World visual reconstruction
+
+Verified implementation checkpoint `bd934c143c608979f80abb3b22dfa8ef14193293`, pushed to `main`. Living World now renders seeded coastal terrain with branching paths, forest clearings, shallow water, textured glTF structures and articulated residents. Committed positions, resource stock, shelter counts, and work memories drive the settlement display. The engine, database format, and replay contract are unchanged. The executable embeds the art and runs from a separate working directory. Asset sources and CC0 notices are recorded in the [art credits](../assets/world/ATTRIBUTION.md).
+
+The native Windows walkthrough opened a fresh world from Home and a 95-tick settlement from Atlas. It verified resident and resource picking, focus and scroll zoom, a committed step, historical navigation, return to live, and navigation back to Home. The published screenshots show the fresh world, a selected resident, and the ten-shelter settlement. Strict graphics Clippy, formatting, the native build, graphics tests, the separately invoked live NVML test, and headless world tests passed. The terrain regression checks that legal edge cells remain visible above water on a 64×64 map.
+
+On the RTX 4070 Laptop GPU, the 12×10 and 64×64 scenes measured 11.63 and 12.66 ms p95 update intervals at 1200×800. Windows sampled 505.30 MiB of dedicated GPU memory for the process in each fixture. These are steady-view Windows development-build observations on one GPU. The view displays up to 12 habitat modules at visual plots because the database stores the shelter total. Other renderers, resolutions, and concurrent inference loads remain outside this run. See [Living World visuals](WORLD_VISUALS.md).
+
 ## 2026-11-07 — Desktop workflow checkpoint browser
 
 Verified implementation checkpoint `ef8677d6aea98d914f4665b984cb63ce96676ab6`, pushed to `main`. The desktop now opens retained workflow checkpoints with F7, lists identities in acceptance order without loading payloads, and reads the selected outcome and attempt owners on demand. Selecting **Open in Swarm** focuses the existing journal projection on that root workflow. This neither resubmits the task nor opens a provider.
