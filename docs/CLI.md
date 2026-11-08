@@ -61,6 +61,11 @@ cargo run --locked -p vespera-app -- provider-health --config config/local.toml 
 provider polls. Individual registry polls additionally have a five-second bound.
 Output identifies providers, effective state (`unknown`, `healthy`, `degraded`,
 `unreachable`, `stale`) and optional observation age in monotonic milliseconds.
+Add `--event-journal <PATH>` to record the same provider UUIDs, effective states
+and ages in an existing local journal. Each watch round publishes its own
+observations. A journal write failure reports the affected round and exits
+nonzero after printing the health report. Health observations describe the
+runtime's view at sampling time and do not change model residency.
 Health failure categories are intentionally aggregated into unreachable; inspect
 endpoint policy, daemon status and credential references when troubleshooting.
 This command checks all configured providers and initializes their adapters;

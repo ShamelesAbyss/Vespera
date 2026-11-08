@@ -21,8 +21,8 @@ use vespera_app::runtime::{
 };
 use vespera_config::AppConfig;
 use vespera_core::{
-    AgentId, AgentStatus, EventKind, MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId,
-    TaskState,
+    AgentId, AgentStatus, EventEnvelope, EventKind, MemoryId, MemoryLayer, MemoryRecord,
+    Permission, Task, TaskId, TaskState,
 };
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
@@ -521,6 +521,7 @@ pub(crate) async fn provider_health(
     config: AppConfig,
     timeout: Duration,
     json: bool,
+    mut journal: Option<vespera_events::Journal>,
 ) -> Result<(), AppError> {
     let cancel = CancellationToken::new();
     let checks = cancellable(timeout, cancel.clone(), check_providers(&config, cancel)).await?;
@@ -534,6 +535,7 @@ pub(crate) async fn provider_health(
             );
         }
     }
+    publish_provider_checks(journal.as_mut(), 1, &checks)?;
     if checks
         .iter()
         .any(|check| check.state != ProviderHealthState::Healthy)
@@ -556,6 +558,7 @@ pub(crate) async fn watch_provider_health(
     interval: Duration,
     samples: Option<u64>,
     json: bool,
+    mut journal: Option<vespera_events::Journal>,
 ) -> Result<(), AppError> {
     let registry = configured_registry(&config).await?;
     let signal = tokio::signal::ctrl_c();
@@ -582,6 +585,7 @@ pub(crate) async fn watch_provider_health(
             providers: observed_provider_checks(&config, &registry).await?,
         };
         write_health_round(&report, json)?;
+        publish_provider_checks(journal.as_mut(), round, &report.providers)?;
         if samples == Some(round) {
             if timed_out {
                 return Err(RuntimeError::Deadline.into());
@@ -602,6 +606,39 @@ pub(crate) async fn watch_provider_health(
             () = tokio::time::sleep(interval) => {}
         }
     }
+}
+
+fn publish_provider_checks(
+    journal: Option<&mut vespera_events::Journal>,
+    round: u64,
+    checks: &[ProviderCheck],
+) -> Result<(), AppError> {
+    let Some(journal) = journal else {
+        return Ok(());
+    };
+    let timestamp = crate::memory_commands::current_timestamp()?;
+    let publication_error = |source| AppError::ProviderHealthPublication { round, source };
+    for chunk in checks.chunks(vespera_events::MAX_PAGE as usize) {
+        let events = chunk
+            .iter()
+            .map(|check| {
+                EventEnvelope::new(
+                    "provider-health",
+                    timestamp,
+                    EventKind::ProviderHealthObserved {
+                        provider_id: check.provider_id,
+                        state: check.state,
+                        checked_age_ms: check.checked_age_ms,
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                publication_error(vespera_events::JournalError::Invalid("health envelope"))
+            })?;
+        journal.append_batch(&events).map_err(publication_error)?;
+    }
+    Ok(())
 }
 
 fn write_health_round(report: &HealthRound, json: bool) -> Result<(), AppError> {

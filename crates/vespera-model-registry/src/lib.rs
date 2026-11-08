@@ -2,6 +2,7 @@
 
 mod catalog;
 pub use catalog::{Catalog, CatalogError, CatalogSnapshot};
+pub use vespera_core::ProviderHealthState;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -86,21 +87,6 @@ impl ModelRegistration {
     }
 }
 
-/// Health observations expire rather than remaining healthy indefinitely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderHealthState {
-    /// No completed poll for this provider instance.
-    Unknown,
-    /// Fresh successful health response.
-    Healthy,
-    /// Fresh degraded response; excluded by conservative routing.
-    Degraded,
-    /// Poll failed, timed out, or returned a mismatched identity.
-    Unreachable,
-    /// Last observation exceeded the configured maximum age.
-    Stale,
-}
 /// In-process monotonic health evidence. It is not persisted or compared across hosts.
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderHealthObservation {

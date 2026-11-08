@@ -122,6 +122,11 @@ Local memory journals use version 5 for `agent_memory_deleted`, which
 contains only the owner and memory UUIDs. Memory insertion and consolidation
 use the existing `agent_memory_updated` envelope. [Memory recovery CLI](CLI.md#recover-memory-mutation-events)
 
+Provider health journal entries use schema version 6. Their payload contains
+the provider UUID, effective health state and optional age of the last
+completed probe. These are observations and can expire in the live registry.
+[Provider health CLI](CLI.md#provider-health)
+
 ## Rust SDK
 
 Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`, or use `OperatorClient::new_tls(address, key, roots_pem)` or `WorkerClient::new_tls(address, worker_id, key, roots_pem)` for TLS. Worker clients take an approved `AgentId`.

@@ -64,6 +64,9 @@ enum Command {
         /// Stop after this many health rounds when watching.
         #[arg(long, requires = "watch_seconds", value_parser = clap::value_parser!(u64).range(1..=1000))]
         samples: Option<u64>,
+        /// Publish health snapshots to an existing local journal.
+        #[arg(long)]
+        event_journal: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -358,6 +361,11 @@ enum AppError {
     ShutdownSignal(std::io::Error),
     #[error(transparent)]
     Journal(#[from] vespera_events::JournalError),
+    #[error("provider health round {round} was observed but journal publication failed: {source}")]
+    ProviderHealthPublication {
+        round: u64,
+        source: vespera_events::JournalError,
+    },
     #[error("cannot write event output: {0}")]
     EventOutput(std::io::Error),
     #[error("{0}")]
@@ -451,10 +459,12 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             timeout_seconds,
             watch_seconds,
             samples,
+            event_journal,
             json,
         } => {
             let config = catalog_commands::load(&config, model_catalog.as_deref())?;
             let timeout = std::time::Duration::from_secs(timeout_seconds);
+            let journal = event_commands::prepare(event_journal).await?;
             if let Some(seconds) = watch_seconds {
                 commands::watch_provider_health(
                     config,
@@ -462,10 +472,11 @@ async fn run(cli: Cli) -> Result<(), AppError> {
                     std::time::Duration::from_secs(seconds),
                     samples,
                     json,
+                    journal,
                 )
                 .await?;
             } else {
-                commands::provider_health(config, timeout, json).await?;
+                commands::provider_health(config, timeout, json, journal).await?;
             }
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,

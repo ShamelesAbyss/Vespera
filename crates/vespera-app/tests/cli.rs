@@ -3966,6 +3966,8 @@ fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
     fixture.hold_health.store(true, Ordering::SeqCst);
     let scratch = ScratchDirectory::new();
     let config = scratch.write_config(&runtime_config(&fixture, false, true));
+    let journal = scratch.0.join("provider-events.sqlite3");
+    drop(vespera_events::Journal::initialize(&journal, 8).unwrap());
     let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
         .args([
             "provider-health",
@@ -3977,6 +3979,8 @@ fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
             "1",
             "--samples",
             "3",
+            "--event-journal",
+            journal.to_str().unwrap(),
             "--json",
         ])
         .stdout(Stdio::piped())
@@ -3996,6 +4000,12 @@ fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
+    let entries = vespera_events::Journal::open_reader(&journal)
+        .unwrap()
+        .replay(None, 8)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 3);
     for (index, (line, timeout, state)) in [
         (first, true, "unknown"),
         (second, false, "unreachable"),
@@ -4011,6 +4021,20 @@ fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
         assert_eq!(report["providers"][0]["state"], state);
         assert!(!line.contains("fixture-private-error-body"));
         assert!(!line.contains("http://"));
+        let event = serde_json::to_value(&entries[index].event).unwrap();
+        assert_eq!(event["schema_version"], 6);
+        assert_eq!(event["kind"]["kind"], "provider_health_observed");
+        assert_eq!(event["kind"]["state"], state);
+        assert_eq!(
+            event["kind"]["provider_id"],
+            report["providers"][0]["provider_id"]
+        );
+        assert_eq!(
+            event["kind"]["checked_age_ms"],
+            report["providers"][0]["checked_age_ms"]
+        );
+        assert!(!event.to_string().contains("fixture-private-error-body"));
+        assert!(!event.to_string().contains("http://"));
     }
     let requests = fixture.captured();
     assert_eq!(requests.len(), 3);
@@ -4019,6 +4043,46 @@ fn provider_health_watch_reports_timeout_then_failure_and_recovery() {
             .iter()
             .all(|request| request.path == "/api/version")
     );
+}
+
+#[test]
+fn provider_health_reports_journal_gap_without_reclassifying_observation() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = directory.write_config(&runtime_config(&fixture, false, true));
+    let journal = directory.0.join("provider-events.sqlite3");
+    drop(vespera_events::Journal::initialize(&journal, 8).unwrap());
+    let injector = rusqlite::Connection::open(&journal).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_health BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let output = execute(&[
+        "provider-health",
+        "--config",
+        config.to_str().unwrap(),
+        "--event-journal",
+        journal.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report[0]["state"], "healthy");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("round 1 was observed but journal publication failed")
+    );
+    assert!(
+        vespera_events::Journal::open_reader(&journal)
+            .unwrap()
+            .replay(None, 8)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert_eq!(fixture.captured().len(), 1);
 }
 
 #[test]

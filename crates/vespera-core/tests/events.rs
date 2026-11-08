@@ -86,6 +86,35 @@ fn every_event_payload_has_typed_round_trip() {
 }
 
 #[test]
+fn provider_health_evidence_requires_consistent_age_and_schema_six() {
+    use vespera_core::ProviderHealthState;
+
+    let mut event = EventEnvelope::new(
+        "provider-health",
+        0,
+        EventKind::ProviderHealthObserved {
+            provider_id: ID.parse().unwrap(),
+            state: ProviderHealthState::Stale,
+            checked_age_ms: Some(3),
+        },
+    )
+    .unwrap();
+    assert_eq!(event.schema_version, 6);
+    let wire = serde_json::to_string(&event).unwrap();
+    assert_eq!(serde_json::from_str::<EventEnvelope>(&wire).unwrap(), event);
+    event.schema_version = 5;
+    assert!(event.validate().is_err());
+    event.schema_version = 6;
+    if let EventKind::ProviderHealthObserved { checked_age_ms, .. } = &mut event.kind {
+        *checked_age_ms = None;
+    }
+    assert!(matches!(
+        event.validate(),
+        Err(DomainError::InvalidProviderHealthEvidence)
+    ));
+}
+
+#[test]
 fn memory_deletions_require_schema_five() {
     let mut envelope = EventEnvelope::new(
         "memory-store",

@@ -7,7 +7,23 @@ use crate::{
 };
 
 /// Latest supported event wire schema. Each kind emits its earliest compatible version.
-pub const EVENT_SCHEMA_VERSION: u32 = 5;
+pub const EVENT_SCHEMA_VERSION: u32 = 6;
+
+/// Effective state of expiring provider health evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderHealthState {
+    /// No completed poll for this provider instance.
+    Unknown,
+    /// Fresh successful health response.
+    Healthy,
+    /// Fresh degraded response, excluded by conservative routing.
+    Degraded,
+    /// Poll failed, timed out, or returned a mismatched identity.
+    Unreachable,
+    /// Last observation exceeded the configured maximum age.
+    Stale,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -85,6 +101,11 @@ pub enum BrokerStreamEnd {
 pub enum EventKind {
     ProviderConnected {
         provider_id: ProviderId,
+    },
+    ProviderHealthObserved {
+        provider_id: ProviderId,
+        state: ProviderHealthState,
+        checked_age_ms: Option<u64>,
     },
     ModelRegistered {
         model_id: ModelId,
@@ -180,6 +201,7 @@ pub struct WorkflowDependency {
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::ProviderHealthObserved { .. } => 6,
             Self::AgentMemoryDeleted { .. } => 5,
             Self::WorkflowAttemptAccepted { .. } | Self::WorkflowAttemptFinished { .. } => 4,
             Self::ExternalTaskChanged { .. } => 3,
@@ -190,6 +212,13 @@ impl EventKind {
 
     pub fn validate(&self) -> Result<(), DomainError> {
         match self {
+            Self::ProviderHealthObserved {
+                state,
+                checked_age_ms,
+                ..
+            } if (*state == ProviderHealthState::Unknown) != checked_age_ms.is_none() => {
+                return Err(DomainError::InvalidProviderHealthEvidence);
+            }
             Self::WorkflowAttemptAccepted {
                 task_id,
                 dependencies,
