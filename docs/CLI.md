@@ -491,6 +491,26 @@ Scoring is case-sensitive exact text comparison after trimming outer whitespace.
 
 Keep the workload and configuration to rerun the comparison. The JSON and the journal omit prompts, expected answers, model output, provider-native names, endpoints and credentials. The journal retains terminal observations with task IDs and cursors, and a trial that never reached a terminal task can have a null cursor. Use `events --journal target/model-comparison/events.sqlite3 replay` to inspect the observed events. Compare results within the stated cases and resource bounds.
 
+### Compare live retrieval with a fixed model
+
+Use `--memory-database <PATH>` in place of `--candidate-model`. Both arms use `--baseline-model` and the same agent. Give the agent `memory_read` and add a private `memory_query` phrase to each workload case. Each phrase can contain up to 256 UTF-8 bytes and 32 whitespace-separated terms.
+
+```json
+[
+  {
+    "prompt": "What is the recorded laboratory code? Reply with only the code.",
+    "expected": "K84Q",
+    "memory_query": "laboratory code"
+  }
+]
+```
+
+```powershell
+cargo run --locked -p vespera-app -- experiment-models --config config/local.private.toml --agent $agent --baseline-model $baseline --memory-database data/vespera.sqlite3 --workload data/memory-cases.json --evidence-dir target/memory-comparison --resume > target/memory-comparison.json
+```
+
+The baseline runs without memory. The candidate adds bounded, untrusted context from literal phrase retrieval within the agent’s own namespace. Retrieval completes before provider work and reads the database without writing. Use a stable private copy of the database if other processes may change the source during preparation. The report includes retrieval duration separately from execution time and counts records actually included in successful requests. A miss can include zero records. The report and journal omit memory text, queries, record IDs and the database path. The candidate sends the authorized context to the configured local Ollama provider.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

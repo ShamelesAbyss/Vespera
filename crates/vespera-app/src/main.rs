@@ -131,7 +131,7 @@ enum Command {
     World(world_commands::WorldArgs),
     /// Compare two resident roster policies with paired deterministic seeds.
     ExperimentWorld(experiment::Args),
-    /// Compare two fixed local Ollama model bindings on the same private workload.
+    /// Compare fixed local Ollama bindings or memory policies on a private workload.
     ExperimentModels(model_experiment::Args),
     /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {

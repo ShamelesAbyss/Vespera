@@ -5,14 +5,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use vespera_agents::{ExecutionError, ExecutionOptions};
+use vespera_agents::{ExecutionError, ExecutionOptions, MemoryContext};
+use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{RuntimeError, VesperaRuntime};
 use vespera_config::AppConfig;
 use vespera_core::{
     AgentId, AgentStatus, EventEnvelope, EventKind, ModelDescriptor, ModelId, ModelSelectionPolicy,
-    ProviderKind, Task, TaskId, TaskState,
+    Permission, ProviderKind, Task, TaskId, TaskState,
 };
 use vespera_events::{Cursor, Journal};
+use vespera_memory::{MemoryStore, StorageLimits};
 use vespera_providers::{
     CancellationToken, EndpointPolicy, InferenceMetrics, InferenceProvider, ValidatedEndpoint,
 };
@@ -20,6 +22,7 @@ use vespera_providers::{
 use crate::{AppError, catalog_commands, commands::cancellable, event_commands::terminal_event};
 
 #[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("candidate_policy").required(true).args(["candidate_model", "memory_database"])))]
 pub(super) struct Args {
     #[arg(long, default_value = "config/local.toml")]
     config: PathBuf,
@@ -30,8 +33,11 @@ pub(super) struct Args {
     #[arg(long)]
     baseline_model: ModelId,
     #[arg(long)]
-    candidate_model: ModelId,
-    /// Private JSON array of cases with prompt and expected text.
+    candidate_model: Option<ModelId>,
+    /// Hold the model fixed and give only the candidate arm owned phrase retrieval.
+    #[arg(long)]
+    memory_database: Option<PathBuf>,
+    /// Private case JSON. A memory comparison also requires a memory_query in every case.
     #[arg(long)]
     workload: PathBuf,
     /// New directory for the redacted outcome journal.
@@ -53,6 +59,12 @@ pub(super) struct Args {
 struct Case {
     prompt: String,
     expected: String,
+    memory_query: Option<String>,
+}
+
+struct PreparedCase {
+    case: Case,
+    memory: Option<(MemoryContext, u128)>,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -73,6 +85,8 @@ struct Trial {
     outcome: Outcome,
     end_to_end_ms: u128,
     inference: Option<InferenceMetrics>,
+    memory_records_included: Option<usize>,
+    memory_retrieval_ns: Option<u128>,
     provider: ProviderEvidence,
     cleanup_confirmed: bool,
     event_cursor: Option<Cursor>,
@@ -97,9 +111,10 @@ struct Summary {
 }
 
 pub(super) async fn run(args: Args) -> Result<(), AppError> {
-    let workload = load_cases(&args)?;
+    let cases = load_cases(&args)?;
     let config = catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let models = select_models(&config, &args)?;
+    let workload = prepare_cases(&args, &config, cases).await?;
     let configs = [models[0].id, models[1].id].map(|model_id| {
         let mut config = config.clone();
         let agent = config
@@ -123,7 +138,10 @@ pub(super) async fn run(args: Args) -> Result<(), AppError> {
                 model: models[arm],
                 arm: ["baseline", "candidate"][arm],
             };
-            let trial = runner.run(index + 1, case, &mut journal).await?;
+            let memory = if arm == 1 { case.memory.as_ref() } else { None };
+            let trial = runner
+                .run(index + 1, &case.case, memory, &mut journal)
+                .await?;
             let summary = &mut summaries[arm];
             summary.attempted += 1;
             match trial.outcome {
@@ -144,26 +162,28 @@ pub(super) async fn run(args: Args) -> Result<(), AppError> {
             break;
         }
     }
-    let arm_config = |model: &ModelDescriptor| {
+    let memory_comparison = args.memory_database.is_some();
+    let arm_config = |model: &ModelDescriptor, retrieve: bool| {
         json!({
             "model_id": model.id,
             "provider_id": model.provider_id,
             "provider_kind": ProviderKind::Ollama,
             "estimated_resources": model.resources,
             "declared_context_tokens": model.context_window_tokens,
+            "memory_policy": if retrieve { "owned_phrase" } else { "none" },
         })
     };
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "schema_version": 1,
-            "experiment": "live_model_comparison",
+            "experiment": if memory_comparison { "live_memory_comparison" } else { "live_model_comparison" },
             "vespera_version": env!("CARGO_PKG_VERSION"),
             "nondeterministic": true,
             "configuration": {
                 "agent_id": args.agent,
-                "baseline": arm_config(models[0]),
-                "candidate": arm_config(models[1]),
+                "baseline": arm_config(models[0], false),
+                "candidate": arm_config(models[1], memory_comparison),
                 "context_tokens": args.context_tokens,
                 "max_output_tokens": args.max_output_tokens,
                 "timeout_seconds": args.timeout_seconds,
@@ -211,7 +231,53 @@ fn load_cases(args: &Args) -> Result<Vec<Case>, AppError> {
             "expected 1–16 cases with nonblank prompts up to 16 KiB and expected text up to 4 KiB",
         ));
     }
+    if cases.iter().any(
+        |case| match (&case.memory_query, args.memory_database.is_some()) {
+            (Some(query), true) => query.trim().is_empty() || query.len() > 256,
+            (None, false) => false,
+            _ => true,
+        },
+    ) {
+        return Err(AppError::ModelExperimentInput(
+            "memory mode requires a nonblank memory_query up to 256 bytes in each case; model mode omits it",
+        ));
+    }
     Ok(cases)
+}
+
+async fn prepare_cases(
+    args: &Args,
+    config: &AppConfig,
+    cases: Vec<Case>,
+) -> Result<Vec<PreparedCase>, AppError> {
+    let Some(database) = args.memory_database.clone() else {
+        return Ok(cases
+            .into_iter()
+            .map(|case| PreparedCase { case, memory: None })
+            .collect());
+    };
+    let actor = args.agent;
+    let authority = configured_authorizer(config, actor, &[Permission::MemoryRead])?;
+    tokio::task::spawn_blocking(move || {
+        let store = MemoryStore::open_read_only(database, StorageLimits::default(), authority)?;
+        cases
+            .into_iter()
+            .map(|case| {
+                let query = case
+                    .memory_query
+                    .as_deref()
+                    .expect("validated memory query");
+                let start = Instant::now();
+                let memory = MemoryContext::retrieve(&store, actor, query)?;
+                Ok(PreparedCase {
+                    case,
+                    memory: Some((memory, start.elapsed().as_nanos())),
+                })
+            })
+            .collect()
+    })
+    .await
+    .map_err(|_| AppError::MemoryWorker)?
 }
 
 fn select_models<'a>(
@@ -235,8 +301,11 @@ fn select_models<'a>(
             .find(|model| model.id == id)
             .ok_or(AppError::ModelExperimentInput("model is not registered"))
     };
-    let models = [find(args.baseline_model)?, find(args.candidate_model)?];
-    if models[0].id == models[1].id {
+    let models = [
+        find(args.baseline_model)?,
+        find(args.candidate_model.unwrap_or(args.baseline_model))?,
+    ];
+    if args.candidate_model == Some(args.baseline_model) {
         return Err(AppError::ModelExperimentInput(
             "choose distinct model registrations",
         ));
@@ -276,6 +345,7 @@ impl TrialRunner<'_> {
         &self,
         index: usize,
         case: &Case,
+        memory: Option<&(MemoryContext, u128)>,
         journal: &mut Journal,
     ) -> Result<Trial, AppError> {
         let runtime = VesperaRuntime::from_config_for_agent(self.config, self.args.agent).await?;
@@ -300,16 +370,24 @@ impl TrialRunner<'_> {
             ..ExecutionOptions::default()
         };
         let cancel = CancellationToken::new();
+        let context = memory.map(|(context, _)| context.clone());
         let start = Instant::now();
         let result = cancellable(timeout, cancel.clone(), async {
             runtime.reconcile_startup(cancel.clone()).await?;
             runtime
-                .run_agent(self.args.agent, task, options, self.args.resume, cancel)
+                .run_agent_with_context(
+                    self.args.agent,
+                    task,
+                    options,
+                    self.args.resume,
+                    context,
+                    cancel,
+                )
                 .await
         })
         .await;
         let end_to_end_ms = start.elapsed().as_millis();
-        let (outcome, inference, event) = match result {
+        let (outcome, inference, memory_records_included, event) = match result {
             Ok(execution) => {
                 let outcome = if execution.response.content.trim() == case.expected.trim() {
                     Outcome::Match
@@ -321,7 +399,12 @@ impl TrialRunner<'_> {
                     model_id: execution.model_id,
                     agent_id: Some(execution.agent_id),
                 };
-                (outcome, Some(execution.response.metrics), Some(event))
+                (
+                    outcome,
+                    Some(execution.response.metrics),
+                    Some(execution.memory_context_ids.len()),
+                    Some(event),
+                )
             }
             Err(error) => {
                 let outcome = match error {
@@ -340,7 +423,7 @@ impl TrialRunner<'_> {
                     .await
                     .ok()
                     .and_then(|task| terminal_event(task_id, task.state));
-                (outcome, None, event)
+                (outcome, None, None, event)
             }
         };
         let evidence = if matches!(outcome, Outcome::Interrupted | Outcome::Deadline) {
@@ -374,6 +457,8 @@ impl TrialRunner<'_> {
             outcome,
             end_to_end_ms,
             inference,
+            memory_records_included,
+            memory_retrieval_ns: memory.map(|(_, elapsed)| *elapsed),
             provider: evidence,
             cleanup_confirmed: cleanup.drained
                 && cleanup.unload_errors.is_empty()

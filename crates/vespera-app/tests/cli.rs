@@ -631,6 +631,151 @@ vram_bytes = 0
 }
 
 #[test]
+fn live_memory_experiment_isolates_retrieval_and_keeps_the_database_read_only() {
+    use vespera_core::{MemoryId, MemoryLayer, MemoryRecord, Permission};
+    use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
+
+    let fixture = HttpFixture::with_ollama_answer(false, "case answer");
+    let scratch = ScratchDirectory::new();
+    let denied = runtime_config(&fixture, false, true);
+    let other = "88888888-8888-4888-8888-888888888888";
+    let granted = format!(
+        r#"{}
+[[agents]]
+permissions = ["memory_write"]
+status = "suspended"
+[agents.identity]
+id = "{other}"
+name = "Other namespace"
+role = "Fixture"
+[agents.model_policy]
+kind = "fixed"
+model_id = "22222222-2222-4222-8222-222222222222"
+"#,
+        denied.replace(
+            "permissions = []",
+            "permissions = [\"memory_read\", \"memory_write\"]"
+        )
+    );
+    let config_path = scratch.write_config(&granted);
+    let config = vespera_config::AppConfig::load(&config_path).unwrap();
+    let db = scratch.0.join("private.sqlite3");
+    let owned_id = MemoryId::new();
+    let foreign_id = MemoryId::new();
+    for (owner, id, content) in [
+        (AGENT, owned_id, "amber private owned clue"),
+        (other, foreign_id, "amber private foreign clue"),
+    ] {
+        let owner = owner.parse().unwrap();
+        let authority =
+            vespera_app::memory::configured_authorizer(&config, owner, &[Permission::MemoryWrite])
+                .unwrap();
+        let store = if db.exists() {
+            MemoryStore::open_existing(&db, StorageLimits::default(), authority)
+        } else {
+            MemoryStore::open(&db, StorageLimits::default(), authority)
+        }
+        .unwrap();
+        store
+            .insert(
+                owner,
+                MemoryRecord {
+                    id,
+                    agent_id: owner,
+                    layer: MemoryLayer::Observation,
+                    content: content.into(),
+                    created_at_unix_ms: 1,
+                    source_task_id: None,
+                },
+                MemoryOrigin::Observation,
+            )
+            .unwrap();
+    }
+    let before = fs::read(&db).unwrap();
+    let workload = scratch.0.join("cases.json");
+    fs::write(
+        &workload,
+        r#"[
+      {"prompt":"private first request","expected":"case answer","memory_query":"amber"},
+      {"prompt":"private second request","expected":"case answer","memory_query":"missing"}
+    ]"#,
+    )
+    .unwrap();
+    let evidence = scratch.0.join("evidence");
+    let flags = [
+        "experiment-models",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--agent",
+        AGENT,
+        "--baseline-model",
+        "22222222-2222-4222-8222-222222222222",
+        "--memory-database",
+        db.to_str().unwrap(),
+        "--workload",
+        workload.to_str().unwrap(),
+        "--evidence-dir",
+        evidence.to_str().unwrap(),
+        "--resume",
+    ];
+    fs::write(&config_path, denied).unwrap();
+    let rejected = execute(&flags);
+    assert!(!rejected.status.success());
+    assert!(!evidence.exists());
+    assert!(fixture.captured().is_empty());
+    fs::write(&config_path, granted).unwrap();
+    let output = execute(&flags);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["experiment"], "live_memory_comparison");
+    assert_eq!(
+        report["configuration"]["baseline"]["model_id"],
+        report["configuration"]["candidate"]["model_id"]
+    );
+    assert_eq!(
+        report["configuration"]["candidate"]["memory_policy"],
+        "owned_phrase"
+    );
+    assert_eq!(report["trials"][0]["memory_records_included"], 0);
+    assert!(report["trials"][0]["memory_retrieval_ns"].is_null());
+    assert_eq!(report["trials"][1]["memory_records_included"], 1);
+    assert!(report["trials"][1]["memory_retrieval_ns"].is_number());
+    assert_eq!(report["trials"][2]["memory_records_included"], 0);
+    let requests = fixture.captured();
+    let chats: Vec<_> = requests
+        .iter()
+        .filter(|request| request.path == "/api/chat")
+        .collect();
+    assert_eq!(chats.len(), 4);
+    assert!(chats[1].body.contains("amber private owned clue"));
+    assert!(chats.iter().enumerate().all(|(index, request)| {
+        !request.body.contains("amber private foreign clue")
+            && (index == 1 || !request.body.contains("untrusted_memory"))
+    }));
+    let journal = vespera_events::Journal::open_reader(&evidence.join("events.sqlite3"))
+        .unwrap()
+        .replay(None, 32)
+        .unwrap();
+    let export =
+        String::from_utf8(output.stdout).unwrap() + &serde_json::to_string(&journal).unwrap();
+    for private in [
+        "amber",
+        "missing",
+        "private first request",
+        "case answer",
+        &owned_id.to_string(),
+        &foreign_id.to_string(),
+    ] {
+        assert!(!export.contains(private));
+    }
+    assert_eq!(fs::read(db).unwrap(), before);
+}
+
+#[test]
 fn world_model_choices_are_authorized_bounded_and_revision_fenced() {
     use std::time::{Duration, Instant};
     use vespera_world::{Position, ResidentSpec, Role, World, WorldSpec, WorldStore};
