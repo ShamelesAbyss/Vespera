@@ -22,7 +22,7 @@ $env:DOTNET_ROLL_FORWARD = 'Major'
 dotnet tool install wix --version 5.0.2 --tool-path "$fixture/tools"
 if ($LASTEXITCODE -ne 0) { throw 'Could not install the pinned WiX tool.' }
 $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
-$previous = '0.1.0'
+$previous = '0.1.1'
 if ([version]$version -le [version]$previous) { throw 'Expected a newer installer version.' }
 
 foreach ($productVersion in $previous,$version) {
