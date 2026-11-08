@@ -34,6 +34,7 @@ sysinfo = { version = "=0.39.6", default-features = false, features = ["system"]
 nvml-wrapper = { version = "=0.13.0", default-features = false }
 
 [dev-dependencies]
+rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqlite3-sys", "bundled"] }
 vespera-sdk = { path = "../vespera-sdk" }
 reqwest.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }

@@ -24,6 +24,11 @@ to read the stored owner, task and result. A nonterminal checkpoint is reported
 as interrupted and retains its last observed state. The store fences replay
 of that task ID. The database contains task prompts and generated results.
 
+New terminal checkpoints also store one sanitized event envelope in the
+same SQLite update as the task outcome. Use the [event recovery command](CLI.md#recover-a-durable-agent-terminal-event)
+to publish that envelope after a journal outage. Prompts and generated
+responses stay in the private task database.
+
 ## Durable operator suspension
 
 `agent-state` manages an operator hold for a configured agent UUID. Use the

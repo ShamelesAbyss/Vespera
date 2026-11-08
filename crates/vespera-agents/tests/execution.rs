@@ -554,7 +554,8 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
     {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.execute_batch(
-            "DROP TABLE agent_messages; DROP TABLE agent_suspensions; PRAGMA user_version=1;",
+            "ALTER TABLE agent_tasks DROP COLUMN terminal_event;
+             DROP TABLE agent_messages; DROP TABLE agent_suspensions; PRAGMA user_version=1;",
         )
         .unwrap();
         db.execute(
@@ -573,8 +574,11 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
     drop(store);
     {
         let db = rusqlite::Connection::open(&path).unwrap();
-        db.execute_batch("DROP TABLE agent_messages; PRAGMA user_version=2;")
-            .unwrap();
+        db.execute_batch(
+            "ALTER TABLE agent_tasks DROP COLUMN terminal_event;
+                          DROP TABLE agent_messages; PRAGMA user_version=2;",
+        )
+        .unwrap();
     }
     let store = AgentTaskStore::open_existing(&path).unwrap();
     runtime.attach_task_store(store).unwrap();
@@ -635,6 +639,11 @@ async fn durable_result_write_failure_releases_the_owned_lease() {
     assert!(stored.interrupted);
     assert_eq!(stored.owner, agent);
     assert!(stored.result.is_none());
+    assert!(
+        AgentTaskStore::inspect_terminal_event(&path, id)
+            .unwrap()
+            .is_none()
+    );
     std::fs::remove_file(path).unwrap();
 }
 

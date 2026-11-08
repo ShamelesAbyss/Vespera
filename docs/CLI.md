@@ -23,7 +23,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
-| `events` | Initialize, replay or follow a local event journal | None. Local SQLite access. |
+| `events` | Initialize, replay, follow or recover a terminal event into a local journal | None. Local SQLite access. |
 
 Every command supports `--help`. The root supports `--version`. Provider,
 inventory and inference commands use `--config <PATH>` (default
@@ -639,3 +639,22 @@ Both modes are read-only. A window keeps up to 128 relationships and 128 termina
 Each stdout line contains one JSON entry with its event and cursor. The follower flushes each entry and reads at most one page ahead. It waits between reads when caught up, without holding a read transaction while writing to stdout. Save the last fully consumed cursor and pass `--after <journal-UUID:sequence>` to resume. Without a cursor it starts from the oldest retained entry and reports any earlier discarded history on stderr. If a saved cursor expires while following, the command exits nonzero and reports the retention boundary.
 
 `--poll-ms` defaults to 250 and accepts 10 to 60,000. The command continues until interrupted or until it reaches an optional `--max-events <N>` or `--idle-timeout-ms <N>` bound. The idle timeout accepts 10 to 3,600,000 milliseconds and applies while waiting for new entries. A closed stdout pipe ends delivery. Consumers control how quickly the command can write to stdout, so an idle timeout does not bound writes to a stalled consumer.
+
+### Recover a durable agent terminal event
+
+When `run-agent` uses both `--task-store` and `--event-journal`, it publishes
+the exact envelope committed with the task's terminal state. If the journal
+write fails, the task and its original event identity remain in the task store.
+After the writer exits and the journal is available, publish the stored event.
+
+```powershell
+.\target\release\vespera.exe events --journal data/events.sqlite3 recover-agent-task --task-store data/agent-tasks.sqlite3 --task $taskId
+```
+
+Use the actual agent task UUID. Recovery works offline and returns the
+journal cursor and event UUID. Retrying returns the original cursor while
+the entry is retained. If retention has discarded it, explicit recovery can
+publish the same event UUID at a new cursor. Replay order is publication
+order, so a recovered event can carry an earlier occurrence timestamp.
+Interrupted tasks and tasks from older schemas without an envelope cannot
+produce a terminal event through this command.

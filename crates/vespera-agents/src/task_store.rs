@@ -2,22 +2,23 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use vespera_core::{AgentId, Task, TaskId, TaskState};
+use vespera_core::{AgentId, EventEnvelope, EventKind, Task, TaskId, TaskState};
 
 use crate::TaskExecutionResult;
 
 mod inbox;
 
 const APPLICATION_ID: i64 = 0x56535041;
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 const MAX_TASKS: i64 = 256;
 const MAX_SUSPENSIONS: i64 = 256;
 const MAX_BYTES: i64 = 128 * 1024 * 1024;
+const MAX_EVENT_BYTES: i64 = 4096;
 
 #[derive(Debug, Error)]
 pub enum AgentTaskStoreError {
@@ -130,8 +131,18 @@ impl AgentTaskStore {
             )
             .map_err(db)?;
         }
-        if migrate && version < VERSION {
+        if migrate && version < 3 {
             inbox::migrate(&tx)?;
+        }
+        if migrate && version < VERSION {
+            tx.execute(
+                "ALTER TABLE agent_tasks ADD COLUMN terminal_event BLOB
+                 CHECK (terminal_event IS NULL OR (
+                     state IN ('completed','failed','cancelled') AND length(terminal_event) <= 4096
+                 ))",
+                [],
+            )
+            .map_err(db)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
         }
@@ -267,7 +278,7 @@ impl AgentTaskStore {
     ) -> Result<(), AgentTaskStoreError> {
         let bytes = encode(task)?;
         let written = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?.execute(
-            "INSERT INTO agent_tasks SELECT ?1,?2,?3,?4,?5,NULL WHERE
+            "INSERT INTO agent_tasks (id,owner,delegated_by,state,task) SELECT ?1,?2,?3,?4,?5 WHERE
              (SELECT count(*) FROM agent_tasks) < ?6 AND
              (SELECT coalesce(sum(length(task)+coalesce(length(result),0)),0) FROM agent_tasks) + length(?5) <= ?7
              ON CONFLICT(id) DO NOTHING",
@@ -288,17 +299,89 @@ impl AgentTaskStore {
         result: Option<&TaskExecutionResult>,
     ) -> Result<(), AgentTaskStoreError> {
         let bytes = encode(task)?;
+        let event = terminal_event(task, owner, result)?
+            .as_ref()
+            .map(encode)
+            .transpose()?;
         let result = result.map(encode).transpose()?;
         let written = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?.execute(
-            "UPDATE agent_tasks SET state=?4, task=?5, result=?6 WHERE id=?1 AND owner=?2 AND state=?3
+            "UPDATE agent_tasks SET state=?4, task=?5, result=?6, terminal_event=?7
+             WHERE id=?1 AND owner=?2 AND state=?3
              AND (SELECT coalesce(sum(length(task)+coalesce(length(result),0)),0) FROM agent_tasks)
-                   - length(task) - coalesce(length(result),0) + length(?5) + coalesce(length(?6),0) <= ?7",
-            params![task.id.to_string(), owner.to_string(), previous.to_string(), task.state.to_string(), bytes, result, MAX_BYTES],
+                   - length(task) - coalesce(length(result),0) + length(?5) + coalesce(length(?6),0) <= ?8",
+            params![task.id.to_string(), owner.to_string(), previous.to_string(), task.state.to_string(), bytes, result, event, MAX_BYTES],
         ).map_err(db)?;
         if written != 1 {
             return Err(AgentTaskStoreError::InvalidCheckpoint);
         }
         Ok(())
+    }
+
+    /// Inspect an immutable terminal envelope without reading the task prompt or result.
+    pub fn inspect_terminal_event(
+        path: &Path,
+        task: TaskId,
+    ) -> Result<Option<EventEnvelope>, AgentTaskStoreError> {
+        Self::connect(path, false, false)?.terminal_event(task)
+    }
+
+    pub(crate) fn terminal_event(
+        &self,
+        task: TaskId,
+    ) -> Result<Option<EventEnvelope>, AgentTaskStoreError> {
+        let connection = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(db)?;
+        if version < 4 {
+            return Ok(None);
+        }
+        let row = connection
+            .query_row(
+                "SELECT state,owner,result IS NOT NULL,
+                CASE WHEN length(terminal_event)>?2 THEN x'' ELSE terminal_event END
+             FROM agent_tasks WHERE id=?1",
+                params![task.to_string(), MAX_EVENT_BYTES],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                        row.get::<_, Option<Vec<u8>>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(db)?;
+        let Some((state, owner, has_result, Some(bytes))) = row else {
+            return Ok(None);
+        };
+        let event: EventEnvelope =
+            serde_json::from_slice(&bytes).map_err(|_| AgentTaskStoreError::InvalidCheckpoint)?;
+        let valid_kind = match &event.kind {
+            EventKind::InferenceCompleted {
+                task_id,
+                agent_id: Some(agent),
+                ..
+            } => {
+                *task_id == task && agent.to_string() == owner && state == "completed" && has_result
+            }
+            EventKind::TaskCompleted { task_id } => {
+                *task_id == task && state == "completed" && !has_result
+            }
+            EventKind::TaskFailed { task_id } => {
+                *task_id == task && state == "failed" && !has_result
+            }
+            EventKind::TaskCancelled { task_id } => {
+                *task_id == task && state == "cancelled" && !has_result
+            }
+            _ => false,
+        };
+        if !valid_kind || event.correlation_task_id != Some(task) || event.source != "agent-runtime"
+        {
+            return Err(AgentTaskStoreError::InvalidCheckpoint);
+        }
+        Ok(Some(event))
     }
 
     /// Inspect the retained owner and outcome after acquiring the exclusive connection.
@@ -360,6 +443,34 @@ impl AgentTaskStore {
             interrupted,
         })
     }
+}
+
+fn terminal_event(
+    task: &Task,
+    owner: AgentId,
+    result: Option<&TaskExecutionResult>,
+) -> Result<Option<EventEnvelope>, AgentTaskStoreError> {
+    let task_id = task.id;
+    let kind = match (task.state, result) {
+        (TaskState::Completed, Some(result)) => EventKind::InferenceCompleted {
+            task_id,
+            agent_id: Some(owner),
+            model_id: result.model_id,
+        },
+        (TaskState::Completed, None) => EventKind::TaskCompleted { task_id },
+        (TaskState::Failed, _) => EventKind::TaskFailed { task_id },
+        (TaskState::Cancelled, _) => EventKind::TaskCancelled { task_id },
+        _ => return Ok(None),
+    };
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .ok_or(AgentTaskStoreError::InvalidCheckpoint)?;
+    let mut event = EventEnvelope::new("agent-runtime", timestamp, kind)
+        .map_err(|_| AgentTaskStoreError::InvalidCheckpoint)?;
+    event.correlation_task_id = Some(task_id);
+    Ok(Some(event))
 }
 
 fn encode(value: &impl Serialize) -> Result<Vec<u8>, AgentTaskStoreError> {

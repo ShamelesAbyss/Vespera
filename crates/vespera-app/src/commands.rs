@@ -774,10 +774,18 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         }),
         None => task_state.and_then(|state| event_commands::terminal_event(task_id, state)),
     };
-    let event_publication = if let (Some(journal), Some(event)) = (journal, event) {
-        Some(event_commands::record(journal, "run-agent", task_id, event).await)
-    } else {
-        None
+    let event_publication = match (journal, event) {
+        (Some(journal), _) if args.task_store.is_some() => {
+            event_commands::record_durable(
+                journal,
+                runtime.agents().durable_terminal_event(task_id),
+            )
+            .await
+        }
+        (Some(journal), Some(event)) => {
+            Some(event_commands::record(journal, "run-agent", task_id, event).await)
+        }
+        _ => None,
     };
     let journal_failed = event_publication
         .as_ref()

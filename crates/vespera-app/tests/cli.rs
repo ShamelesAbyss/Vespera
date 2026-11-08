@@ -1522,6 +1522,107 @@ required = ["text-generation"]
 }
 
 #[test]
+fn agent_terminal_event_recovers_after_journal_write_failure() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true);
+    let tasks = directory.0.join("tasks.sqlite3");
+    let journal = directory.0.join("events.sqlite3");
+    let db = tasks.to_str().unwrap();
+    let event_db = journal.to_str().unwrap();
+    let first = "11111111-aaaa-4aaa-8aaa-111111111111";
+    let second = "22222222-aaaa-4aaa-8aaa-222222222222";
+    drop(vespera_events::Journal::initialize(&journal, 8).unwrap());
+    let injector = rusqlite::Connection::open(&journal).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_event BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let run = |task| {
+        run_fixture_agent(
+            &directory,
+            &config,
+            &[
+                "--resume",
+                "--task-store",
+                db,
+                "--task-id",
+                task,
+                "--event-journal",
+                event_db,
+                "--unload-after",
+            ],
+        )
+    };
+    let first_run = run(first);
+    assert!(!first_run.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&first_run.stdout).unwrap();
+    assert_eq!(report["execution"]["task"]["state"], "completed");
+    assert!(report["event_publication"]["error"].is_string());
+    assert!(
+        vespera_events::Journal::open_reader(&journal)
+            .unwrap()
+            .replay(None, 8)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+
+    injector
+        .execute_batch("DROP TRIGGER reject_fixture_event;")
+        .unwrap();
+    let calls = fixture.captured().len();
+    let recover = |task| {
+        let output = execute(&[
+            "events",
+            "--journal",
+            event_db,
+            "recover-agent-task",
+            "--task-store",
+            db,
+            "--task",
+            task,
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let recovered = recover(first);
+    assert_eq!(recover(first), recovered);
+    assert_eq!(fixture.captured().len(), calls);
+
+    let second_run = run(second);
+    assert!(
+        second_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_run.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&second_run.stdout).unwrap();
+    assert_eq!(
+        recover(second)["cursor"],
+        report["event_publication"]["cursor"]
+    );
+    let mut reader = vespera_events::Journal::open_reader(&journal).unwrap();
+    let page = reader.replay(None, 8).unwrap();
+    assert_eq!(page.entries.len(), 2);
+    for (task, entry) in [first, second].into_iter().zip(page.entries) {
+        let retained =
+            vespera_agents::AgentTaskStore::inspect_terminal_event(&tasks, task.parse().unwrap())
+                .unwrap()
+                .unwrap();
+        assert_eq!(entry.event, retained);
+        let encoded = serde_json::to_string(&entry.event).unwrap();
+        assert!(!encoded.contains("bounded integrated task"));
+        assert!(!encoded.contains("fixture answer"));
+    }
+}
+
+#[test]
 fn agent_task_store_fences_interrupted_ids_and_reopens_completed_results() {
     use std::process::Stdio;
     use std::time::{Duration, Instant};

@@ -26,6 +26,13 @@ enum EventCommand {
         #[arg(long, default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=100_000))]
         retention: u32,
     },
+    /// Publish a task's durable terminal envelope to an existing journal.
+    RecoverAgentTask {
+        #[arg(long)]
+        task_store: PathBuf,
+        #[arg(long)]
+        task: TaskId,
+    },
     /// Read events after a cursor and print one JSON page.
     Replay {
         /// Cursor in journal-UUID:sequence form. Omit for the oldest retained event.
@@ -56,6 +63,12 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
         EventCommand::Init { retention } => {
             Journal::initialize(&args.journal, retention)?;
             Ok::<_, AppError>(serde_json::json!({ "initialized": true, "retention": retention }))
+        }
+        EventCommand::RecoverAgentTask { task_store, task } => {
+            let event = vespera_agents::AgentTaskStore::inspect_terminal_event(&task_store, task)?
+                .ok_or(JournalError::Invalid("durable terminal event unavailable"))?;
+            let cursor = Journal::open_writer(&args.journal)?.append(&event)?;
+            Ok(serde_json::json!({"cursor": cursor, "event_id": event.event_id}))
         }
         EventCommand::Replay { after, limit } => {
             let page = Journal::open_reader(&args.journal)?.replay(after, limit)?;
@@ -158,6 +171,34 @@ impl Publication {
             eprintln!("Event publication failed: {error}");
         }
     }
+
+    fn from_result(result: Result<Cursor, AppError>) -> Self {
+        match result {
+            Ok(cursor) => Self {
+                cursor: Some(cursor),
+                error: None,
+            },
+            Err(error) => Self {
+                cursor: None,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+}
+
+pub(crate) async fn record_durable(
+    mut journal: Journal,
+    event: Result<Option<EventEnvelope>, vespera_agents::AgentTaskStoreError>,
+) -> Option<Publication> {
+    let event = match event {
+        Ok(Some(event)) => event,
+        Ok(None) => return None,
+        Err(error) => return Some(Publication::from_result(Err(error.into()))),
+    };
+    let result = tokio::task::spawn_blocking(move || journal.append(&event))
+        .await
+        .unwrap_or(Err(JournalError::Database));
+    Some(Publication::from_result(result.map_err(AppError::from)))
 }
 
 pub(crate) async fn record(
@@ -190,16 +231,7 @@ pub(crate) async fn record_batch(
     })
     .await
     .unwrap_or(Err(JournalError::Database.into()));
-    match result {
-        Ok(cursor) => Publication {
-            cursor: Some(cursor),
-            error: None,
-        },
-        Err(error) => Publication {
-            cursor: None,
-            error: Some(error.to_string()),
-        },
-    }
+    Publication::from_result(result)
 }
 
 pub(crate) struct WorkflowJournal {

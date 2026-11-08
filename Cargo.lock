@@ -5381,6 +5381,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "ring",
+ "rusqlite",
  "serde",
  "serde_json",
  "sysinfo",

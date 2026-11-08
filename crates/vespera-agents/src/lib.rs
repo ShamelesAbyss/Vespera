@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use vespera_core::{
-    AgentDefinition, AgentId, AgentStatus, Capability, DomainError, MemoryId, MemoryLayer, ModelId,
-    ModelSelectionPolicy, Permission, ProviderId, SchedulerSample, Task, TaskId, TaskLeaseSample,
-    TaskState,
+    AgentDefinition, AgentId, AgentStatus, Capability, DomainError, EventEnvelope, MemoryId,
+    MemoryLayer, ModelId, ModelSelectionPolicy, Permission, ProviderId, SchedulerSample, Task,
+    TaskId, TaskLeaseSample, TaskState,
 };
 use vespera_model_registry::{ModelRegistration, ModelRegistry, RegistryError};
 use vespera_providers::CancellationToken;
@@ -419,6 +419,17 @@ impl AgentRuntime {
             .tasks
             .get(&task_id)
             .map(|task| task.state)
+    }
+
+    /// Read the envelope committed with the terminal task state, when available.
+    pub fn durable_terminal_event(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<EventEnvelope>, AgentTaskStoreError> {
+        match &lock_state(&self.state).task_store {
+            Some(store) => store.terminal_event(task_id),
+            None => Ok(None),
+        }
     }
 
     /// Read identities from an admitted local inference lease without exposing its payload.
