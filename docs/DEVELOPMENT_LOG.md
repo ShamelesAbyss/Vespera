@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Delegated desktop workflow
+
+Verified implementation checkpoint `39da56489b03636d51fd3341cc7541429a5e90d0`, pushed to `main`. The desktop can submit a bounded two-step draft and review to distinct saved agents on the same provider. The coordinator must have the delegation grant and neither agent may be held. The workflow uses the existing orchestrator, scheduler, durable workflow store, and per-agent task store.
+
+The native Windows run denied submission without the grant. After an explicit grant, two agents on Ollama 0.40.13 with `hermes3:8b` completed both steps in 4,584 ms. The review returned the requested color. CLI inspection after exit matched each attempt to its durable owner. Recovery published five audit events, including the exact completed draft attempt ID recorded as the review dependency. Ollama reported zero resident models after cleanup.
+
+Formatting, strict graphics Clippy, the graphics build, and the offline graphics suite passed. The desktop currently shows outcomes after execution, and the CLI can reopen the full report. Live Swarm projection, browsing retained workflows from the desktop, and arbitrary graphical workflow authoring remain open.
+
 ## 2026-11-07 — Official Windows application branding
 
 Verified branding checkpoint `e3ebf67eeab256c235914f4cf071189d2d3efd9c`, pushed to `main`. The canonical JPEG matches the supplied source. Regenerating the derivatives reproduced all checked asset hashes. A portable Windows run showed the icon beside the VESPERA name on Home and in the shared header in Hardware, Living World, and Models & Providers. Windows title-bar branding was observed. The desktop sets the Windows taskbar icon through winit. The graphics executable, console-free launcher and setup executable each contain the nine official ICO image sizes.
