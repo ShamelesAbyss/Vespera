@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-07 — Desktop workflow checkpoint browser
+
+Verified implementation checkpoint `ef8677d6aea98d914f4665b984cb63ce96676ab6`, pushed to `main`. The desktop now opens retained workflow checkpoints with F7, lists identities in acceptance order without loading payloads, and reads the selected outcome and attempt owners on demand. Selecting **Open in Swarm** focuses the existing journal projection on that root workflow. This neither resubmits the task nor opens a provider.
+
+The native Windows walkthrough opened two previously completed workflows after restart, showed their distinct responses and the recorded owners, and focused Swarm on the older root. The focused graph showed its three links. Backspace restored the six links in the full feed. Formatting, offline workspace and graphics tests, strict Clippy, and the Windows graphics build passed. Tests cover interrupted summaries and exclusion of unrelated workflow outcomes from a focused graph.
+
 ## 2026-11-07 — GitHub landing page and live desktop Swarm
 
 The README redesign checkpoint `6e221b590f264a1bbd607bc00274a266e48503cf` was published and checked in GitHub's Preview. It includes the official icon and two unmodified native Windows captures. Both Mermaid diagrams rendered, all 50 local links and asset references resolved, and local previews at 1280 and 390 pixels had no page overflow. The documented diagnostics, inventory, provider health, world replay, and paired deterministic experiment ran successfully. A private rehearsal also completed a bounded Ollama agent task and both authored workflow steps. Linux shell syntax is included for the common Cargo entry points. The visual and live provider checks used Windows.
