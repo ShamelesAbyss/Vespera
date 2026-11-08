@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Native Swarm acknowledgement evidence
+
+Verified implementation checkpoint `f77d2841c0ac69a69945623071ab30a78467dfee`, pushed to `main`. The Atlas timing checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42439252028).
+
+The opt-in broker policy emits a schema 8 operator receipt only when the signed recipient acknowledges a pending entry. SDK tests verify live delivery, concurrent and restarted retries, worker-feed isolation, metadata redaction and atomic rollback of the inbox removal and receipt. Windows formatting, offline workspace tests, both strict Clippy passes and the graphics tests and build passed.
+
+In the native Windows view, Swarm froze at sequence 1 with an amber enqueue link while the live feed advanced to sequence 2. Returning live displayed a pink reverse link and identified the acknowledging recipient. An independent signed replay contained one acceptance and one receipt after two acknowledgement requests. The event describes a route-level acknowledgement. Deploy schema 8 readers before enabling it. The next graphics gate is measured device VRAM and multi-device visibility in Machine.
+
 ## 2026-11-07 — Live Network and Swarm hardware validation
 
 Validated the graphics checkpoint `2b29b4c2df8ce9ae25d02dc0187b0ca4b3a23ccc` with two signed fixture workers and a live SQLite broker. The workers exercised real broker submit, claim, completion, mailbox send and acknowledgement operations. Worker outputs were deterministic fixture content.
