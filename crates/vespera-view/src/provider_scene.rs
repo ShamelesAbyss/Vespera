@@ -14,6 +14,7 @@ use vespera_providers::{
 
 use crate::atlas::{self, Layer, Layers};
 use crate::desktop_agent::{self, FinishedTask, Registration, Roster};
+use crate::desktop_workflow::{self, FinishedWorkflow, WorkflowRequest};
 use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
@@ -41,6 +42,7 @@ enum Action {
     RevokeDelegation,
     Suspend,
     Resume,
+    Workflow,
 }
 
 #[derive(Component)]
@@ -63,6 +65,10 @@ enum Edit {
         rebind: Option<AgentId>,
     },
     Prompt(String),
+    Workflow {
+        fields: [String; 3],
+        index: usize,
+    },
 }
 
 enum Work {
@@ -75,6 +81,10 @@ enum Work {
     Inspect(Mutex<Receiver<Result<StoredAgentTask, AgentTaskStoreError>>>),
     Task {
         result: Mutex<Receiver<Result<FinishedTask, String>>>,
+        cancel: CancellationToken,
+    },
+    Workflow {
+        result: Mutex<Receiver<Result<FinishedWorkflow, String>>>,
         cancel: CancellationToken,
     },
 }
@@ -198,6 +208,7 @@ fn setup(mut commands: Commands) {
                         button(Action::NewAgent, "New agent"),
                         button(Action::Rebind, "Rebind selected"),
                         button(Action::History, "Task history"),
+                        button(Action::Workflow, "Draft + review"),
                     ]
                 ),
                 (
@@ -215,7 +226,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Previous, "Previous page"),
                         button(Action::Next, "Next page"),
                         button(Action::Prompt, "Run agent task"),
-                        button(Action::Cancel, "Cancel task"),
+                        button(Action::Cancel, "Cancel work"),
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
@@ -238,7 +249,7 @@ fn setup(mut commands: Commands) {
 
 fn apply(action: Action, panel: &mut Panel) {
     if matches!(action, Action::Cancel) {
-        if let Some(Work::Task { cancel, .. }) = &panel.work {
+        if let Some(Work::Task { cancel, .. } | Work::Workflow { cancel, .. }) = &panel.work {
             cancel.cancel();
             panel.feedback = "Cancellation requested. Waiting for local cleanup.".into();
         }
@@ -279,6 +290,25 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Cancel => {}
+        Action::Workflow => {
+            let Some(roster) = &panel.roster else {
+                return;
+            };
+            if roster.len() < 2 {
+                panel.feedback = "Create two agents before starting a workflow.".into();
+            } else if roster
+                .selection(panel.selected)
+                .is_some_and(|(agent, _, _)| agent.permissions.contains(&Permission::Delegate))
+            {
+                panel.feedback.clear();
+                panel.draft = Some(Edit::Workflow {
+                    fields: Default::default(),
+                    index: 0,
+                });
+            } else {
+                panel.feedback = "Allow delegation for the selected coordinator first.".into();
+            }
+        }
         Action::AllowDelegation | Action::RevokeDelegation => {
             let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
                 return;
@@ -575,6 +605,8 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
             (&mut fields[*index], 8, |c| c.is_ascii_digit())
         }
         Edit::Prompt(value) => (value, 1200, |c| !c.is_control()),
+        Edit::Workflow { fields, index: 0 } => (&mut fields[0], 2, |c| c.is_ascii_digit()),
+        Edit::Workflow { fields, index } => (&mut fields[*index], 1200, |c| !c.is_control()),
     };
     match event.key_code {
         KeyCode::Backspace => {
@@ -676,7 +708,53 @@ fn submit(panel: &mut Panel) {
                 panel.feedback = "Task in progress. Waiting for the provider and scheduler.".into();
             }
         }
+        Edit::Workflow { fields, index } => submit_workflow(panel, fields, index),
     }
+}
+
+fn submit_workflow(panel: &mut Panel, fields: [String; 3], mut index: usize) {
+    let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
+        return;
+    };
+    let reviewer = fields[0]
+        .parse::<usize>()
+        .ok()
+        .and_then(|number| number.checked_sub(1))
+        .filter(|&reviewer| reviewer < roster.len() && reviewer != panel.selected);
+    let valid = if index == 0 {
+        reviewer.is_some()
+    } else {
+        !fields[index].trim().is_empty()
+    };
+    if !valid || index < 2 {
+        panel.feedback = if valid {
+            String::new()
+        } else {
+            "Enter a valid reviewer or prompt.".into()
+        };
+        index += usize::from(valid);
+        panel.draft = Some(Edit::Workflow { fields, index });
+        return;
+    }
+    let [_, draft_prompt, review_prompt] = fields;
+    let request = WorkflowRequest {
+        coordinator: panel.selected,
+        reviewer: reviewer.expect("validated reviewer index"),
+        draft_prompt,
+        review_prompt,
+    };
+    let cancel = CancellationToken::new();
+    let workflow_cancel = cancel.clone();
+    let result = background(move |runtime| {
+        runtime.block_on(desktop_workflow::run(
+            &dir,
+            roster,
+            request,
+            workflow_cancel,
+        ))
+    });
+    panel.work = Some(Work::Workflow { result, cancel });
+    panel.feedback = "Workflow in progress. Draft runs before the delegated review.".into();
 }
 
 fn background<T: Send + 'static>(
@@ -753,6 +831,14 @@ fn receive_work(mut panel: ResMut<Panel>) {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => panel.feedback = "The task reader stopped.".into(),
         },
+        Some(Work::Workflow { result, .. }) => match poll(result) {
+            Ok(Ok(finished)) => panel.feedback = workflow_summary(finished, panel.roster.as_ref()),
+            Ok(Err(error)) => panel.feedback = error,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panel.feedback = "The workflow worker stopped.".into()
+            }
+        },
         Some(Work::Task { result, .. }) => match poll(result) {
             Ok(Ok(task)) => {
                 let preview: String = task
@@ -778,6 +864,56 @@ fn receive_work(mut panel: ResMut<Panel>) {
         None => return,
     }
     panel.work = None;
+}
+
+fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> String {
+    use std::fmt::Write as _;
+
+    let report = &finished.report;
+    let mut summary = format!(
+        "Workflow {} | {} | {} ms",
+        report.task.id, report.task.state, report.elapsed_ms
+    );
+    if let Some(failure) = report.failure {
+        let _ = write!(summary, "\nOutcome: {failure:?}");
+    }
+    for attempt in &report.attempts {
+        let name = roster
+            .and_then(|roster| {
+                roster
+                    .config()
+                    .agents
+                    .iter()
+                    .find(|agent| agent.identity.id == attempt.agent_id)
+            })
+            .map_or("Unknown agent", |agent| agent.identity.name.as_str());
+        let state = attempt
+            .task_state
+            .map_or_else(|| "No task state".into(), |state| state.to_string());
+        let _ = write!(
+            summary,
+            "\n{} | {} | {}{}",
+            attempt.step,
+            name,
+            state,
+            if attempt.delegated {
+                " | delegated"
+            } else {
+                ""
+            }
+        );
+    }
+    if let Some(result) = report.selected_result() {
+        let _ = write!(
+            summary,
+            "\nReview: {}",
+            preview(&result.response.content, 420)
+        );
+    }
+    if !finished.cleanup_confirmed {
+        summary.push_str("\nRuntime cleanup was not confirmed.");
+    }
+    summary
 }
 
 fn preview(value: &str, limit: usize) -> String {
@@ -875,6 +1011,34 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                     fields[*index]
                 );
             }
+            Edit::Workflow { fields, index } => {
+                if *index == 0
+                    && let Some(roster) = &panel.roster
+                {
+                    content.push_str("\nChoose a different agent on the same provider:\n");
+                    for (index, agent) in roster.config().agents.iter().enumerate() {
+                        let _ = write!(
+                            content,
+                            "{}. {}{}",
+                            index + 1,
+                            agent.identity.name,
+                            if index % 2 == 0 { "    " } else { "\n" }
+                        );
+                    }
+                }
+                let labels = ["Reviewer number", "Draft prompt", "Review instruction"];
+                let _ = write!(
+                    content,
+                    "\n{}: {}_\n{}",
+                    labels[*index],
+                    fields[*index],
+                    if *index == 2 {
+                        "Enter runs the two steps. The reviewer receives the draft as untrusted input."
+                    } else {
+                        "Enter continues."
+                    }
+                );
+            }
             Edit::Prompt(prompt) => {
                 let _ = write!(
                     content,
@@ -913,7 +1077,10 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         }
     } else if panel.pending.is_some() {
         content.push_str("\nChecking health and discovering models...");
-    } else if panel.work.is_none() && !panel.feedback.starts_with("Task ") {
+    } else if panel.work.is_none()
+        && !panel.feedback.starts_with("Task ")
+        && !panel.feedback.starts_with("Workflow ")
+    {
         match &panel.outcome {
             None => content.push_str(
                 "\nLoopback servers without authentication. Select Test & discover or press Enter.",

@@ -5622,6 +5622,7 @@ dependencies = [
  "vespera-config",
  "vespera-core",
  "vespera-events",
+ "vespera-orchestrator",
  "vespera-providers",
  "vespera-sdk",
  "vespera-world",

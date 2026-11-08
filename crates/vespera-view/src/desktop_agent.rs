@@ -25,6 +25,10 @@ pub(super) struct Roster {
 }
 
 impl Roster {
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
     pub fn len(&self) -> usize {
         self.config.agents.len()
     }

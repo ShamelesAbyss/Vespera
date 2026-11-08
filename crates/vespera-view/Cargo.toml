@@ -7,7 +7,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit"]
 
 [[bin]]
 name = "vespera-view"
@@ -26,6 +26,7 @@ vespera-app = { path = "../vespera-app", optional = true }
 vespera-config = { workspace = true, optional = true }
 vespera-providers = { workspace = true, optional = true }
 vespera-events = { path = "../vespera-events", optional = true }
+vespera-orchestrator = { path = "../vespera-orchestrator", optional = true }
 vespera-sdk = { path = "../vespera-sdk", optional = true }
 vespera-world = { path = "../vespera-world", optional = true }
 clap = { workspace = true, optional = true }
