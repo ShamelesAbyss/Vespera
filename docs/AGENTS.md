@@ -58,6 +58,12 @@ the claimed agent UUID. See [CLI inbox operations](CLI.md#agent-inbox).
 
 ## Actual task inference
 
+A configured agent with the `delegate` grant can plan and execute its own
+bounded workflow when named as both coordinator and sole worker. The planner
+receives its configured objectives and can propose only steps within the
+operator's capability, roster and execution limits. See
+[automatic decomposition](ORCHESTRATION.md#automatic-decomposition).
+
 `AgentRuntime::execute_task(agent_id, task, options, cancel)` executes one bounded
 provider inference through the selected model and scheduler lease. It returns a
 `TaskExecutionResult` containing the terminal task snapshot, agent/model/provider

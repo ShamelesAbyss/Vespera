@@ -1991,6 +1991,7 @@ model_id = "55555555-5555-4555-8555-555555555555"
         input["workers"] = serde_json::json!(["66666666-6666-4666-8666-666666666666"]);
         fs::write(&request, input.to_string()).unwrap();
         let task_store = directory.0.join("agent-tasks.sqlite3");
+        let workflow_store = directory.0.join("workflow.sqlite3");
         let result = execute(&[
             "run-workflow",
             "--config",
@@ -1999,24 +2000,69 @@ model_id = "55555555-5555-4555-8555-555555555555"
             request.to_str().unwrap(),
             "--task-store",
             task_store.to_str().unwrap(),
+            "--workflow-store",
+            workflow_store.to_str().unwrap(),
             "--resume",
             "--unload-after",
             "--json",
         ]);
         let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(result.status.success(), accepts, "{report}");
+        let planner_calls = planner.captured();
+        let chats: Vec<_> = planner_calls
+            .iter()
+            .filter(|request| request.path == "/api/chat")
+            .collect();
+        assert_eq!(chats.len(), 1);
+        let body: serde_json::Value = serde_json::from_str(&chats[0].body).unwrap();
+        let prompt = body["messages"][0]["content"].as_str().unwrap();
+        let (_, data) = prompt.split_once('\n').unwrap();
+        let data: serde_json::Value = serde_json::from_str(data).unwrap();
+        assert_eq!(data["operator_request"], input["task"]["prompt"]);
+        assert_eq!(data["planner_profile"]["role"], "Knowledge curator");
         assert_eq!(
-            planner
-                .captured()
-                .iter()
-                .filter(|request| request.path == "/api/chat")
-                .count(),
-            1
+            data["planner_profile"]["personality"],
+            "Careful and concise"
         );
+        assert_eq!(
+            data["planner_profile"]["goals"],
+            serde_json::json!(["Preserve useful observations with provenance"])
+        );
+        assert!(data["planner_profile"].get("permissions").is_none());
+        assert!(data["planner_profile"].get("model_policy").is_none());
         let worker_calls = worker.captured();
         if accepts {
             assert_eq!(report["workflow"]["task"]["state"], "completed");
             assert_eq!(report["decomposition"]["agent_id"], AGENT);
+            let history = execute(&[
+                "workflow-history",
+                "--database",
+                workflow_store.to_str().unwrap(),
+                "--task",
+                input["task"]["id"].as_str().unwrap(),
+            ]);
+            assert!(history.status.success());
+            let history: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
+            for field in ["planning_task_id", "agent_id", "model_id", "provider_id"] {
+                assert_eq!(
+                    history["report"]["planning"][field],
+                    report["decomposition"][field]
+                );
+            }
+            let planning_history = execute(&[
+                "agent-task-history",
+                "--database",
+                task_store.to_str().unwrap(),
+                "--task",
+                report["decomposition"]["planning_task_id"]
+                    .as_str()
+                    .unwrap(),
+            ]);
+            assert!(planning_history.status.success());
+            let planning_history: serde_json::Value =
+                serde_json::from_slice(&planning_history.stdout).unwrap();
+            assert_eq!(planning_history["owner"], AGENT);
+            assert_eq!(planning_history["task"]["prompt"], prompt);
             assert_eq!(
                 report["decomposition"]["plan"]["steps"][0]["candidates"],
                 input["workers"]

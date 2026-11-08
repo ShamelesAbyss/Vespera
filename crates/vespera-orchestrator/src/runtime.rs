@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use vespera_agents::{AgentRuntime, ExecutionError, TaskExecutionResult};
 use vespera_core::{
-    AgentId, AgentStatus, EventKind, ModelId, Permission, Task, TaskId, TaskState,
+    AgentId, AgentStatus, EventKind, ModelId, Permission, ProviderId, Task, TaskId, TaskState,
     WorkflowDependency,
 };
 use vespera_providers::{CancellationToken, ProviderError};
@@ -54,6 +54,8 @@ pub struct Attempt {
 pub struct WorkflowReport {
     pub task: Task,
     pub coordinator: AgentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning: Option<PlanningEvidence>,
     pub output_policy: OutputPolicy,
     pub attempts: Vec<Attempt>,
     pub reserved_output_tokens: u64,
@@ -63,6 +65,25 @@ pub struct WorkflowReport {
     pub conflicting_steps: Vec<String>,
     pub failure: Option<Failure>,
     pub elapsed_ms: u64,
+}
+
+/// Provenance of the completed inference that proposed an accepted plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanningEvidence {
+    pub planning_task_id: TaskId,
+    pub agent_id: AgentId,
+    pub model_id: ModelId,
+    pub provider_id: ProviderId,
+}
+
+impl PlanningEvidence {
+    pub(crate) fn matches(self, workflow: &Workflow) -> bool {
+        self.agent_id == workflow.coordinator
+            && self.planning_task_id != workflow.task.id
+            && self.planning_task_id.validate().is_ok()
+            && self.model_id.validate().is_ok()
+            && self.provider_id.validate().is_ok()
+    }
 }
 impl WorkflowReport {
     /// Selected contribution only after successful policy evaluation. Conflicting
@@ -87,6 +108,8 @@ pub enum OrchestratorError {
     Plan(#[from] PlanError),
     #[error("coordinator must be registered, idle and explicitly permitted to delegate")]
     CoordinatorDenied,
+    #[error("planning inference does not match the workflow coordinator")]
+    InvalidPlanningEvidence,
     #[error("workflow identity already exists")]
     Duplicate,
     #[error("workflow history capacity reached; explicitly forget terminal history")]
@@ -239,7 +262,23 @@ impl Orchestrator {
         observer: Option<&UnboundedSender<EventKind>>,
         store: Option<&WorkflowStore>,
     ) -> Result<WorkflowReport, OrchestratorError> {
-        self.execute_internal(workflow, cancel, observer, store, false)
+        self.execute_internal(workflow, cancel, observer, store, false, None)
+            .await
+    }
+
+    /// Run a validated model-proposed plan and include planning evidence in its first checkpoint.
+    pub async fn execute_planned(
+        &self,
+        workflow: Workflow,
+        evidence: PlanningEvidence,
+        cancel: CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
+        store: Option<&WorkflowStore>,
+    ) -> Result<WorkflowReport, OrchestratorError> {
+        if !evidence.matches(&workflow) {
+            return Err(OrchestratorError::InvalidPlanningEvidence);
+        }
+        self.execute_internal(workflow, cancel, observer, store, false, Some(evidence))
             .await
     }
 
@@ -251,7 +290,7 @@ impl Orchestrator {
         observer: Option<&UnboundedSender<EventKind>>,
         store: &WorkflowStore,
     ) -> Result<WorkflowReport, OrchestratorError> {
-        self.execute_internal(workflow, cancel, observer, Some(store), true)
+        self.execute_internal(workflow, cancel, observer, Some(store), true, None)
             .await
     }
 
@@ -262,6 +301,7 @@ impl Orchestrator {
         observer: Option<&UnboundedSender<EventKind>>,
         store: Option<&WorkflowStore>,
         resume: bool,
+        planning: Option<PlanningEvidence>,
     ) -> Result<WorkflowReport, OrchestratorError> {
         workflow.validate()?;
         let coordinator = self
@@ -287,6 +327,7 @@ impl Orchestrator {
                 WorkflowReport {
                     task,
                     coordinator: workflow.coordinator,
+                    planning,
                     output_policy: workflow.output.clone(),
                     attempts: Vec::new(),
                     reserved_output_tokens: 0,

@@ -335,7 +335,7 @@ impl VesperaRuntime {
                 models: capabilities,
             });
         }
-        let task = request.planning_task(&profiles)?;
+        let task = request.planning_task_for_agent(&profiles, &coordinator.identity)?;
         let result = self
             .run_agent(
                 request.coordinator,

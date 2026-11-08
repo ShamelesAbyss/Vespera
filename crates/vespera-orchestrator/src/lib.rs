@@ -6,5 +6,7 @@ mod runtime;
 mod storage;
 pub use decomposition::{DecompositionError, DecompositionRequest, WorkerCapabilities};
 pub use plan::{ConflictPolicy, OutputPolicy, PlanError, Step, Workflow};
-pub use runtime::{Attempt, Failure, Orchestrator, OrchestratorError, WorkflowReport};
+pub use runtime::{
+    Attempt, Failure, Orchestrator, OrchestratorError, PlanningEvidence, WorkflowReport,
+};
 pub use storage::{StoredWorkflow, WorkflowStore, WorkflowStoreError};

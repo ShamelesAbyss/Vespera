@@ -26,7 +26,10 @@ the root task, one configured coordinator and an ordered allowlist of up to
 `delegate` grant. Use `--resume` to activate suspended roster agents for this
 invocation. [Example request](../config/decomposition.example.json)
 
-Vespera makes one bounded planning call. The model proposes step names,
+Vespera makes one bounded planning call. The selected coordinator's configured
+role, description, personality and goals accompany the operator request as
+structured data. The selected provider receives the profile, so keep
+credentials and unrelated private data out of those fields. The model proposes step names,
 instructions, capability requirements, dependencies and a final output step.
 Vespera derives eligible candidates from the operator roster and each
 worker's model policy. It rejects unknown fields, unavailable capability
@@ -38,8 +41,11 @@ are untrusted task input. Execution uses the existing authorization path.
 The command deadline covers planning and execution. The generated workflow's
 durable deadline starts when execution accepts the validated plan. JSON
 output includes the accepted plan and planning-call identity under
-`decomposition`. The workflow store retains the accepted plan and worker
-attempts. To resume from a checkpoint, extract that plan from history and
+`decomposition`. The workflow store retains the accepted plan, worker
+attempts and planning provenance under `report.planning`. When both stores
+were supplied, use the recorded `planning_task_id` with `agent-task-history`
+to reopen the planning prompt and result. To resume from a checkpoint, extract
+that plan from history and
 use `--workflow-file` with `--resume-workflow`.
 
 ## Bounds and failure semantics

@@ -21,13 +21,14 @@ use vespera_app::runtime::{
 };
 use vespera_config::AppConfig;
 use vespera_core::{
-    AgentId, AgentStatus, EventKind, MemoryId, MemoryLayer, MemoryRecord, ModelId, Permission,
-    ProviderId, Task, TaskId, TaskState,
+    AgentId, AgentStatus, EventKind, MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId,
+    TaskState,
 };
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
 use vespera_orchestrator::{
-    DecompositionRequest, Workflow, WorkflowReport, WorkflowStore, WorkflowStoreError,
+    DecompositionRequest, PlanningEvidence, Workflow, WorkflowReport, WorkflowStore,
+    WorkflowStoreError,
 };
 use vespera_providers::CancellationToken;
 use vespera_scheduler::StartupResidencyReport;
@@ -55,10 +56,8 @@ struct WorkflowRunReport {
 #[derive(Serialize)]
 struct DecompositionReport {
     plan: Workflow,
-    planning_task_id: TaskId,
-    agent_id: AgentId,
-    model_id: ModelId,
-    provider_id: ProviderId,
+    #[serde(flatten)]
+    evidence: PlanningEvidence,
 }
 
 enum WorkflowInput {
@@ -302,10 +301,12 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 let (plan, result) = runtime.decompose_workflow(&request, cancel.clone()).await?;
                 decomposition = Some(DecompositionReport {
                     plan: plan.clone(),
-                    planning_task_id: result.task.id,
-                    agent_id: result.agent_id,
-                    model_id: result.model_id,
-                    provider_id: result.provider_id,
+                    evidence: PlanningEvidence {
+                        planning_task_id: result.task.id,
+                        agent_id: result.agent_id,
+                        model_id: result.model_id,
+                        provider_id: result.provider_id,
+                    },
                 });
                 plan
             }
@@ -318,6 +319,21 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                     cancel,
                     observer,
                     workflow_store.as_ref().expect("resume requires store"),
+                )
+                .await
+                .map_err(RuntimeError::from)
+        } else if let Some(decomposition) = &decomposition {
+            if cancel.is_cancelled() {
+                return Err(RuntimeError::Cancelled);
+            }
+            runtime
+                .orchestrator()
+                .execute_planned(
+                    workflow,
+                    decomposition.evidence,
+                    cancel,
+                    observer,
+                    workflow_store.as_ref(),
                 )
                 .await
                 .map_err(RuntimeError::from)
@@ -397,7 +413,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             println!(
                 "Accepted {} planned steps from coordinator {}",
                 decomposition.plan.steps.len(),
-                decomposition.agent_id
+                decomposition.evidence.agent_id
             );
         }
         print_local_host_limits(local_host_limits);

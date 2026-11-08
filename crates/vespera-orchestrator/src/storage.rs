@@ -314,6 +314,9 @@ impl WorkflowStore {
         if plan.task.id != task_id
             || report.task.id != task_id
             || report.coordinator != plan.coordinator
+            || report
+                .planning
+                .is_some_and(|planning| !planning.matches(&plan))
             || report.task.state == TaskState::Queued
             || terminal == (report.task.state == TaskState::Running)
         {
@@ -363,6 +366,12 @@ mod tests {
         let report = WorkflowReport {
             task,
             coordinator: workflow.coordinator,
+            planning: Some(crate::PlanningEvidence {
+                planning_task_id: TaskId::new(),
+                agent_id: workflow.coordinator,
+                model_id: vespera_core::ModelId::new(),
+                provider_id: vespera_core::ProviderId::new(),
+            }),
             output_policy: workflow.output.clone(),
             attempts: vec![],
             reserved_output_tokens: 0,
@@ -377,6 +386,8 @@ mod tests {
         drop(store);
         let store = WorkflowStore::open_for_resume(&path).unwrap();
         store.ensure_resumable(&workflow).unwrap();
+        let (resumed, _) = store.resumable_report(&workflow).unwrap();
+        assert_eq!(resumed.planning, report.planning);
         for update in [
             "UPDATE workflows SET started_unix_ms=0, observed_unix_ms=0",
             "UPDATE workflows SET observed_unix_ms=9223372036854775807",
