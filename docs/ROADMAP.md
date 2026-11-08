@@ -92,6 +92,7 @@ Implement structured SQLite storage with transactional migration and inspection.
 - Reopen two distinct namespaces after restart/model replacement; deny cross-agent reads/writes and test isolation.
 - Implement structured queries and FTS before optional embeddings; test retention/deletion and migration rollback or documented recovery.
 - Consolidation preserves original episodes/provenance and links derived summaries to sources; identity/permissions stay control-plane owned.
+- Completed task results can be recovered into episodic memory from the private agent task store. Backup and restore validation remain open.
 
 ## Milestone 9 — Event bus and real-time observability
 

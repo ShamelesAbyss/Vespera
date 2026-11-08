@@ -296,6 +296,7 @@ Common options precede the subcommand: required `--agent <UUID>`, `--config <PAT
 | --- | --- |
 | `init` | No action options. `memory_write`; creates parent directories and initializes or validates an existing database. |
 | `add` | Required `--content-file <PATH>`; optional `--id <UUID>` (fresh UUID by default), `--layer <LAYER>` (default `observation`), `--origin observation\|import` (default `observation`), `--created-at-unix-ms <N>` (current local observation by default). `memory_write`. |
+| `remember-task` | Required `--task-store <PATH>`, `--task <UUID>` and `--id <UUID>`. Copies the owned, completed task's exact response into episodic memory. `memory_write`. |
 | `get` | Required `--id <UUID>`. `memory_read`; returns record and lineage, or JSON `record: null` and nonzero status when absent. |
 | `list` | Optional structured query flags below. `memory_read`. |
 | `search` | Required `--query-file <PATH>` plus the structured query flags. `memory_read`; literal phrase search. |
@@ -303,7 +304,18 @@ Common options precede the subcommand: required `--agent <UUID>`, `--config <PAT
 | `consolidate` | Required `--content-file <PATH>`, repeatable `--source <UUID>` (1–32 distinct owned records), `--method <LABEL>` (1–128 UTF-8 bytes); optional `--id`, `--layer` (default `long_term`), `--created-at-unix-ms`. Both grants. Stores supplied text and lineage; runs no summarization model. |
 | `delete` | Required `--id <UUID>`. Both grants. Removes an unreferenced record and FTS entry atomically; returns `memory_absent` for an already absent record too. Referenced sources cannot be deleted before their derived records. |
 
-Content files must contain nonempty UTF-8 up to 64 KiB. Query files must contain a nonempty UTF-8 phrase up to 256 bytes and at most 32 whitespace-separated terms. Layers: `long_term`, `episodic`, `working`, `relationship`, `goal`, `observation`. Timestamps must fit a nonnegative SQLite signed integer; no task source or `generated` origin can be declared by this offline CLI because it has no accepted task ledger. A derived record is created only through `consolidate`.
+Content files must contain nonempty UTF-8 up to 64 KiB. Query files must contain a nonempty UTF-8 phrase up to 256 bytes and at most 32 whitespace-separated terms. Layers include `long_term`, `episodic`, `working`, `relationship`, `goal` and `observation`. Timestamps must fit a nonnegative SQLite signed integer. `add` accepts observation and import origins. `remember-task` verifies generated provenance against the task database. A derived record is created through `consolidate`.
+
+```powershell
+# Set $taskId to a completed task UUID and keep $memoryId if you retry.
+$memoryId = [guid]::NewGuid()
+.\target\release\vespera.exe @memoryArgs remember-task --task-store data/agent-tasks.sqlite3 --task $taskId --id $memoryId --json
+```
+
+Use the same owner UUID and private task database used for execution. The
+memory database must already exist. Use `memory get --id $memoryId` to verify
+the record after a conflict or interrupted command. Reusing the memory UUID
+leaves the prior record intact.
 
 | `list` / `search` filter | Bound/default |
 | --- | --- |

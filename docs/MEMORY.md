@@ -25,7 +25,9 @@ Open a file explicitly with `MemoryStore::open(path, StorageLimits, authorizer)`
 
 A `MemoryRecord` contains its memory UUID, owner UUID, agent-writable layer, nonempty content, caller-supplied Unix-millisecond timestamp and optional source task. Layers are `long_term`, `episodic`, `working`, `relationship`, `goal` and `observation`. Identity and permission records are deliberately absent. Timestamps must fit SQLite's nonnegative signed integer range and are not independently verified clocks.
 
-Origins distinguish `observation`, `import`, `generated` and `derived`; these are supplied classifications, not proof that content is true. `generated` requires a source task. Any supplied source task must be accepted and assigned to the owner according to the authorizer at write time. Acceptance does not imply successful task completion or factual validity. Existing task IDs remain recorded after reopen even when a fresh agent runtime has no old in-process task history; durable task/source auditing remains future work.
+Origins distinguish `observation`, `import`, `generated` and `derived`. They describe provenance. `generated` requires a source task accepted and assigned to the owner according to the authorizer at write time.
+
+`memory remember-task` authorizes an offline write from an owned, completed result in the private agent task store. It copies the recorded response verbatim into episodic memory. The caller supplies a new memory UUID and needs the current `memory_write` grant. The memory row retains the task UUID. Keep the task database available to inspect the original execution. The two databases are written separately. See [offline durable memory](CLI.md#offline-durable-memory).
 
 Stored results include a monotonically increasing **namespace-local** sequence. Other agents' inserts do not create observable cursor gaps. Namespace counters survive deletion, so old cursors do not silently restart. Memory UUIDs must be unique among live records; explicit deletion can free an unreferenced UUID, while sequence numbers are never reset/reused. Stable identity/lineage should therefore use newly generated memory UUIDs for new observations.
 

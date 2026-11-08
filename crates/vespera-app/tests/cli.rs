@@ -1200,6 +1200,114 @@ fn residency_journal_fences_an_interrupted_load_across_cli_processes() {
 }
 
 #[test]
+fn memory_remember_task_recovers_only_the_exact_owned_result() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let peer = "88888888-8888-4888-8888-888888888888";
+    let config = format!(
+        r#"{}
+[[agents]]
+permissions = ["memory_write"]
+[agents.identity]
+id = "{peer}"
+name = "Unrelated peer"
+role = "Fixture"
+[agents.model_policy]
+kind = "fixed"
+model_id = "22222222-2222-4222-8222-222222222222"
+"#,
+        runtime_config(&fixture, false, true)
+            .replace("permissions = []", "permissions = [\"memory_write\"]"),
+    );
+    let task_store = directory.0.join("tasks.sqlite3");
+    let task_store = task_store.to_str().unwrap();
+    let memory_database = directory.0.join("memory.sqlite3");
+    let task = "77777777-7777-4777-8777-777777777777";
+    let id = "99999999-9999-4999-8999-999999999999";
+    let completed = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--task-store",
+            task_store,
+            "--task-id",
+            task,
+            "--resume",
+            "--unload-after",
+        ],
+    );
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    let execution: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    let calls = fixture.captured().len();
+    let config_path = directory.write_config(&config);
+    let memory = |agent, action: &[&str]| {
+        let mut args = vec![
+            "memory",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--database",
+            memory_database.to_str().unwrap(),
+            "--agent",
+            agent,
+            "--json",
+        ];
+        args.extend_from_slice(action);
+        execute(&args)
+    };
+    assert!(memory(AGENT, &["init"]).status.success());
+    let recover = |actor, task| {
+        memory(
+            actor,
+            &[
+                "remember-task",
+                "--task-store",
+                task_store,
+                "--task",
+                task,
+                "--id",
+                id,
+            ],
+        )
+    };
+    for denied in [recover(peer, task), recover(AGENT, id)] {
+        assert!(!denied.status.success());
+        assert!(denied.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("memory source is unavailable"));
+    }
+    let saved = recover(AGENT, task);
+    assert!(
+        saved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    let saved: serde_json::Value = serde_json::from_slice(&saved.stdout).unwrap();
+    assert_eq!(saved["record"]["origin"], "generated");
+    assert_eq!(saved["record"]["record"]["layer"], "episodic");
+    assert_eq!(saved["record"]["record"]["agent_id"], AGENT);
+    assert_eq!(saved["record"]["record"]["id"], id);
+    assert_eq!(saved["record"]["record"]["source_task_id"], task);
+    assert_eq!(
+        saved["record"]["record"]["content"],
+        execution["execution"]["response"]["content"]
+    );
+    assert!(!recover(AGENT, task).status.success());
+    directory.write_config(&config.replace(
+        "permissions = [\"memory_write\"]",
+        "permissions = [\"memory_read\"]",
+    ));
+    assert!(!recover(AGENT, task).status.success());
+    let reopened = memory(AGENT, &["get", "--id", id]);
+    assert!(reopened.status.success());
+    let reopened: serde_json::Value = serde_json::from_slice(&reopened.stdout).unwrap();
+    assert_eq!(reopened["record"], saved["record"]);
+    assert_eq!(fixture.captured().len(), calls);
+}
+
+#[test]
 fn agent_inbox_reopens_ordered_messages_with_current_grants_and_task_ownership() {
     let fixture = HttpFixture::new(false);
     let directory = ScratchDirectory::new();

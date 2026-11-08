@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use vespera_app::memory::configured_authorizer;
-use vespera_core::{AgentId, MemoryId, MemoryLayer, MemoryRecord, Permission};
+use vespera_app::memory::{authorize_remembered_task, configured_authorizer};
+use vespera_core::{AgentId, MemoryId, MemoryLayer, MemoryRecord, Permission, TaskId};
 use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
 
 #[derive(Debug, Args)]
@@ -43,6 +43,16 @@ enum MemoryCommand {
         /// Supplied timestamp; defaults to this process's Unix-millisecond observation.
         #[arg(long)]
         created_at_unix_ms: Option<u64>,
+    },
+    /// Save the exact generated result of an owned completed task from private history.
+    RememberTask {
+        #[arg(long)]
+        task_store: PathBuf,
+        #[arg(long)]
+        task: TaskId,
+        /// Caller-selected memory UUID. An existing record is never replaced.
+        #[arg(long)]
+        id: MemoryId,
     },
     /// Inspect one record and its lineage; missing records return nonzero.
     Get {
@@ -216,7 +226,9 @@ fn record(
 fn execute(args: MemoryArgs) -> Result<Output, AppError> {
     let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let required = match &args.action {
-        MemoryCommand::Init | MemoryCommand::Add { .. } => vec![Permission::MemoryWrite],
+        MemoryCommand::Init | MemoryCommand::Add { .. } | MemoryCommand::RememberTask { .. } => {
+            vec![Permission::MemoryWrite]
+        }
         MemoryCommand::Consolidate { .. } | MemoryCommand::Delete { .. } => {
             vec![Permission::MemoryRead, Permission::MemoryWrite]
         }
@@ -244,6 +256,24 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
             let store =
                 MemoryStore::open_existing(&args.database, StorageLimits::default(), authorizer)?;
             json!({"agent_id":actor,"record":store.insert(actor,record,origin.into())?})
+        }
+        MemoryCommand::RememberTask {
+            task_store,
+            task,
+            id,
+        } => {
+            let (authority, result) = authorize_remembered_task(&config, actor, &task_store, task)?;
+            let store =
+                MemoryStore::open_existing(&args.database, StorageLimits::default(), authority)?;
+            let record = MemoryRecord {
+                id,
+                agent_id: actor,
+                layer: MemoryLayer::Episodic,
+                content: result.response.content,
+                created_at_unix_ms: current_timestamp()?,
+                source_task_id: Some(task),
+            };
+            json!({"agent_id":actor,"record":store.insert(actor,record,MemoryOrigin::Generated)?})
         }
         MemoryCommand::Consolidate {
             content_file,
