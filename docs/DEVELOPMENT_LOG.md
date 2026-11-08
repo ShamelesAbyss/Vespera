@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Stabilization audit and non-loopback TLS
+
+Packaging and CI checkpoint `928c69784074a44a59bb8972a8569d7aa31e5022` was pushed to `main`. The portable allowlist now includes the Living World screenshots, visual guide, art credits, and other files linked from the packaged README and ledger. The packager test passed, and all 37 allowlisted documentation and asset paths resolved in Git. Windows workspace compilation, tests, strict Clippy, Rustdoc, and the graphics suite passed during the baseline audit. The GitHub workflow now includes a Windows native build and test job.
+
+Interoperability checkpoint `ca7a9ff684622c4ce25a193a2e6990a6931c1226` was pushed to `main`. Both phases of the isolated TLS rehearsal passed with a Windows SDK process and a Linux broker in an Ubuntu WSL2 guest. The broker bound to its private non-loopback address. An incorrect signing key, an unauthorized message route, and a foreign event cursor were rejected. After the broker stopped and restarted against the same SQLite store, the client recovered the completed task, resumed at the saved cursor, and acknowledged the pending message. Re-sending the message left the inbox empty. This verifies a host-to-VM path on one physical machine. The procedure is available for a separate physical host. [TLS rehearsal](PROTOCOL.md#rehearse-a-non-loopback-tls-deployment)
+
 ## 2026-11-08 — Desktop provider credentials and README gallery
 
 Verified implementation checkpoint `2b1d8d1db4e078476c8f969454807772cfb35a04`, pushed to `main`. The desktop provider panel accepts a `VESPERA_` environment variable name and saves that reference with the selected agent binding. Changing the discovery endpoint or adapter clears the draft reference. The value comes from the launch environment. A subprocess fixture verified that the OpenAI-compatible server rejected a request without authorization, accepted authenticated discovery, and returned a task result after the saved profile was reopened. The fixture checked durable task ownership and searched both SQLite files for the generated token. Formatting, strict graphics Clippy, and the graphics suite passed. OS-backed storage and authentication checks against deployed servers remain open.
