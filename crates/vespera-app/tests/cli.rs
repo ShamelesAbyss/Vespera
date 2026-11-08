@@ -1944,12 +1944,14 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     assert!(!duplicated.is_supported());
     let mut v3 = active.clone();
     v3.schema_version = 3;
+    v3.last_admission = None;
     assert!(!v3.is_supported());
     v3.tasks.as_mut().unwrap()[0].memory_context_records = None;
     assert!(v3.is_supported());
     let mut legacy = serde_json::to_value(&active).unwrap();
     legacy["schema_version"] = 2.into();
     legacy.as_object_mut().unwrap().remove("tasks");
+    legacy.as_object_mut().unwrap().remove("last_admission");
     let v2: SchedulerSample = serde_json::from_value(legacy.clone()).unwrap();
     assert!(v2.is_supported() && v2.models.is_some() && v2.tasks.is_none());
     legacy["schema_version"] = 1.into();
@@ -1959,6 +1961,20 @@ fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     let final_bytes = fs::read(&path).unwrap();
     let final_sample: SchedulerSample = serde_json::from_slice(&final_bytes).unwrap();
     assert!(final_sample.finished && final_sample.queue_closed);
+    assert_eq!(
+        final_sample.last_admission,
+        Some(vespera_core::AdmissionObservation {
+            model_id: owner.model_id,
+            decision: vespera_core::AdmissionDecision::Admitted {
+                loaded_on_demand: true
+            },
+        }),
+    );
+    let mut v4 = active.clone();
+    v4.schema_version = 4;
+    assert!(!v4.is_supported());
+    v4.last_admission = None;
+    assert!(v4.is_supported());
     assert_eq!(final_sample.admitted, 0);
     assert_eq!(final_sample.reserved, Default::default());
     assert_eq!(final_sample.model_reservations, 0);
@@ -2976,6 +2992,47 @@ fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs
     let serialized = serde_json::to_string(&entries).unwrap();
     assert!(!serialized.contains("fixture integrated answer"));
     assert!(!serialized.contains("Produce one short contribution"));
+}
+
+#[test]
+fn scheduler_telemetry_preserves_the_terminal_budget_rejection() {
+    use vespera_core::{AdmissionDecision, ResourceKind, SchedulerSample};
+
+    let directory = ScratchDirectory::new();
+    let provider = HttpFixture::new(false);
+    let config = format!(
+        "{}\n[inference_overhead]\nram_bytes = 4294967296\n",
+        runtime_config(&provider, false, true)
+    );
+    let telemetry = directory.0.join("rejected");
+    let output = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--scheduler-telemetry",
+            telemetry.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    let sample: SchedulerSample =
+        serde_json::from_slice(&fs::read(telemetry.join(SchedulerSample::FILE_NAME)).unwrap())
+            .unwrap();
+    assert!(sample.is_supported() && sample.finished && sample.queue_closed);
+    let observation = sample.last_admission.unwrap();
+    assert_eq!(
+        observation.model_id.to_string(),
+        "22222222-2222-4222-8222-222222222222"
+    );
+    assert_eq!(
+        observation.decision,
+        AdmissionDecision::BudgetLimit {
+            resource: ResourceKind::Ram,
+            requested: 4294967396,
+            limit: 4294967296,
+        }
+    );
+    assert!(sample.tasks.unwrap().is_empty());
 }
 
 #[test]

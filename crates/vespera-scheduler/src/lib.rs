@@ -23,8 +23,9 @@ use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 pub use vespera_core::ReservationState as ResidencyState;
 use vespera_core::{
-    DomainError, EventKind, InferenceOverhead, ModelId, ModelReservationSample, ProviderId,
-    ResourceBudget, ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
+    AdmissionDecision, AdmissionObservation, DomainError, EventKind, InferenceOverhead, ModelId,
+    ModelReservationSample, ProviderId, ResourceBudget, ResourceKind, ResourceRequest,
+    ResourceUsage, SchedulerSample, TaskLeaseSample,
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
@@ -227,6 +228,7 @@ impl fmt::Debug for ScheduledInference {
 #[derive(Default)]
 struct SchedulerState {
     usage: ResourceUsage,
+    last_admission: Option<AdmissionObservation>,
     resident_models: BTreeMap<ModelId, ResidentModel>,
     logical_tick: u64,
     leases: BTreeMap<uuid::Uuid, ModelId>,
@@ -282,6 +284,49 @@ enum Preparation {
     Ready { needs_load: bool },
     ReloadContext,
     Evict(ModelId),
+}
+
+fn admission_decision(result: &Result<ScheduledInference, SchedulerError>) -> AdmissionDecision {
+    use SchedulerError as Error;
+    match result {
+        Ok(admission) => AdmissionDecision::Admitted {
+            loaded_on_demand: admission.loaded_on_demand,
+        },
+        Err(Error::Cancelled | Error::Queue(QueueError::Cancelled)) => AdmissionDecision::Cancelled,
+        Err(Error::Queue(QueueError::Full)) => AdmissionDecision::QueueFull,
+        Err(Error::Queue(QueueError::Closed)) => AdmissionDecision::QueueClosed,
+        Err(Error::Queue(_)) => AdmissionDecision::QueueUnavailable,
+        Err(Error::BudgetExceeded(DomainError::ResourceLimitExceeded {
+            resource,
+            requested,
+            limit,
+        })) => AdmissionDecision::BudgetLimit {
+            resource: *resource,
+            requested: *requested,
+            limit: *limit,
+        },
+        Err(Error::BudgetExceeded(_)) => AdmissionDecision::ResourceAccounting,
+        Err(Error::UnknownResources { .. }) => AdmissionDecision::UnknownResources,
+        Err(Error::ModelUnavailable { .. }) => AdmissionDecision::ModelUnavailable,
+        Err(Error::ContextInUse { .. }) => AdmissionDecision::ContextInUse,
+        Err(
+            Error::ExternallyResident { .. }
+            | Error::RecoveredResidency { .. }
+            | Error::ResidencyAlias { .. }
+            | Error::UncertainResidency { .. },
+        ) => AdmissionDecision::ResidencyConflict,
+        Err(
+            Error::StartupAlreadyUsed
+            | Error::InvalidStartupResidency { .. }
+            | Error::ResidencyJournal(_),
+        ) => AdmissionDecision::ResidencyEvidenceUnavailable,
+        Err(Error::Registry(_) | Error::RegistrationChanged { .. }) => {
+            AdmissionDecision::RegistryChanged
+        }
+        Err(Error::Provider(_) | Error::UnacknowledgedLifecycle { .. }) => {
+            AdmissionDecision::ProviderLifecycle
+        }
+    }
 }
 
 struct ResidencyObservation {
@@ -346,6 +391,7 @@ pub struct ReservationObservation {
     pub uncertain: usize,
     pub models: Vec<ModelReservationSample>,
     pub tasks: Vec<TaskLeaseSample>,
+    pub last_admission: Option<AdmissionObservation>,
 }
 impl fmt::Debug for SchedulerState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -790,6 +836,7 @@ impl ResourceScheduler {
             uncertain,
             models,
             tasks,
+            last_admission: state.last_admission,
         }
     }
 
@@ -891,6 +938,30 @@ impl ResourceScheduler {
     }
 
     async fn prepare(
+        &self,
+        model_id: ModelId,
+        requested_context_tokens: Option<u32>,
+        priority: u8,
+        expected_model_name: Option<&str>,
+        cancel: CancellationToken,
+    ) -> Result<ScheduledInference, SchedulerError> {
+        let result = self
+            .prepare_inner(
+                model_id,
+                requested_context_tokens,
+                priority,
+                expected_model_name,
+                cancel,
+            )
+            .await;
+        lock(&self.state).last_admission = Some(AdmissionObservation {
+            model_id,
+            decision: admission_decision(&result),
+        });
+        result
+    }
+
+    async fn prepare_inner(
         &self,
         model_id: ModelId,
         requested_context_tokens: Option<u32>,

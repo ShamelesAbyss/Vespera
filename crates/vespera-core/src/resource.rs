@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::DomainError;
+use crate::{DomainError, ModelId};
 
 /// Dimension of a resource limit, used by errors and event payloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -224,6 +224,39 @@ pub struct TaskLeaseSample {
     pub memory_context_records: Option<usize>,
 }
 
+/// The last request whose scheduler preparation returned in this runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionObservation {
+    pub model_id: ModelId,
+    pub decision: AdmissionDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AdmissionDecision {
+    Admitted {
+        loaded_on_demand: bool,
+    },
+    Cancelled,
+    QueueFull,
+    QueueClosed,
+    QueueUnavailable,
+    BudgetLimit {
+        resource: ResourceKind,
+        requested: u64,
+        limit: u64,
+    },
+    ResourceAccounting,
+    UnknownResources,
+    ModelUnavailable,
+    ContextInUse,
+    ResidencyConflict,
+    ResidencyEvidenceUnavailable,
+    RegistryChanged,
+    ProviderLifecycle,
+}
+
 /// Bounded local snapshot published by one CLI runtime. Reservations are estimates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,10 +280,13 @@ pub struct SchedulerSample {
     /// Version 3 adds bounded ownership for leases whose model is displayed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tasks: Option<Vec<TaskLeaseSample>>,
+    /// Version 5 adds the most recent completed scheduler admission decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_admission: Option<AdmissionObservation>,
 }
 
 impl SchedulerSample {
-    pub const SCHEMA_VERSION: u32 = 4;
+    pub const SCHEMA_VERSION: u32 = 5;
     pub const FILE_NAME: &str = "scheduler.json";
     pub const MAX_FILE_BYTES: u64 = 16384;
     pub const MAX_MODELS: usize = 16;
@@ -258,7 +294,13 @@ impl SchedulerSample {
     pub const MAX_MEMORY_CONTEXT_RECORDS: usize = 8;
 
     pub fn is_supported(&self) -> bool {
-        if self.budget.validate().is_err() {
+        if self.budget.validate().is_err()
+            || self.last_admission.is_some_and(|admission| {
+                self.schema_version != Self::SCHEMA_VERSION
+                    || admission.model_id.validate().is_err()
+                    || matches!(admission.decision, AdmissionDecision::BudgetLimit { requested, limit, .. } if requested <= limit)
+            })
+        {
             return false;
         }
         if self.schema_version == 1 {
@@ -282,7 +324,7 @@ impl SchedulerSample {
         }
         match (self.schema_version, &self.tasks) {
             (2, None) => true,
-            (3 | Self::SCHEMA_VERSION, Some(tasks)) if tasks.len() <= Self::MAX_TASKS => {
+            (3..=Self::SCHEMA_VERSION, Some(tasks)) if tasks.len() <= Self::MAX_TASKS => {
                 let mut ids = std::collections::BTreeSet::new();
                 let mut leases = std::collections::BTreeSet::new();
                 tasks.iter().all(|task| {
@@ -290,8 +332,7 @@ impl SchedulerSample {
                         && task.agent_id.validate().is_ok()
                         && !task.lease_id.is_nil()
                         && task.memory_context_records.is_none_or(|count| {
-                            self.schema_version == Self::SCHEMA_VERSION
-                                && count <= Self::MAX_MEMORY_CONTEXT_RECORDS
+                            self.schema_version >= 4 && count <= Self::MAX_MEMORY_CONTEXT_RECORDS
                         })
                         && ids.insert(task.task_id)
                         && leases.insert(task.lease_id)

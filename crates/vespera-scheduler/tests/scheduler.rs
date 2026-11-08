@@ -558,6 +558,13 @@ async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
         assert!(matches!(events.receiver.try_recv().unwrap().kind,
             vespera_core::EventKind::ResourceLimitReached { resource: actual, requested, limit, .. }
             if actual == resource && requested > limit));
+        let observed = scheduler.observe_reservations().last_admission.unwrap();
+        assert_eq!(observed.model_id, model);
+        assert!(matches!(
+            observed.decision,
+            vespera_core::AdmissionDecision::BudgetLimit { resource: actual, requested, limit }
+                if actual == resource && requested > limit
+        ));
         let usage = scheduler.usage_snapshot().await;
         assert_eq!(
             (usage.ram_bytes, usage.vram_bytes, usage.active_inferences),
@@ -569,6 +576,16 @@ async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
         assert!(!clone.release());
         let second = admit().await.unwrap();
         assert!(!second.loaded_on_demand);
+        assert_eq!(
+            scheduler
+                .observe_reservations()
+                .last_admission
+                .unwrap()
+                .decision,
+            vespera_core::AdmissionDecision::Admitted {
+                loaded_on_demand: false
+            },
+        );
         drop(second);
         let usage = scheduler.usage_snapshot().await;
         assert_eq!(

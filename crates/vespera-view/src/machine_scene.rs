@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -10,8 +11,8 @@ use bevy::render::renderer::RenderAdapterInfo;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::sync::watch;
 use vespera_core::{
-    AgentId, ModelId, ModelReservationSample, ProviderId, ReservationState, SchedulerSample,
-    TaskId, TaskLeaseSample,
+    AdmissionDecision, AgentId, ModelId, ModelReservationSample, ProviderId, ReservationState,
+    SchedulerSample, TaskId, TaskLeaseSample,
 };
 
 use crate::atlas::{Layer, Layers, register};
@@ -38,7 +39,7 @@ enum SchedulerObservation {
     NoSource,
     Unavailable,
     Stale,
-    Sample(SchedulerSample),
+    Sample(Arc<SchedulerSample>),
 }
 
 impl SchedulerObservation {
@@ -53,7 +54,7 @@ impl SchedulerObservation {
             {
                 return Self::Stale;
             }
-            Self::Sample(sample)
+            Self::Sample(Arc::new(sample))
         } else {
             Self::Unavailable
         }
@@ -746,8 +747,9 @@ fn scheduler_detail(observation: &SchedulerObservation) -> String {
                     )
                 },
             );
+            let admission = admission_detail(sample);
             format!(
-                "{state}\nQueue {queue} | waiting {}\nAdmitted {} / {}\nAccounted inference slots {}\n\nEstimated reservations / budget\nRAM {} / {} bytes\nVRAM {} / {} bytes\nModels {} | uncertain {}\n{detail}\n\nCached provider health\nHealthy {} | degraded {}\nUnreachable {} | stale {}\nUnknown {}",
+                "{state}\nQueue {queue} | waiting {}\nAdmitted {} / {}\nAccounted inference slots {}\n{admission}\n\nEstimated reservations / budget\nRAM {} / {} bytes\nVRAM {} / {} bytes\nModels {} | uncertain {}\n{detail}\n\nCached provider health\nHealthy {} | degraded {}\nUnreachable {} | stale {}\nUnknown {}",
                 sample.waiting,
                 sample.admitted,
                 sample.budget.max_concurrent_inferences,
@@ -767,6 +769,47 @@ fn scheduler_detail(observation: &SchedulerObservation) -> String {
         }
     };
     format!("SCHEDULER / ONE LOCAL RUNTIME\n\n{detail}")
+}
+
+fn admission_detail(sample: &SchedulerSample) -> String {
+    let Some(admission) = sample.last_admission else {
+        return if sample.schema_version < 5 {
+            "Admission detail unavailable for this sample".into()
+        } else {
+            "No completed scheduler admission observed".into()
+        };
+    };
+    let reason = match admission.decision {
+        AdmissionDecision::Admitted {
+            loaded_on_demand: true,
+        } => "Admitted / explicit load acknowledged",
+        AdmissionDecision::Admitted {
+            loaded_on_demand: false,
+        } => "Admitted / no explicit load",
+        AdmissionDecision::Cancelled => "Cancelled during preparation",
+        AdmissionDecision::QueueFull => "Waiting queue full",
+        AdmissionDecision::QueueClosed => "Admission queue closed",
+        AdmissionDecision::QueueUnavailable => "Admission queue unavailable",
+        AdmissionDecision::BudgetLimit {
+            resource,
+            requested,
+            limit,
+        } => {
+            return format!(
+                "Last admission for {}\nEstimated limit for {resource}\nRequested {requested} / limit {limit}",
+                admission.model_id
+            );
+        }
+        AdmissionDecision::ResourceAccounting => "Resource accounting failed",
+        AdmissionDecision::UnknownResources => "Model resource estimates unavailable",
+        AdmissionDecision::ModelUnavailable => "Model marked unavailable",
+        AdmissionDecision::ContextInUse => "Active lease holds a different context",
+        AdmissionDecision::ResidencyConflict => "Unresolved or conflicting residency",
+        AdmissionDecision::ResidencyEvidenceUnavailable => "Residency evidence unavailable",
+        AdmissionDecision::RegistryChanged => "Registry lookup failed or binding changed",
+        AdmissionDecision::ProviderLifecycle => "Provider lifecycle failed",
+    };
+    format!("Last admission for {}\n{reason}", admission.model_id)
 }
 
 fn runtime_detail(node: RuntimeNode, graph: &RuntimeGraph) -> String {

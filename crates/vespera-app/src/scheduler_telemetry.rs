@@ -74,6 +74,7 @@ impl Publisher {
                     provider_health,
                     models: Some(reservations.models),
                     tasks: Some(reservations.tasks),
+                    last_admission: reservations.last_admission,
                 };
                 let directory = directory.clone();
                 tokio::task::spawn_blocking(move || publish(directory, sample))
