@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Native Home and local world access
+
+Verified implementation checkpoint `f63963de8b8e6bc325a2205a341011a2d86fc238`, pushed to `main`. Launching the Bevy/wgpu client without flags now opens Home. OS CPU and available RAM observations are separate from the wgpu renderer identity. Home opens the existing Machine and Living World scenes in one window. Explicit Atlas, broker, journal and world flags retain their entry points. The desktop creates the starter database only after an explicit action and uses the existing revision-fenced world store for mutations.
+
+Windows formatting, locked offline workspace tests, strict workspace and graphics Clippy, graphics build, and graphics tests passed. The opt-in live tests were skipped by the offline suites. On the RTX 4070 Laptop GPU, mouse navigation opened Hardware, the RAM object showed its live inspector, F5 returned Home, and a fresh desktop world opened at revision 0. Space committed revision 1, which Home reopened after the process exited. Regression tests cover preserving unrecognized files, reopening committed state and selecting explicit launch modes.
+
+Home currently connects only to the local hardware and deterministic simulation backends. The next desktop acceptance slice is graphical provider connectivity and inventory using the existing adapters, followed by model registration and a bounded agent task. Public packaging and additional platform validation remain open.
+
 ## 2026-11-07 — Windows release rehearsal and desktop transition
 
 Verified packaging checkpoint `8066f9541a2e370ccfec9dc56a76dd3d38fcd766`, pushed to `main`. The packager passed formatting, strict Clippy and its Cargo artifact-selection test. It built the optimized Windows CLI and Atlas, then staged 27 checksummed files. The local ZIP was 32,084,857 bytes with SHA-256 `09a1bc1583c80ba0d7d0b002483a07673d1add6f7bbb99bf5fcabd719c4dae0c`. A fresh extraction verified every size and hash, ran CLI configuration and host diagnostics, and initialized, advanced and replayed a world at revision 8.
