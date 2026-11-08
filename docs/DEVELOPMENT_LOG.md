@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Native prompt paste
+
+Checkpoint `329ea100abfe076fb41008ef958af1108de1ff11` uses Bevy's native clipboard for explicit paste in task and workflow prompt fields. The keyboard handler processes modifier events in order, so a complete shortcut in one frame appends the clipboard text without typing the shortcut character. Paste applies the typed character limit and leaves the prompt in the editor. Credential references, endpoints and numeric fields stay outside the clipboard read path.
+
+Strict graphics Clippy and 32 graphics tests passed on Windows and Ubuntu WSL2, with one NVML hardware test ignored on each. A private Xvfb server in WSL2 verified that the actual X11 clipboard text reached the Bevy editor through the same-frame keyboard sequence. The Ubuntu CI job now repeats that check with `xvfb-run`. Windows verification covered the keyboard and prompt logic without reading or writing the host clipboard. The Windows x64 license inventory was regenerated with 425 third-party entries. [Desktop prompt controls](CLI.md#author-a-sequential-desktop-workflow)
+
 ## 2026-11-08 — Sequential desktop workflow authoring
 
 Checkpoint `7be1c1c5ad48af733fc0ef53c2643487defb7051` adds **Build workflow** to Models & Providers. The editor reviews two to six sequential assignments before submission. The selected coordinator owns the first step and explicitly grants delegation. Each later step consumes the preceding result as untrusted input. The runner preserves the same-provider, suspension, resource estimate, and roster revision checks and uses the existing durable workflow store. Branching plans and clipboard paste in the desktop editor remain open.
