@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Desktop model binding and bounded agent tasks
+
+Verified implementation checkpoint `6a022d19e21129159f769204525f53e688a378b7`, pushed to `main`. The provider screen now registers a discovered text model and saves a desktop agent binding using the existing configuration and registry types. The revisioned profile rejects stale writes, preserves the agent ID across model changes and grants no optional permissions. The execution path uses the existing agent runtime, scheduler and durable task store. Operator RAM and VRAM estimates are explicit, with available host RAM tightening the scheduler's RAM ceiling.
+
+The native Windows walkthrough created a fresh profile, discovered and registered `hermes3:8b` on Ollama 0.40.13, and submitted a task from the desktop. The committed result reported 81 completion tokens and 6,965 ms of runtime elapsed time. The CLI reopened the durable task under the expected owner and Ollama reported zero resident models after completion. The desktop reopened the same saved binding after restart. A separate task cancelled from the GUI committed a cancelled outcome for that same owner. The cancellation panel reported that provider stop and cleanup were unconfirmed. A later residency query reported zero resident models.
+
+Formatting, locked offline workspace and graphics tests, strict workspace and graphics Clippy, and the Windows graphics build passed. Tests cover stale profile writes, stable agent identity and preservation of unrelated files. The native end-to-end task acceptance path is verified for Ollama. OpenAI-compatible discovery is verified separately, but this checkpoint did not run its full graphical task path. Graphical authentication, multi-agent inventory, task history browsing and workflow execution remain open.
+
 ## 2026-11-07 — Desktop provider discovery
 
 Verified implementation checkpoint `b0645b12aadd70949354b9053fc8983985e94ea8`, pushed to `main`. The desktop Models & Providers screen uses validated application configuration and the same Ollama and OpenAI-compatible adapters as the CLI. It supports endpoint editing, bounded background health and inventory requests, and paginated provider-reported model IDs. The adapter capability readout distinguishes lifecycle support from observed residency.
