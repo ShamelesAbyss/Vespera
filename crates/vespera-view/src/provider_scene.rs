@@ -188,9 +188,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new(
-                        "Discover models exposed by a local inference server. F5 returns Home."
-                    ),
+                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  F5  Home"),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -488,6 +486,10 @@ fn keyboard(
             if !event.repeat {
                 if event.key_code == KeyCode::Enter {
                     apply(Action::Discover, &mut panel);
+                } else if event.key_code == KeyCode::KeyP {
+                    apply(Action::Prompt, &mut panel);
+                } else if event.key_code == KeyCode::KeyG {
+                    apply(Action::Workflow, &mut panel);
                 } else if let Some(index) = [
                     KeyCode::Digit1,
                     KeyCode::Digit2,

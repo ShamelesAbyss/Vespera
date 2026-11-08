@@ -245,7 +245,7 @@ fn setup(
         Color::srgb(0.96, 0.95, 1.0),
     ];
     commands.insert_resource(Palette {
-        task: meshes.add(Cuboid::new(0.64, 0.44, 0.64)),
+        task: meshes.add(Cuboid::new(0.54, 0.44, 0.54)),
         worker: meshes.add(Sphere::new(0.46)),
         materials: colors.map(|color| {
             materials.add(StandardMaterial {
@@ -282,18 +282,6 @@ fn setup(
         })),
         Transform::from_xyz(0.0, -0.2, 23.0),
         Pickable::IGNORE,
-    ));
-    commands.spawn((
-        UiTargetCamera(camera),
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(22),
-            left: px(24),
-            ..default()
-        },
-        Text::new("VESPERA   /   LIVING INTELLIGENCE ATLAS"),
-        TextFont::from_font_size(24.0),
-        TextColor(Color::srgb(0.86, 0.92, 1.0)),
     ));
     commands.spawn((
         UiTargetCamera(camera),

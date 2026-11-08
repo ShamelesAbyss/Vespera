@@ -652,7 +652,7 @@ Discovery results and unregistered endpoint or credential-reference edits live i
 
 Choose **New agent**, then press the number beside a text model in the discovery results. Enter an agent name, role, positive RAM estimate in MiB, and VRAM estimate in MiB. Press **Enter** after each field. Use zero VRAM for a CPU-only estimate. These estimates set the task's scheduler memory ceilings, with available host RAM applied as an additional limit. Agents sharing one model registration share its estimates. For Ollama, registration checks the model's reported text-generation capability. On the compatible interface, choosing a model declares that it supports text generation.
 
-Select **Run agent task**, enter a prompt, then press **Enter** to submit one task with a 128-output-token limit and a 50-second execution deadline. **Cancel work** signals local cancellation. The panel shows the result or failure and reports local cleanup. Native Ollama checks existing residency before admission and requests cleanup of models loaded by the runtime. The compatible path leaves residency and explicit unloading to the provider.
+Select **Run agent task** or press **P** while the panel has no active editor. Enter a prompt and press **Enter** to submit one task with a 128-output-token limit and a 50-second execution deadline. **Cancel work** signals local cancellation. The panel shows the result or failure and reports local cleanup. Native Ollama checks existing residency before admission and requests cleanup of models loaded by the runtime. The compatible path leaves residency and explicit unloading to the provider.
 
 The desktop saves up to 16 agents in `desktop.sqlite3` under the desktop data directory. Use **Previous agent** and **Next agent** to select the agent that will run the task. To keep its identity and bind it to another model, select **Rebind selected**, then choose the model. Tasks use the selected agent's saved endpoint even if discovery is pointed elsewhere. New agents start without optional grants.
 
@@ -662,7 +662,7 @@ Use **Suspend** and **Resume** to set or clear the selected agent's durable oper
 
 ### Run a delegated desktop workflow
 
-Select the drafting agent, choose **Allow delegation**, and open **Draft + review**. Enter the number of a different saved agent on the same provider, then enter the draft prompt and review instruction. Press **Enter** after each field. Both agents must be available for work.
+Select the drafting agent, choose **Allow delegation**, and open **Draft + review** or press **G** while the panel has no active editor. Enter the number of a different saved agent on the same provider, then enter the draft prompt and review instruction. Press **Enter** after each field. Both agents must be available for work.
 
 The orchestrator runs the draft first and sends its accepted output to the reviewer as untrusted input. Each step gets one attempt and at most 128 output tokens. The workflow has a 100-second execution budget. Use **Cancel work** to request local cancellation. The panel reports the workflow ID, step owners, observed task outcomes, and the selected review response. The desktop stores private workflow checkpoints in `desktop-workflows.sqlite3`. Use `workflow-history` with that database and the displayed ID to reopen the full report after exiting. Individual steps also appear in their owners' desktop task histories.
 
