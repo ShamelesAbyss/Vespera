@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-07 — Windows release rehearsal and desktop transition
+
+Verified packaging checkpoint `8066f9541a2e370ccfec9dc56a76dd3d38fcd766`, pushed to `main`. The packager passed formatting, strict Clippy and its Cargo artifact-selection test. It built the optimized Windows CLI and Atlas, then staged 27 checksummed files. The local ZIP was 32,084,857 bytes with SHA-256 `09a1bc1583c80ba0d7d0b002483a07673d1add6f7bbb99bf5fcabd719c4dae0c`. A fresh extraction verified every size and hash, ran CLI configuration and host diagnostics, and initialized, advanced and replayed a world at revision 8.
+
+The extracted Atlas showed the same committed world at revision 8. On the RTX 4070 Laptop GPU with Vulkan at 1200×800, the 60-update optimized samples measured p95 7.28 ms in Machine and 7.44 ms in Living World. The Machine inspector showed live device-wide NVIDIA VRAM and a separate saved scheduler rejection of 13 GiB requested against 8 GiB. These readouts verify the Windows interactive path. Multi-GPU and other graphics environments remain unverified.
+
+The upgrade rehearsal built prior commit `c935e7be1232d1f23207e4f435cf070dcea49214` separately. Its schema 2 broker committed a result and three events. The packaged binary migrated a stopped-state copy, preserved that result and feed, and reopened a new pending message across restart. The prior binary refused the upgraded database and successfully recovered the original result and feed from a restored pre-upgrade copy. Hashes confirmed the backup set was unchanged.
+
+The native desktop directive extends the work into a no-CLI application shell and graphical operation while preserving backend authority. WSL2 Ubuntu is available for a separate-OS transport check on this machine. Independent-machine TLS, multi-GPU validation and the owner's licensing decision remain open. The local archive was retained under `target` for rehearsal.
+
 ## 2026-11-07 — Live authored workflow comparisons
 
 Verified implementation checkpoint `899db706eca09542b001a0bf7c62451f8f13214f`, pushed to `main`. The memory comparison checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42442180179).

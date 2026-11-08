@@ -56,3 +56,5 @@ For rollback, use the previous binaries with their pre-upgrade backups and compa
 - Verify the fresh-directory walkthrough, headless and graphics builds, provider matrix, permission checks and backup recovery.
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
+
+The local Windows archive walkthrough verified 27 files, native Atlas on an RTX 4070 Laptop GPU and offline world replay. The broker rollback rehearsal used an actual prior schema 2 binary and a stopped-state copy including its SQLite sidecars. The prior binary refused the migrated store and reopened a restored backup. [Development log](DEVELOPMENT_LOG.md)
