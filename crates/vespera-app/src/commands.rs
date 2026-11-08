@@ -287,9 +287,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             .map_err(RuntimeError::from)?;
     }
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
-    let lifecycle = lifecycle_journal.map(|journal| {
-        event_commands::LifecycleJournal::start(journal, runtime.scheduler().clone())
-    });
+    let lifecycle = event_commands::LifecycleJournal::start(lifecycle_journal, &runtime).await;
     let durable_live = if args.observe_workflow && has_workflow_audit {
         journal.take().map(|journal| {
             let live = event_commands::WorkflowJournal::start_durable(journal);
@@ -835,9 +833,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         ..Default::default()
     };
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
-    let lifecycle = lifecycle_journal.map(|journal| {
-        event_commands::LifecycleJournal::start(journal, runtime.scheduler().clone())
-    });
+    let lifecycle = event_commands::LifecycleJournal::start(lifecycle_journal, &runtime).await;
     let cancel = CancellationToken::new();
     let outcome = cancellable(timeout, cancel.clone(), async {
         if let Some(path) = &args.residency_journal {

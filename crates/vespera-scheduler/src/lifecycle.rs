@@ -6,7 +6,7 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
-use vespera_core::{AgentId, EventEnvelope, EventKind, ModelId, TaskId};
+use vespera_core::{AgentId, AgentStatus, EventEnvelope, EventKind, ModelId, TaskId};
 
 use crate::{ResourceScheduler, lock};
 
@@ -38,6 +38,50 @@ impl ResourceScheduler {
     /// Close the lifecycle producer and let the consumer drain accepted envelopes.
     pub fn stop_lifecycle_observation(&self) {
         lock(&self.lifecycle).take();
+    }
+
+    /// Observe the current accepted registry inventory before a run starts.
+    pub async fn observe_model_registrations(&self) {
+        for model in self.registry.list_registrations().await {
+            self.emit_lifecycle(
+                "model-registry",
+                None,
+                EventKind::ModelRegistered {
+                    model_id: model.model_id,
+                    provider_id: model.provider_id,
+                },
+            );
+        }
+    }
+
+    /// Record a runtime registration after the agent definition has been accepted.
+    pub fn observe_agent_registration(&self, agent_id: AgentId, status: AgentStatus) {
+        self.emit_lifecycle(
+            "agent-runtime",
+            None,
+            EventKind::AgentRegistered { agent_id, status },
+        );
+    }
+
+    /// Observe an actual agent status change, with a task correlation when applicable.
+    pub fn observe_agent_status(
+        &self,
+        agent_id: AgentId,
+        previous: AgentStatus,
+        status: AgentStatus,
+        task: Option<TaskId>,
+    ) {
+        if previous != status {
+            self.emit_lifecycle(
+                "agent-runtime",
+                task,
+                EventKind::AgentStatusChanged {
+                    agent_id,
+                    previous,
+                    status,
+                },
+            );
+        }
     }
 
     /// Observe entry into a managed provider call after the request was validated.

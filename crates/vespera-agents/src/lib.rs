@@ -240,6 +240,7 @@ fn lock_state(state: &Mutex<RuntimeState>) -> MutexGuard<'_, RuntimeState> {
 // Scheduler lifecycle guards independently retain uncertain provider reservations.
 struct TaskStartGuard {
     state: Arc<Mutex<RuntimeState>>,
+    scheduler: Arc<ResourceScheduler>,
     task_id: TaskId,
     agent_id: AgentId,
     armed: bool,
@@ -265,13 +266,24 @@ impl Drop for TaskStartGuard {
             state.tasks.insert(self.task_id, task);
         }
         if let Some(agent) = state.agents.get_mut(&self.agent_id) {
-            agent.status = if self.failed {
+            let status = if self.failed {
                 AgentStatus::Failed
             } else {
                 AgentStatus::Idle
             };
+            apply_observed_status(&self.scheduler, agent, status, Some(self.task_id));
         }
     }
+}
+
+fn apply_observed_status(
+    scheduler: &ResourceScheduler,
+    agent: &mut AgentDefinition,
+    status: AgentStatus,
+    task: Option<TaskId>,
+) {
+    let previous = std::mem::replace(&mut agent.status, status);
+    scheduler.observe_agent_status(agent.identity.id, previous, status, task);
 }
 
 impl RuntimeState {
@@ -314,7 +326,7 @@ impl AgentRuntime {
         state.logical_tick = state.logical_tick.max(store.last_message_tick()?);
         for id in &suspended {
             if let Some(agent) = state.agents.get_mut(id) {
-                agent.status = AgentStatus::Suspended;
+                apply_observed_status(&self.scheduler, agent, AgentStatus::Suspended, None);
             }
         }
         state.durably_suspended = suspended;
@@ -390,10 +402,20 @@ impl AgentRuntime {
         if state.durably_suspended.contains(&agent_id) {
             agent.status = AgentStatus::Suspended;
         }
+        let status = agent.status;
         state.agents.insert(agent_id, agent);
         state.memories.entry(agent_id).or_default();
         state.inbox.entry(agent_id).or_default();
+        self.scheduler.observe_agent_registration(agent_id, status);
         Ok(())
+    }
+
+    /// Observe all identities and effective statuses already registered in this runtime.
+    pub fn observe_registered_agents(&self) {
+        for (agent_id, agent) in &lock_state(&self.state).agents {
+            self.scheduler
+                .observe_agent_registration(*agent_id, agent.status);
+        }
     }
 
     /// Retrieves a registered agent definition by ID.
@@ -520,7 +542,7 @@ impl AgentRuntime {
                 status: agent.status,
             });
         }
-        agent.status = status;
+        apply_observed_status(&self.scheduler, agent, status, None);
         Ok(())
     }
 
@@ -1042,12 +1064,13 @@ impl AgentRuntime {
                 state.managed_tasks.insert(task.id, token.clone());
             }
             if let Some(agent) = state.agents.get_mut(&agent_id) {
-                agent.status = AgentStatus::Running;
+                apply_observed_status(&self.scheduler, agent, AgentStatus::Running, Some(task.id));
             }
         }
 
         let mut preparation = TaskStartGuard {
             state: self.state.clone(),
+            scheduler: self.scheduler.clone(),
             task_id: task.id,
             agent_id,
             armed: true,
@@ -1209,11 +1232,12 @@ impl AgentRuntime {
         state.tasks.insert(task_id, task.clone());
 
         if let Some(agent) = state.agents.get_mut(&assigned_agent) {
-            agent.status = if task.state == TaskState::Failed {
+            let status = if task.state == TaskState::Failed {
                 AgentStatus::Failed
             } else {
                 AgentStatus::Idle
             };
+            apply_observed_status(&self.scheduler, agent, status, Some(task_id));
         }
 
         if let Some(execution) = state.executions.remove(&task_id) {

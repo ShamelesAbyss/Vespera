@@ -3033,8 +3033,31 @@ fn lifecycle_journal_reports_live_entry_and_only_acknowledged_residency() {
             .replay(None, 16)
             .unwrap()
             .entries;
-        assert_eq!(entries.len(), if compatible { 1 } else { 3 });
-        let start = &entries[usize::from(!compatible)].event;
+        assert_eq!(entries.len(), if compatible { 6 } else { 8 });
+        assert!(matches!(
+            entries[0].event.kind,
+            EventKind::ModelRegistered { .. }
+        ));
+        assert!(
+            matches!(entries[1].event.kind, EventKind::AgentRegistered { agent_id, status: vespera_core::AgentStatus::Suspended } if agent_id.to_string() == AGENT)
+        );
+        assert!(matches!(
+            entries[2].event.kind,
+            EventKind::AgentStatusChanged {
+                previous: vespera_core::AgentStatus::Suspended,
+                status: vespera_core::AgentStatus::Idle,
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[3].event.kind,
+            EventKind::AgentStatusChanged {
+                previous: vespera_core::AgentStatus::Idle,
+                status: vespera_core::AgentStatus::Running,
+                ..
+            }
+        ));
+        let start = &entries[4 + usize::from(!compatible)].event;
         assert!(
             matches!(start.kind, EventKind::InferenceStarted { task_id, model_id, agent_id: Some(agent_id) }
             if task_id.to_string() == report["task_id"] && model_id.to_string() == report["execution"]["model_id"]
@@ -3042,11 +3065,11 @@ fn lifecycle_journal_reports_live_entry_and_only_acknowledged_residency() {
         );
         if !compatible {
             assert!(matches!(
-                entries[0].event.kind,
+                entries[4].event.kind,
                 EventKind::ModelActivated { .. }
             ));
             assert!(matches!(
-                entries[2].event.kind,
+                entries[7].event.kind,
                 EventKind::ModelDeactivated { .. }
             ));
         }
@@ -3093,7 +3116,7 @@ fn lifecycle_journal_failure_reports_omissions_without_changing_task_outcome() {
             .len(),
         1
     );
-    assert_eq!(report["lifecycle_publication"]["omitted_events"], 3);
+    assert_eq!(report["lifecycle_publication"]["omitted_events"], 8);
     assert!(report["lifecycle_publication"]["error"].is_string());
 }
 
@@ -3106,7 +3129,7 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
     let journal = directory.0.join("events.sqlite3");
     let path = journal.to_str().unwrap();
     let lifecycle = directory.0.join("workflow-lifecycle.sqlite3");
-    drop(vespera_events::Journal::initialize(&lifecycle, 8).unwrap());
+    drop(vespera_events::Journal::initialize(&lifecycle, 16).unwrap());
     let missing = run_fixture_agent(&directory, &config, &["--resume", "--event-journal", path]);
     assert!(!missing.status.success());
     assert!(fixture.captured().is_empty());
@@ -3152,20 +3175,26 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
     let workflow: serde_json::Value = serde_json::from_slice(&workflow.stdout).unwrap();
     let lifecycle = vespera_events::Journal::open_reader(&lifecycle)
         .unwrap()
-        .replay(None, 8)
+        .replay(None, 16)
         .unwrap()
         .entries;
-    assert_eq!(lifecycle.len(), 4);
+    assert_eq!(lifecycle.len(), 10);
     assert!(matches!(
-        lifecycle[0].event.kind,
+        lifecycle[3].event.kind,
         vespera_core::EventKind::ModelActivated { .. }
     ));
     assert!(matches!(
-        lifecycle[3].event.kind,
+        lifecycle[9].event.kind,
         vespera_core::EventKind::ModelDeactivated { .. }
     ));
-    for (entry, attempt) in lifecycle[1..3]
+    for (entry, attempt) in lifecycle
         .iter()
+        .filter(|entry| {
+            matches!(
+                entry.event.kind,
+                vespera_core::EventKind::InferenceStarted { .. }
+            )
+        })
         .zip(workflow["workflow"]["attempts"].as_array().unwrap())
     {
         assert_eq!(

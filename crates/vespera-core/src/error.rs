@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Structured failures of domain validation and pure admission calculations.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DomainError {
+    #[error("agent status event must describe a change")]
+    InvalidAgentStatusEvidence,
     #[error("provider health evidence has an inconsistent observation age")]
     InvalidProviderHealthEvidence,
     /// A UUID was malformed or nil; IDs cannot represent an absent identity.

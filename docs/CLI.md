@@ -627,7 +627,10 @@ Journal records contain versioned typed metadata, including the event and task I
 Initialize an event journal, then add `--lifecycle-journal <PATH>` to
 `run-agent` or `run-workflow`. This live feed records acknowledged explicit
 model loads and unloads, managed inference entry, and budget rejections at
-the scheduler's resource admission gate. Inference entry carries task,
+the scheduler's resource admission gate. The initial events reflect the
+accepted model registrations and effective agent statuses scoped to that
+invocation. Subsequent status changes are local runtime observations.
+Inference entry carries task,
 model and agent IDs and records when the validated request enters the local
 provider call. Provider-managed models can emit inference entry without an
 explicit load or unload event.

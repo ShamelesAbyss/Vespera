@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Latest supported event wire schema. Each kind emits its earliest compatible version.
-pub const EVENT_SCHEMA_VERSION: u32 = 6;
+pub const EVENT_SCHEMA_VERSION: u32 = 7;
 
 /// Effective state of expiring provider health evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +132,16 @@ pub enum EventKind {
     AgentCreated {
         agent_id: AgentId,
     },
+    /// An identity accepted into the current runtime.
+    AgentRegistered {
+        agent_id: AgentId,
+        status: crate::AgentStatus,
+    },
+    AgentStatusChanged {
+        agent_id: AgentId,
+        previous: crate::AgentStatus,
+        status: crate::AgentStatus,
+    },
     AgentMessageSent {
         from_agent_id: AgentId,
         to_agent_id: AgentId,
@@ -201,6 +211,7 @@ pub struct WorkflowDependency {
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::AgentRegistered { .. } | Self::AgentStatusChanged { .. } => 7,
             Self::ProviderHealthObserved { .. } => 6,
             Self::AgentMemoryDeleted { .. } => 5,
             Self::WorkflowAttemptAccepted { .. } | Self::WorkflowAttemptFinished { .. } => 4,
@@ -212,6 +223,9 @@ impl EventKind {
 
     pub fn validate(&self) -> Result<(), DomainError> {
         match self {
+            Self::AgentStatusChanged {
+                previous, status, ..
+            } if previous == status => return Err(DomainError::InvalidAgentStatusEvidence),
             Self::ProviderHealthObserved {
                 state,
                 checked_age_ms,

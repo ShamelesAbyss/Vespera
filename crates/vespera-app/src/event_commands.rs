@@ -280,7 +280,12 @@ pub(crate) struct LifecycleJournal {
 }
 
 impl LifecycleJournal {
-    pub(crate) fn start(mut journal: Journal, scheduler: Arc<ResourceScheduler>) -> Self {
+    pub(crate) async fn start(
+        journal: Option<Journal>,
+        runtime: &vespera_app::runtime::VesperaRuntime,
+    ) -> Option<Self> {
+        let mut journal = journal?;
+        let scheduler = runtime.scheduler().clone();
         let mut events = scheduler.observe_lifecycle();
         let writer = tokio::task::spawn_blocking(move || {
             let mut result = LifecyclePublication {
@@ -303,7 +308,9 @@ impl LifecycleJournal {
             result.omitted_events += events.omitted.load(Ordering::Relaxed);
             result
         });
-        Self { scheduler, writer }
+        scheduler.observe_model_registrations().await;
+        runtime.agents().observe_registered_agents();
+        Some(Self { scheduler, writer })
     }
 
     pub(crate) async fn finish(publisher: Option<Self>) -> Option<LifecyclePublication> {

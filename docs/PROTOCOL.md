@@ -127,6 +127,11 @@ the provider UUID, effective health state and optional age of the last
 completed probe. These are observations and can expire in the live registry.
 [Provider health CLI](CLI.md#provider-health)
 
+Agent registration and status changes use schema version 7. Registration
+describes an identity accepted into one runtime. A status event carries the
+previous and new status, with task correlation when the transition occurred
+during preparation or execution. [Runtime lifecycle journal](CLI.md#runtime-lifecycle-journal)
+
 ## Rust SDK
 
 Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`, or use `OperatorClient::new_tls(address, key, roots_pem)` or `WorkerClient::new_tls(address, worker_id, key, roots_pem)` for TLS. Worker clients take an approved `AgentId`.

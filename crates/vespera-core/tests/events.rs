@@ -86,6 +86,47 @@ fn every_event_payload_has_typed_round_trip() {
 }
 
 #[test]
+fn agent_status_events_require_schema_seven_and_an_actual_change() {
+    use vespera_core::AgentStatus;
+
+    let agent_id = ID.parse().unwrap();
+    let registered = EventEnvelope::new(
+        "agent-runtime",
+        0,
+        EventKind::AgentRegistered {
+            agent_id,
+            status: AgentStatus::Suspended,
+        },
+    )
+    .unwrap();
+    assert_eq!(registered.schema_version, 7);
+    let changed = EventEnvelope::new(
+        "agent-runtime",
+        1,
+        EventKind::AgentStatusChanged {
+            agent_id,
+            previous: AgentStatus::Suspended,
+            status: AgentStatus::Idle,
+        },
+    )
+    .unwrap();
+    assert_eq!(changed.schema_version, 7);
+    let invalid = EventEnvelope::new(
+        "agent-runtime",
+        1,
+        EventKind::AgentStatusChanged {
+            agent_id,
+            previous: AgentStatus::Idle,
+            status: AgentStatus::Idle,
+        },
+    );
+    assert!(matches!(
+        invalid,
+        Err(DomainError::InvalidAgentStatusEvidence)
+    ));
+}
+
+#[test]
 fn provider_health_evidence_requires_consistent_age_and_schema_six() {
     use vespera_core::ProviderHealthState;
 
