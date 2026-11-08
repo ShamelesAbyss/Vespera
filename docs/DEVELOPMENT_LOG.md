@@ -6,7 +6,9 @@ Verified implementation checkpoint `1182d0499124f4c1cb42b8e8b2093c7e9b574bcd`, p
 
 The task store now retains ordered, permission-gated agent messages. A subprocess test linked messages to accepted task ownership, reopened the recipient's inbox, checked namespace isolation, and rejected an unrelated task reference, a held sender and revoked grants. Inbox operations generated no provider requests. Runtime coverage also verified retention after model rebinding, enforcement of the inbox limit after restart and migration from versions 1 and 2. Windows formatting, strict workspace Clippy and offline workspace tests passed. The previous operator suspension checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42432256462).
 
-Inboxes are bounded, append-only and scoped to a private local task database. The offline operator supplies the current configuration and agent identity. Bounded autonomous planning and integrated recovery remain open for Milestone 7.
+Live Ollama `hermes3:8b` completed and unloaded a task. Separate CLI processes sent a message linked to the accepted task and reopened the recipient's inbox after its model selection policy changed. The final Ollama residency sample was empty.
+
+Inboxes are bounded, append-only and scoped to a private local task database. The offline operator supplies the current configuration and agent identity. Milestone 7 still needs integrated recovery and verification of identity and objectives in bounded planning.
 
 ## 2026-11-07 — Durable agent operator suspension
 
