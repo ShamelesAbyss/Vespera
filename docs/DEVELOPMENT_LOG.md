@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable task result recovery into memory
+
+Verified implementation checkpoint `72090611aedc0ef870db7c7b8e45cdad8666453c`, pushed to `main`.
+
+`memory remember-task` uses the configured `memory_write` grant and private task ledger to copy the exact response of an owned, completed task into generated episodic memory. CLI fixtures checked current permissions, wrong owner, absent source, duplicate memory identity, exact content and independent reopen without provider traffic. Windows formatting, strict Clippy and the offline workspace suite passed. The planning checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42433155431).
+
+Live Ollama `hermes3:8b` completed and unloaded a task. Independent memory commands reopened the retained result and wrote and read the linked episode with a configuration whose custom provider could not run inference. Final Ollama residency was empty. The two databases are written separately, and a caller can retry with the same memory UUID without replacing a committed record. Milestone 8 still requires verified backup and restore.
+
 ## 2026-11-07 — Integrated agent recovery acceptance
 
 Verified against `921301e` on `main`. Independent Windows CLI processes recorded relationship memory, completed a task on Ollama `hermes3:8b`, and linked an incoming message to the task. A durable hold remained in effect after the configuration switched the same agent UUID to `igorls/gemma-4-12B-it-heretic-GGUF:latest`. After release, a new process used the retained relationship record in a successful inference on the replacement model. Separate history and inbox reads returned the original owner, original model and task-linked message. Both models acknowledged unload and final residency was empty.
