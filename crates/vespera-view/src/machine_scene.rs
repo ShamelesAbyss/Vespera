@@ -15,6 +15,7 @@ use vespera_core::{
 };
 
 use crate::atlas::{Layer, Layers, register};
+use crate::gpu_telemetry::{Gpus, Probe};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
 
 type Focus = CameraFocus<{ Layer::Machine as usize }>;
@@ -27,6 +28,7 @@ struct Sample {
     threads: Option<usize>,
     cpu: Option<f32>,
     memory: Option<(u64, u64)>,
+    gpus: Gpus,
     scheduler: SchedulerObservation,
 }
 
@@ -107,6 +109,9 @@ enum Target {
 
 #[derive(Resource)]
 struct Selected(Target);
+
+#[derive(Resource, Default)]
+struct SelectedGpu(String);
 
 impl Default for Selected {
     fn default() -> Self {
@@ -200,6 +205,7 @@ pub(super) fn install(app: &mut App, telemetry_directory: Option<PathBuf>, reduc
     std::thread::spawn(move || observe(&send, source.as_deref()));
     app.insert_resource(Telemetry(receive))
         .init_resource::<Selected>()
+        .init_resource::<SelectedGpu>()
         .init_resource::<RuntimeGraph>()
         .insert_resource(Focus {
             point: None,
@@ -224,6 +230,7 @@ pub(super) fn install(app: &mut App, telemetry_directory: Option<PathBuf>, reduc
 
 fn observe(send: &watch::Sender<Option<Sample>>, source: Option<&Path>) {
     let mut system = System::new();
+    let gpus = Probe::open();
     let mut have_baseline = false;
     while !send.is_closed() {
         system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
@@ -231,12 +238,14 @@ fn observe(send: &watch::Sender<Option<Sample>>, source: Option<&Path>) {
         let total = system.total_memory();
         let available = system.available_memory();
         let cpu = system.global_cpu_usage();
+        let gpus = gpus.sample();
         let sample = Sample {
             observed: Instant::now(),
             threads: std::thread::available_parallelism().ok().map(usize::from),
             cpu: (have_baseline && !system.cpus().is_empty() && (0.0..=100.0).contains(&cpu))
                 .then_some(cpu),
             memory: (total > 0 && available <= total).then_some((total, available)),
+            gpus,
             scheduler: source.map_or(SchedulerObservation::NoSource, SchedulerObservation::read),
         };
         if send.send(Some(sample)).is_err() {
@@ -460,6 +469,7 @@ fn sync_runtime(
 fn navigate(
     keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<Selected>,
+    mut selected_gpu: ResMut<SelectedGpu>,
     mut focus: ResMut<Focus>,
     graph: Res<RuntimeGraph>,
     layers: Res<Layers>,
@@ -514,6 +524,15 @@ fn navigate(
                 selected.0 = Target::Runtime(node);
             }
         }
+    }
+    if matches!(selected.0, Target::Device(Device::Adapter))
+        && keys.just_pressed(KeyCode::KeyG)
+        && let Some(bus) = graph
+            .sample
+            .as_ref()
+            .and_then(|sample| sample.gpus.next(&selected_gpu.0))
+    {
+        selected_gpu.0.clone_from(bus);
     }
     if keys.just_pressed(KeyCode::KeyF) {
         focus.point = match selected.0 {
@@ -573,6 +592,7 @@ fn draw_runtime(graph: Res<RuntimeGraph>, selected: Res<Selected>, mut gizmos: G
 fn present(
     graph: Res<RuntimeGraph>,
     selected: Res<Selected>,
+    selected_gpu: Res<SelectedGpu>,
     adapter: Option<Res<RenderAdapterInfo>>,
     mut readout: Single<&mut Text, With<Readout>>,
     mut meters: Query<(&Meter, &mut Transform, &mut Visibility)>,
@@ -582,6 +602,7 @@ fn present(
     let observed = sample.map(|sample| sample.observed);
     if *previous == observed
         && !selected.is_changed()
+        && !selected_gpu.is_changed()
         && !adapter.as_ref().is_some_and(|adapter| adapter.is_changed())
     {
         return;
@@ -649,7 +670,8 @@ fn present(
                     )
                 },
             );
-            format!("WGPU RENDER ADAPTER\n\n{identity}\n\nVRAM and inference devices unavailable.")
+            let devices = gpu_detail(sample.map(|sample| &sample.gpus), &selected_gpu.0);
+            format!("WGPU RENDER ADAPTER\n\n{identity}\n\n{devices}")
         }
         Target::Device(Device::Scheduler) => scheduler_detail(scheduler),
         Target::Runtime(node) => runtime_detail(node, &graph),
@@ -664,6 +686,37 @@ fn present(
     if readout.0 != text {
         readout.0 = text;
     }
+}
+
+fn gpu_detail(gpus: Option<&Gpus>, selected_bus: &str) -> String {
+    let Some(gpus) = gpus else {
+        return "Local NVIDIA device measurements unavailable".into();
+    };
+    let Some(reported) = gpus.reported else {
+        return "Local NVIDIA device measurements unavailable".into();
+    };
+    let Some((bus, gpu)) = gpus.select(selected_bus) else {
+        return format!(
+            "NVML reports {reported} NVIDIA devices\nNo accessible PCI device measurements"
+        );
+    };
+    let name = gpu.name.as_deref().unwrap_or("Device name unavailable");
+    let memory = gpu.memory.map_or_else(
+        || "Device VRAM unavailable".into(),
+        |memory| {
+            const MIB: f64 = 1024.0 * 1024.0;
+            format!(
+                "Used {:.0} / {:.0} MiB\nFree {:.0} MiB",
+                memory.used as f64 / MIB,
+                memory.total as f64 / MIB,
+                memory.free as f64 / MIB
+            )
+        },
+    );
+    format!(
+        "NVML  /  LOCAL NVIDIA DEVICES\n{} accessible of {reported} reported\n{name}\nPCI {bus}\n{memory}\nDevice-wide readings\nG cycle accessible NVIDIA devices",
+        gpus.devices.len(),
+    )
 }
 
 fn scheduler_detail(observation: &SchedulerObservation) -> String {
@@ -789,4 +842,32 @@ fn runtime_detail(node: RuntimeNode, graph: &RuntimeGraph) -> String {
         }
     };
     format!("{status}\n\n{detail}")
+}
+
+#[cfg(test)]
+mod gpu_readout_tests {
+    use super::*;
+
+    #[test]
+    fn missing_nvml_and_missing_memory_are_labeled_without_a_value() {
+        assert_eq!(
+            gpu_detail(Some(&Gpus::default()), ""),
+            "Local NVIDIA device measurements unavailable"
+        );
+        let gpus = Gpus {
+            reported: Some(1),
+            devices: [(
+                "00000000:01:00.0".into(),
+                crate::gpu_telemetry::Gpu {
+                    name: Some("Fixture device".into()),
+                    memory: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let detail = gpu_detail(Some(&gpus), "");
+        assert!(detail.contains("Device VRAM unavailable"));
+        assert!(!detail.contains("MiB"));
+    }
 }

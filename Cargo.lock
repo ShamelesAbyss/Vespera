@@ -5533,6 +5533,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "clap",
+ "nvml-wrapper",
  "serde_json",
  "sysinfo",
  "tokio",

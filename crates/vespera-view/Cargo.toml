@@ -7,7 +7,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-events", "dep:vespera-sdk", "dep:vespera-world"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-events", "dep:vespera-sdk", "dep:vespera-world"]
 
 [[bin]]
 name = "vespera-view"
@@ -29,6 +29,9 @@ bevy = { version = "0.20.1", optional = true, default-features = false, features
     "bevy_ui", "bevy_ui_render", "bevy_text", "bevy_picking", "mesh_picking",
     "bevy_gizmos", "bevy_gizmos_render",
 ] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+nvml-wrapper = { version = "=0.13.0", default-features = false, optional = true }
 
 [lints]
 workspace = true

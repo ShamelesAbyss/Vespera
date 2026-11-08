@@ -1,4 +1,5 @@
 mod atlas;
+mod gpu_telemetry;
 mod machine_scene;
 mod scene;
 mod scene_measurement;
