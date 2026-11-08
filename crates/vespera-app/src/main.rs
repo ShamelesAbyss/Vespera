@@ -213,6 +213,9 @@ struct RunAgentArgs {
     /// Record the observed terminal outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
+    /// Follow acknowledged model lifecycle transitions and managed inference entry.
+    #[arg(long)]
+    lifecycle_journal: Option<PathBuf>,
     /// Publish sampled scheduler counts to a new private local directory.
     #[arg(long)]
     scheduler_telemetry: Option<PathBuf>,
@@ -277,6 +280,9 @@ struct RunWorkflowArgs {
     /// Record the observed root outcome in an existing local journal.
     #[arg(long)]
     event_journal: Option<PathBuf>,
+    /// Follow acknowledged model lifecycle transitions and managed inference entry.
+    #[arg(long)]
+    lifecycle_journal: Option<PathBuf>,
     /// Include accepted delegation records alongside the workflow outcome.
     #[arg(long, requires = "event_journal")]
     record_delegations: bool,
@@ -361,6 +367,8 @@ enum AppError {
     ShutdownSignal(std::io::Error),
     #[error(transparent)]
     Journal(#[from] vespera_events::JournalError),
+    #[error("lifecycle journal publication was incomplete")]
+    LifecyclePublicationFailed,
     #[error("provider health round {round} was observed but journal publication failed: {source}")]
     ProviderHealthPublication {
         round: u64,

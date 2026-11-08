@@ -2979,6 +2979,125 @@ fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs
 }
 
 #[test]
+fn lifecycle_journal_reports_live_entry_and_only_acknowledged_residency() {
+    use std::time::{Duration, Instant};
+    use vespera_core::EventKind;
+    use vespera_events::Journal;
+
+    for compatible in [false, true] {
+        let fixture = HttpFixture::new(false);
+        fixture.inference_delay_ms.store(1200, Ordering::SeqCst);
+        let directory = ScratchDirectory::new();
+        let config = runtime_config(&fixture, compatible, true);
+        let journal = directory.0.join("lifecycle.sqlite3");
+        drop(Journal::initialize(&journal, 16).unwrap());
+        let output = std::thread::scope(|scope| {
+            let run = scope.spawn(|| {
+                let mut flags = vec!["--resume", "--lifecycle-journal", journal.to_str().unwrap()];
+                if !compatible {
+                    flags.push("--unload-after");
+                }
+                run_fixture_agent(&directory, &config, &flags)
+            });
+            let mut reader = Journal::open_reader(&journal).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let page = reader.replay(None, 16).unwrap();
+                if page
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry.event.kind, EventKind::InferenceStarted { .. }))
+                {
+                    assert!(
+                        !run.is_finished(),
+                        "inference evidence must arrive before the run ends"
+                    );
+                    break;
+                }
+                assert!(
+                    !run.is_finished() && Instant::now() < deadline,
+                    "inference evidence was missing"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            run.join().unwrap()
+        });
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let entries = Journal::open_reader(&journal)
+            .unwrap()
+            .replay(None, 16)
+            .unwrap()
+            .entries;
+        assert_eq!(entries.len(), if compatible { 1 } else { 3 });
+        let start = &entries[usize::from(!compatible)].event;
+        assert!(
+            matches!(start.kind, EventKind::InferenceStarted { task_id, model_id, agent_id: Some(agent_id) }
+            if task_id.to_string() == report["task_id"] && model_id.to_string() == report["execution"]["model_id"]
+                && agent_id.to_string() == AGENT)
+        );
+        if !compatible {
+            assert!(matches!(
+                entries[0].event.kind,
+                EventKind::ModelActivated { .. }
+            ));
+            assert!(matches!(
+                entries[2].event.kind,
+                EventKind::ModelDeactivated { .. }
+            ));
+        }
+        assert_eq!(report["lifecycle_publication"]["omitted_events"], 0);
+        assert!(
+            !serde_json::to_string(&entries)
+                .unwrap()
+                .contains("bounded integrated task")
+        );
+    }
+}
+
+#[test]
+fn lifecycle_journal_failure_reports_omissions_without_changing_task_outcome() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true);
+    let journal = directory.0.join("lifecycle.sqlite3");
+    drop(vespera_events::Journal::initialize(&journal, 8).unwrap());
+    let injector = rusqlite::Connection::open(&journal).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_lifecycle BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let output = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--unload-after",
+            "--lifecycle-journal",
+            journal.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["execution"]["task"]["state"], "completed");
+    assert_eq!(
+        report["cleanup"]["unloaded_models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(report["lifecycle_publication"]["omitted_events"], 3);
+    assert!(report["lifecycle_publication"]["error"].is_string());
+}
+
+#[test]
 fn completion_events_replay_across_cli_processes_without_payload_text() {
     let fixture = HttpFixture::new(false);
     let directory = ScratchDirectory::new();
@@ -2986,6 +3105,8 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
         .replace("permissions = []", "permissions = [\"delegate\"]");
     let journal = directory.0.join("events.sqlite3");
     let path = journal.to_str().unwrap();
+    let lifecycle = directory.0.join("workflow-lifecycle.sqlite3");
+    drop(vespera_events::Journal::initialize(&lifecycle, 8).unwrap());
     let missing = run_fixture_agent(&directory, &config, &["--resume", "--event-journal", path]);
     assert!(!missing.status.success());
     assert!(fixture.captured().is_empty());
@@ -3009,6 +3130,9 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
             "--resume",
             "--event-journal",
             path,
+            "--lifecycle-journal",
+            lifecycle.to_str().unwrap(),
+            "--unload-after",
             "--scheduler-telemetry",
             directory.0.join("workflow-observation").to_str().unwrap(),
         ],
@@ -3026,6 +3150,29 @@ fn completion_events_replay_across_cli_processes_without_payload_text() {
     assert_eq!(telemetry.provider_health.healthy, 1);
     let agent: serde_json::Value = serde_json::from_slice(&agent.stdout).unwrap();
     let workflow: serde_json::Value = serde_json::from_slice(&workflow.stdout).unwrap();
+    let lifecycle = vespera_events::Journal::open_reader(&lifecycle)
+        .unwrap()
+        .replay(None, 8)
+        .unwrap()
+        .entries;
+    assert_eq!(lifecycle.len(), 4);
+    assert!(matches!(
+        lifecycle[0].event.kind,
+        vespera_core::EventKind::ModelActivated { .. }
+    ));
+    assert!(matches!(
+        lifecycle[3].event.kind,
+        vespera_core::EventKind::ModelDeactivated { .. }
+    ));
+    for (entry, attempt) in lifecycle[1..3]
+        .iter()
+        .zip(workflow["workflow"]["attempts"].as_array().unwrap())
+    {
+        assert_eq!(
+            entry.event.correlation_task_id.unwrap().to_string(),
+            attempt["task_id"]
+        );
+    }
     let replay = execute(&["events", "--journal", path, "replay", "--limit", "1"]);
     assert!(replay.status.success());
     let page: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();

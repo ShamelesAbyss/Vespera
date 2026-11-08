@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, atomic::Ordering};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
@@ -7,6 +8,7 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use vespera_core::{EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError};
+use vespera_scheduler::ResourceScheduler;
 
 use crate::AppError;
 
@@ -248,6 +250,76 @@ pub(crate) async fn prepare(path: Option<PathBuf>) -> Result<Option<Journal>, Ap
 pub(crate) struct Publication {
     cursor: Option<Cursor>,
     error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LifecyclePublication {
+    cursor: Option<Cursor>,
+    omitted_events: u64,
+    error: Option<String>,
+}
+
+impl LifecyclePublication {
+    pub(crate) fn failed(&self) -> bool {
+        self.omitted_events > 0 || self.error.is_some()
+    }
+
+    pub(crate) fn report_failure(&self) {
+        if let Some(error) = &self.error {
+            eprintln!("Lifecycle journal publication failed: {error}");
+        }
+        if self.omitted_events > 0 {
+            eprintln!("Lifecycle journal omitted {} events", self.omitted_events);
+        }
+    }
+}
+
+pub(crate) struct LifecycleJournal {
+    scheduler: Arc<ResourceScheduler>,
+    writer: tokio::task::JoinHandle<LifecyclePublication>,
+}
+
+impl LifecycleJournal {
+    pub(crate) fn start(mut journal: Journal, scheduler: Arc<ResourceScheduler>) -> Self {
+        let mut events = scheduler.observe_lifecycle();
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut result = LifecyclePublication {
+                cursor: None,
+                omitted_events: 0,
+                error: None,
+            };
+            while let Some(event) = events.receiver.blocking_recv() {
+                if result.error.is_none() {
+                    match journal.append(&event) {
+                        Ok(cursor) => {
+                            result.cursor = Some(cursor);
+                            continue;
+                        }
+                        Err(error) => result.error = Some(error.to_string()),
+                    }
+                }
+                result.omitted_events += 1;
+            }
+            result.omitted_events += events.omitted.load(Ordering::Relaxed);
+            result
+        });
+        Self { scheduler, writer }
+    }
+
+    pub(crate) async fn finish(publisher: Option<Self>) -> Option<LifecyclePublication> {
+        let publisher = publisher?;
+        publisher.scheduler.stop_lifecycle_observation();
+        Some(
+            publisher
+                .writer
+                .await
+                .unwrap_or_else(|_| LifecyclePublication {
+                    cursor: None,
+                    omitted_events: 0,
+                    error: Some(JournalError::Database.to_string()),
+                }),
+        )
+    }
 }
 
 impl Publication {

@@ -380,13 +380,19 @@ async fn validated_request_binding_and_context_are_checked_before_load() {
 
 #[tokio::test]
 async fn failed_or_unsupported_unload_never_frees_memory() {
+    use vespera_core::EventKind;
     use vespera_scheduler::ResidencyState;
     for mode in [0, 2, 3] {
         let (scheduler, provider, a, b) = fixture().await;
+        let mut events = scheduler.observe_lifecycle();
         scheduler
             .admit_and_prepare(a, None, CancellationToken::new())
             .await
             .unwrap();
+        assert_eq!(
+            events.receiver.try_recv().unwrap().kind,
+            EventKind::ModelActivated { model_id: a }
+        );
 
         provider.unload_mode.store(mode, Ordering::SeqCst);
         assert!(
@@ -400,6 +406,7 @@ async fn failed_or_unsupported_unload_never_frees_memory() {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].model_id, a);
         assert_eq!(entries[0].active_inferences, 0);
+        assert!(events.receiver.try_recv().is_err());
         assert_eq!(
             entries[0].residency,
             if mode == 0 {
@@ -416,6 +423,10 @@ async fn failed_or_unsupported_unload_never_frees_memory() {
                 .unwrap()
         );
         assert_eq!(scheduler.usage_snapshot().await.ram_bytes, 0);
+        assert_eq!(
+            events.receiver.try_recv().unwrap().kind,
+            EventKind::ModelDeactivated { model_id: a }
+        );
     }
 }
 
@@ -530,8 +541,13 @@ async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
         (120, 511, ResourceKind::Vram),
     ] {
         let (scheduler, provider, model, _) = fixture_with_limits(ram, vram, overhead).await;
+        let mut events = scheduler.observe_lifecycle();
         let admit = || scheduler.admit_and_prepare(model, Some(256), CancellationToken::new());
         let first = admit().await.unwrap();
+        assert!(matches!(
+            events.receiver.try_recv().unwrap().kind,
+            vespera_core::EventKind::ModelActivated { .. }
+        ));
         assert!(matches!(
             admit().await,
             Err(SchedulerError::BudgetExceeded(DomainError::ResourceLimitExceeded {
@@ -539,6 +555,9 @@ async fn each_lease_charges_overhead_and_reuse_obeys_both_memory_budgets() {
                 ..
             })) if actual == resource
         ));
+        assert!(matches!(events.receiver.try_recv().unwrap().kind,
+            vespera_core::EventKind::ResourceLimitReached { resource: actual, requested, limit, .. }
+            if actual == resource && requested > limit));
         let usage = scheduler.usage_snapshot().await;
         assert_eq!(
             (usage.ram_bytes, usage.vram_bytes, usage.active_inferences),
@@ -655,6 +674,7 @@ async fn interrupted_unload_retains_memory_and_cannot_admit_replacement() {
 async fn failed_load_retains_uncertain_memory_but_not_an_inference_slot() {
     for mode in [2, 3] {
         let (scheduler, provider, a, _) = fixture().await;
+        let mut events = scheduler.observe_lifecycle();
         provider.load_mode.store(mode, Ordering::SeqCst);
         assert!(
             scheduler
@@ -664,7 +684,28 @@ async fn failed_load_retains_uncertain_memory_but_not_an_inference_slot() {
         );
         let usage = scheduler.usage_snapshot().await;
         assert_eq!((usage.ram_bytes, usage.active_inferences), (100, 0));
+        assert!(events.receiver.try_recv().is_err());
     }
+}
+
+#[tokio::test]
+async fn lifecycle_observer_bounds_backlog_and_reports_omissions() {
+    use vespera_core::{AgentId, TaskId};
+    let (scheduler, _, model, _) = fixture().await;
+    let mut events = scheduler.observe_lifecycle();
+    let task = TaskId::new();
+    let agent = AgentId::new();
+    for _ in 0..257 {
+        scheduler.observe_inference_started(task, model, agent);
+    }
+    scheduler.stop_lifecycle_observation();
+    let mut drained = 0;
+    while let Some(event) = events.receiver.recv().await {
+        assert_eq!(event.correlation_task_id, Some(task));
+        drained += 1;
+    }
+    assert_eq!(drained, 256);
+    assert_eq!(events.omitted.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

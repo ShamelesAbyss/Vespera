@@ -51,6 +51,8 @@ struct WorkflowRunReport {
     recovered_reservations: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle_publication: Option<event_commands::LifecyclePublication>,
 }
 
 #[derive(Serialize)]
@@ -250,6 +252,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .transpose()?
         .unwrap_or_default();
     let mut journal = event_commands::prepare(args.event_journal).await?;
+    let lifecycle_journal = event_commands::prepare(args.lifecycle_journal).await?;
     let has_workflow_audit = match &workflow_store {
         Some(store) if args.resume_workflow => store.events(task_id)?.is_some(),
         Some(_) => true,
@@ -284,6 +287,9 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             .map_err(RuntimeError::from)?;
     }
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
+    let lifecycle = lifecycle_journal.map(|journal| {
+        event_commands::LifecycleJournal::start(journal, runtime.scheduler().clone())
+    });
     let durable_live = if args.observe_workflow && has_workflow_audit {
         journal.take().map(|journal| {
             let live = event_commands::WorkflowJournal::start_durable(journal);
@@ -375,6 +381,10 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .cleanup(args.unload_after, Duration::from_secs(5))
         .await;
     let telemetry = Publisher::finish(publisher).await;
+    let lifecycle_publication = event_commands::LifecycleJournal::finish(lifecycle).await;
+    let lifecycle_failed = lifecycle_publication
+        .as_ref()
+        .is_some_and(event_commands::LifecyclePublication::failed);
     let cleanup_failed = !cleanup.drained || !cleanup.unload_errors.is_empty();
     let (workflow, error) = match outcome {
         Ok(report) => (Some(report), None),
@@ -450,7 +460,8 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 startup_residency,
                 admission_residency,
                 recovered_reservations,
-                event_publication
+                event_publication,
+                lifecycle_publication,
             })?
         );
     } else {
@@ -466,6 +477,9 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         print_residency("latest admission", admission_residency);
         print_recovered_reservations(recovered_reservations);
         if let Some(publication) = &event_publication {
+            publication.report_failure();
+        }
+        if let Some(publication) = &lifecycle_publication {
             publication.report_failure();
         }
         if let Some(report) = &workflow {
@@ -497,6 +511,9 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     }
     if journal_failed {
         return Err(vespera_events::JournalError::Database.into());
+    }
+    if lifecycle_failed {
+        return Err(AppError::LifecyclePublicationFailed);
     }
     if cleanup_failed {
         return Err(AppError::CleanupFailed);
@@ -691,6 +708,8 @@ struct RunReport {
     memory_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     event_publication: Option<event_commands::Publication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle_publication: Option<event_commands::LifecyclePublication>,
 }
 
 fn print_residency(phase: &str, report: Option<StartupResidencyReport>) {
@@ -752,6 +771,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         }
     }
     let journal = event_commands::prepare(args.event_journal).await?;
+    let lifecycle_journal = event_commands::prepare(args.lifecycle_journal).await?;
     let mut required = Vec::new();
     if args.memory_query_file.is_some() {
         required.push(Permission::MemoryRead);
@@ -815,6 +835,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         ..Default::default()
     };
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
+    let lifecycle = lifecycle_journal.map(|journal| {
+        event_commands::LifecycleJournal::start(journal, runtime.scheduler().clone())
+    });
     let cancel = CancellationToken::new();
     let outcome = cancellable(timeout, cancel.clone(), async {
         if let Some(path) = &args.residency_journal {
@@ -837,6 +860,10 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         .cleanup(args.unload_after, Duration::from_secs(5))
         .await;
     let telemetry = Publisher::finish(publisher).await;
+    let lifecycle_publication = event_commands::LifecycleJournal::finish(lifecycle).await;
+    let lifecycle_failed = lifecycle_publication
+        .as_ref()
+        .is_some_and(event_commands::LifecyclePublication::failed);
     let cleanup_failed = !cleanup.drained || !cleanup.unload_errors.is_empty();
     let task_state = runtime
         .agents()
@@ -919,6 +946,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             stored_memory_id,
             memory_error: memory_error.as_ref().map(ToString::to_string),
             event_publication,
+            lifecycle_publication,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -927,6 +955,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         print_residency("latest admission", admission_residency);
         print_recovered_reservations(recovered_reservations);
         if let Some(publication) = &event_publication {
+            publication.report_failure();
+        }
+        if let Some(publication) = &lifecycle_publication {
             publication.report_failure();
         }
         if let Some(id) = stored_memory_id {
@@ -956,6 +987,9 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     }
     if journal_failed {
         return Err(vespera_events::JournalError::Database.into());
+    }
+    if lifecycle_failed {
+        return Err(AppError::LifecyclePublicationFailed);
     }
     if cleanup_failed {
         return Err(AppError::CleanupFailed);

@@ -311,6 +311,11 @@ impl AgentRuntime {
                     }
                 }
                 let inference_started = Instant::now();
+                self.scheduler.observe_inference_started(
+                    task.id,
+                    active.inference.model_id,
+                    agent_id,
+                );
                 let response = active
                     .inference
                     .provider

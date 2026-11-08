@@ -9,6 +9,8 @@ mod queue;
 pub use journal::ResidencyJournalError;
 use journal::{Intent, Journal};
 use queue::{AdmissionQueue, QueuePermit};
+mod lifecycle;
+pub use lifecycle::LifecycleEvents;
 pub use queue::{QueueError, QueuePolicy, QueueSnapshot};
 
 use serde::Serialize;
@@ -21,8 +23,8 @@ use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 pub use vespera_core::ReservationState as ResidencyState;
 use vespera_core::{
-    DomainError, InferenceOverhead, ModelId, ModelReservationSample, ProviderId, ResourceBudget,
-    ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
+    DomainError, EventKind, InferenceOverhead, ModelId, ModelReservationSample, ProviderId,
+    ResourceBudget, ResourceKind, ResourceRequest, ResourceUsage, SchedulerSample, TaskLeaseSample,
 };
 use vespera_model_registry::{ModelRegistry, RegistryError};
 use vespera_providers::{
@@ -399,6 +401,7 @@ pub struct ResourceScheduler {
     state: Arc<Mutex<SchedulerState>>,
     gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
     residency_gate: Arc<AsyncMutex<()>>,
+    lifecycle: Arc<Mutex<Option<lifecycle::LifecycleSender>>>,
 }
 impl fmt::Debug for ResourceScheduler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -442,6 +445,7 @@ impl ResourceScheduler {
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
             residency_gate: Arc::new(AsyncMutex::new(())),
+            lifecycle: Arc::new(Mutex::new(None)),
         }
     }
     /// Snapshot waiting and granted local admissions.
@@ -1103,7 +1107,28 @@ impl ResourceScheduler {
                         } else {
                             None
                         };
-                        Preparation::Evict(candidate.ok_or(SchedulerError::BudgetExceeded(error))?)
+                        if let Some(candidate) = candidate {
+                            Preparation::Evict(candidate)
+                        } else {
+                            if let DomainError::ResourceLimitExceeded {
+                                resource,
+                                requested,
+                                limit,
+                            } = error
+                            {
+                                self.emit_lifecycle(
+                                    "scheduler",
+                                    None,
+                                    EventKind::ResourceLimitReached {
+                                        resource,
+                                        requested,
+                                        limit,
+                                        task_id: None,
+                                    },
+                                );
+                            }
+                            return Err(SchedulerError::BudgetExceeded(error));
+                        }
                     }
                 }
             };
@@ -1176,6 +1201,9 @@ impl ResourceScheduler {
                 }
             }
             transition.armed = false;
+            if explicit {
+                self.emit_lifecycle("scheduler", None, EventKind::ModelActivated { model_id });
+            }
         }
         let id = uuid::Uuid::new_v4();
         lock(&self.state).leases.insert(id, model_id);
@@ -1278,6 +1306,7 @@ impl ResourceScheduler {
         }
         lock(&self.state).forget_model(model_id);
         transition.armed = false;
+        self.emit_lifecycle("scheduler", None, EventKind::ModelDeactivated { model_id });
         Ok(true)
     }
 }

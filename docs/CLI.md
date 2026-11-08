@@ -620,7 +620,24 @@ New-Item -ItemType Directory -Force data | Out-Null
 
 Pass `--event-journal <PATH>` to `run-agent` or `run-workflow` to record an observed terminal outcome in an initialized journal. Successful agent runs emit `inference_completed` and successful workflow roots emit `task_completed`. An observed failed or cancelled agent task or workflow root emits `task_failed` or `task_cancelled` in schema version 2. Early rejections before task creation have no recorded task state. Reports include the committed cursor or an append error in `event_publication`. Append failure returns nonzero while preserving the execution report. Publication is a separate post-execution transaction, so a process exit between execution and publication can leave a gap.
 
-Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. Use `follow` for local streaming and `replay` for discrete pages. Network subscriptions and broader lifecycle events remain roadmap work.
+Journal records contain versioned typed metadata, including the event and task IDs. Local access uses filesystem permissions. Consumers may replay from the same journal after restart. Duplicate event IDs are idempotent while retained if the envelope matches. Use `follow` for local streaming and `replay` for discrete pages.
+
+### Runtime lifecycle journal
+
+Initialize an event journal, then add `--lifecycle-journal <PATH>` to
+`run-agent` or `run-workflow`. This live feed records acknowledged explicit
+model loads and unloads, managed inference entry, and budget rejections at
+the scheduler's resource admission gate. Inference entry carries task,
+model and agent IDs and records when the validated request enters the local
+provider call. Provider-managed models can emit inference entry without an
+explicit load or unload event.
+
+Replay or follow the lifecycle journal using the usual event commands.
+Reports include `lifecycle_publication` with the last committed cursor,
+omission count and any writer error. The producer queues at most 256 events
+and continues execution if the consumer is slow or unavailable. A partial
+publication returns nonzero with the task and cleanup results. Lifecycle
+telemetry is separate from the recoverable task and workflow outcome audit.
 
 ### Swarm view
 
