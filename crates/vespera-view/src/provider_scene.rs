@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
 use vespera_app::runtime::{RuntimeError, configured_registry};
-use vespera_core::{AgentId, ProviderKind};
+use vespera_core::{AgentId, Permission, ProviderKind};
 use vespera_providers::{
     CancellationToken, DiscoveredModel, ProviderHealthReport, ProviderLifecycleSupport,
 };
@@ -37,6 +37,10 @@ enum Action {
     NewAgent,
     Rebind,
     History,
+    AllowDelegation,
+    RevokeDelegation,
+    Suspend,
+    Resume,
 }
 
 #[derive(Component)]
@@ -62,7 +66,11 @@ enum Edit {
 }
 
 enum Work {
-    Registration(Mutex<Receiver<RegistrationResult>>),
+    SaveRoster(Mutex<Receiver<RegistrationResult>>, &'static str),
+    Hold(
+        Mutex<Receiver<Result<(), AgentTaskStoreError>>>,
+        &'static str,
+    ),
     History(Mutex<Receiver<Result<Vec<StoredTaskSummary>, AgentTaskStoreError>>>),
     Inspect(Mutex<Receiver<Result<StoredAgentTask, AgentTaskStoreError>>>),
     Task {
@@ -192,19 +200,25 @@ fn setup(mut commands: Commands) {
                         button(Action::History, "Task history"),
                     ]
                 ),
-                (Readout, Text::default(), TextFont::from_font_size(16.0)),
                 (
                     Node {
                         column_gap: px(10),
+                        row_gap: px(10),
+                        flex_wrap: FlexWrap::Wrap,
                         ..default()
                     },
                     children![
+                        button(Action::Suspend, "Suspend"),
+                        button(Action::Resume, "Resume"),
+                        button(Action::AllowDelegation, "Allow delegation"),
+                        button(Action::RevokeDelegation, "Revoke delegation"),
                         button(Action::Previous, "Previous page"),
                         button(Action::Next, "Next page"),
                         button(Action::Prompt, "Run agent task"),
                         button(Action::Cancel, "Cancel task"),
                     ]
                 ),
+                (Readout, Text::default(), TextFont::from_font_size(16.0)),
             ],
         ))
         .observe(
@@ -265,6 +279,38 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Cancel => {}
+        Action::AllowDelegation | Action::RevokeDelegation => {
+            let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
+                return;
+            };
+            let allow = matches!(action, Action::AllowDelegation);
+            let selected = panel.selected;
+            panel.work = Some(Work::SaveRoster(
+                background(move |_| desktop_agent::set_delegation(&dir, roster, selected, allow)),
+                if allow {
+                    "Delegation granted to the selected agent."
+                } else {
+                    "Delegation revoked."
+                },
+            ));
+        }
+        Action::Suspend | Action::Resume => {
+            let Some((_, owner)) = history_source(panel) else {
+                return;
+            };
+            let Some(dir) = panel.dir.clone() else {
+                return;
+            };
+            let hold = matches!(action, Action::Suspend);
+            panel.work = Some(Work::Hold(
+                background(move |_| desktop_agent::set_hold(&dir, owner, hold)),
+                if hold {
+                    "Agent suspended. New tasks are blocked until resumed."
+                } else {
+                    "Agent hold cleared."
+                },
+            ));
+        }
         Action::History => {
             panel.feedback.clear();
             if panel.history.take().is_none() {
@@ -602,7 +648,10 @@ fn submit(panel: &mut Panel) {
                         registration,
                     ))
                 });
-                panel.work = Some(Work::Registration(receiver));
+                panel.work = Some(Work::SaveRoster(
+                    receiver,
+                    "Registered the model and saved the agent binding.",
+                ));
                 panel.feedback = "Validating the model and saving the agent binding...".into();
             }
         }
@@ -654,17 +703,25 @@ fn poll<T>(receiver: &Mutex<Receiver<T>>) -> Result<T, TryRecvError> {
 
 fn receive_work(mut panel: ResMut<Panel>) {
     match &panel.work {
-        Some(Work::Registration(result)) => match poll(result) {
+        Some(Work::SaveRoster(result, message)) => match poll(result) {
             Ok(Ok((roster, selected))) => {
+                panel.feedback = (*message).into();
                 panel.roster = Some(roster);
                 panel.selected = selected;
                 panel.rebind = false;
-                panel.feedback = "Registered the model and saved the agent binding.".into();
             }
             Ok(Err(error)) => panel.feedback = error.into(),
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 panel.feedback = "The registration worker stopped.".into()
+            }
+        },
+        Some(Work::Hold(result, message)) => match poll(result) {
+            Ok(Ok(())) => panel.feedback = (*message).into(),
+            Ok(Err(error)) => panel.feedback = error.to_string(),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panel.feedback = "The agent control worker stopped.".into()
             }
         },
         Some(Work::History(result)) => match poll(result) {
@@ -769,11 +826,16 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     {
         let _ = writeln!(
             content,
-            "Agent {} of {}  |  {}  |  {}\nBound model  |  {}\nTask endpoint  |  {}",
+            "Agent {} of {}  |  {}  |  {}  |  Delegation {}\nBound model  |  {}\nTask endpoint  |  {}",
             panel.selected + 1,
             roster.len(),
             agent.identity.name,
             agent.identity.role,
+            if agent.permissions.contains(&Permission::Delegate) {
+                "allowed"
+            } else {
+                "denied"
+            },
             model.identifier.chars().take(90).collect::<String>(),
             provider.endpoint
         );

@@ -8,8 +8,8 @@ use vespera_app::runtime::{VesperaRuntime, configured_registry};
 use vespera_config::{AppConfig, CONFIG_SCHEMA_VERSION, ProviderConfig};
 use vespera_core::{
     AgentDefinition, AgentId, AgentIdentity, AgentStatus, Capability, ModelAvailability,
-    ModelDescriptor, ModelId, ModelSelectionPolicy, ProviderId, ProviderKind, ResourceBudget,
-    ResourceEstimate, Task, TaskId, TaskState,
+    ModelDescriptor, ModelId, ModelSelectionPolicy, Permission, ProviderId, ProviderKind,
+    ResourceBudget, ResourceEstimate, Task, TaskId, TaskState,
 };
 use vespera_providers::{CancellationToken, DiscoveredModel};
 
@@ -359,6 +359,43 @@ fn save(dir: &Path, expected: Option<i64>, config: AppConfig) -> Result<Roster, 
     Ok(Roster { revision, config })
 }
 
+pub(super) fn set_delegation(
+    dir: &Path,
+    mut roster: Roster,
+    selected: usize,
+    allow: bool,
+) -> Result<(Roster, usize), Failure> {
+    let agent = roster
+        .config
+        .agents
+        .get_mut(selected)
+        .ok_or("No saved agent selected.")?;
+    if allow {
+        agent.permissions.insert(Permission::Delegate);
+    } else {
+        agent.permissions.remove(&Permission::Delegate);
+    }
+    Ok((save(dir, Some(roster.revision), roster.config)?, selected))
+}
+
+pub(super) fn set_hold(
+    dir: &Path,
+    agent: AgentId,
+    hold: bool,
+) -> Result<(), vespera_agents::AgentTaskStoreError> {
+    let path = dir.join("desktop-tasks.sqlite3");
+    if hold {
+        AgentTaskStore::open(&path)?.set_suspended(agent, true)
+    } else if path
+        .try_exists()
+        .map_err(|_| vespera_agents::AgentTaskStoreError::Database)?
+    {
+        AgentTaskStore::release_suspension(&path, agent)
+    } else {
+        Ok(())
+    }
+}
+
 pub(super) async fn run(
     dir: &Path,
     mut roster: Roster,
@@ -375,6 +412,12 @@ pub(super) async fn run(
         .selection(selected)
         .ok_or("No saved agent selected.")?;
     let agent = agent.identity.id;
+    if store
+        .is_suspended(agent)
+        .map_err(|_| "Could not read the agent's operator hold.")?
+    {
+        return Err("Agent is suspended. Resume the selected agent before running a task.".into());
+    }
     let native = provider.kind == ProviderKind::Ollama;
     roster.config.resources = ResourceBudget {
         ram_bytes: model
@@ -525,6 +568,49 @@ mod tests {
         assert_eq!(model.identifier, "second");
         assert_eq!(reopened.selection(1).unwrap().0.identity.id, second_agent);
         assert_eq!(reopened.selection(1).unwrap().1.identifier, "first");
+        fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn delegation_and_operator_hold_are_persistent_and_owner_scoped() {
+        let dir = std::env::temp_dir().join(format!("vespera-desktop-agent-{}", TaskId::new()));
+        let (first, _) = register(&dir, None, registration("fixture")).await.unwrap();
+        let (roster, _) = register(&dir, Some(&first), registration("fixture"))
+            .await
+            .unwrap();
+        let owner = roster.selection(0).unwrap().0.identity.id;
+        let other = roster.selection(1).unwrap().0.identity.id;
+        let (granted, _) = set_delegation(&dir, roster, 0, true).unwrap();
+        let reopened = load(&dir).unwrap().unwrap();
+        assert!(
+            reopened
+                .selection(0)
+                .unwrap()
+                .0
+                .permissions
+                .contains(&Permission::Delegate)
+        );
+        assert!(reopened.selection(1).unwrap().0.permissions.is_empty());
+        assert!(set_delegation(&dir, first, 0, false).is_err());
+        set_hold(&dir, owner, true).unwrap();
+        let tasks = dir.join("desktop-tasks.sqlite3");
+        assert!(AgentTaskStore::inspect_suspension(&tasks, owner).unwrap());
+        assert!(!AgentTaskStore::inspect_suspension(&tasks, other).unwrap());
+        let blocked = run(
+            &dir,
+            granted.clone(),
+            0,
+            "test".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(matches!(blocked, Err(error) if error.contains("Agent is suspended")));
+        set_hold(&dir, owner, false).unwrap();
+        assert!(!AgentTaskStore::inspect_suspension(&tasks, owner).unwrap());
+        let (revoked, _) = set_delegation(&dir, granted, 0, false).unwrap();
+        assert!(revoked.selection(0).unwrap().0.permissions.is_empty());
+        fs::remove_file(tasks).unwrap();
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
         fs::remove_dir(dir).unwrap();
     }

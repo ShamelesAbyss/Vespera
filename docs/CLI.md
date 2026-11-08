@@ -638,6 +638,8 @@ The desktop saves up to 16 agents in `desktop.sqlite3` under the desktop data di
 
 Select **Task history** to see the selected agent's retained tasks, newest accepted first. Use the page controls to browse and press a task number for a prompt and response preview. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID to `agent-task-history` to inspect the full checkpoint. [Durable task ownership](AGENTS.md#durable-task-ownership)
 
+Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.
+
 ### Switch layers in Atlas
 
 Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.
