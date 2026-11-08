@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Desktop provider credentials and README gallery
+
+Verified implementation checkpoint `2b1d8d1db4e078476c8f969454807772cfb35a04`, pushed to `main`. The desktop provider panel accepts a `VESPERA_` environment variable name and saves that reference with the selected agent binding. Changing the discovery endpoint or adapter clears the draft reference. The value comes from the launch environment. A subprocess fixture verified that the OpenAI-compatible server rejected a request without authorization, accepted authenticated discovery, and returned a task result after the saved profile was reopened. The fixture checked durable task ownership and searched both SQLite files for the generated token. Formatting, strict graphics Clippy, and the graphics suite passed. OS-backed storage and authentication checks against deployed servers remain open.
+
+Verified documentation checkpoint `d7bfcc42f40269364f78ee545846636c76688778`, pushed to `main`. The README shows the native Windows starter island, the ten-shelter settlement, and the selected resident alongside the live workflow capture. It explains the current controls, credential setup, and scope of the graphics measurements. GitHub's Markdown renderer returned all four image references, collapsible sections, and both Mermaid blocks. Local link and JPEG checks passed, and the published README and three world captures each returned HTTP 200.
+
 ## 2026-11-07 — Living World visual reconstruction
 
 Verified implementation checkpoint `bd934c143c608979f80abb3b22dfa8ef14193293`, pushed to `main`. Living World now renders seeded coastal terrain with branching paths, forest clearings, shallow water, textured glTF structures and articulated residents. Committed positions, resource stock, shelter counts, and work memories drive the settlement display. The engine, database format, and replay contract are unchanged. The executable embeds the art and runs from a separate working directory. Asset sources and CC0 notices are recorded in the [art credits](../assets/world/ATTRIBUTION.md).
