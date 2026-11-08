@@ -1,4 +1,5 @@
 //! Bounded private task ownership and execution history.
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -11,8 +12,9 @@ use vespera_core::{AgentId, Task, TaskId, TaskState};
 use crate::TaskExecutionResult;
 
 const APPLICATION_ID: i64 = 0x56535041;
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const MAX_TASKS: i64 = 256;
+const MAX_SUSPENSIONS: i64 = 256;
 const MAX_BYTES: i64 = 128 * 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -109,13 +111,107 @@ impl AgentTaskStore {
             ).map_err(db)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)
                 .map_err(db)?;
+        } else if id != APPLICATION_ID || !matches!(version, 1 | VERSION) {
+            return Err(AgentTaskStoreError::WrongDatabase);
+        }
+        if create && version < VERSION {
+            tx.execute_batch(
+                "CREATE TABLE agent_suspensions (id TEXT PRIMARY KEY NOT NULL) STRICT;",
+            )
+            .map_err(db)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
-        } else if (id, version) != (APPLICATION_ID, VERSION) {
-            return Err(AgentTaskStoreError::WrongDatabase);
         }
         tx.commit().map_err(db)?;
         Ok(Self(Mutex::new(connection)))
+    }
+
+    /// Read an operator hold from an existing database without migrating it.
+    pub fn inspect_suspension(path: &Path, agent: AgentId) -> Result<bool, AgentTaskStoreError> {
+        Self::connect(path, false)?.is_suspended(agent)
+    }
+
+    /// Clear a hold in an existing database. Version 1 has no holds to clear.
+    pub fn release_suspension(path: &Path, agent: AgentId) -> Result<(), AgentTaskStoreError> {
+        let store = Self::connect(path, false)?;
+        if store.is_suspended(agent)? {
+            store.set_suspended(agent, false)?;
+        }
+        Ok(())
+    }
+
+    /// Check whether the operator has placed an agent on hold.
+    pub fn is_suspended(&self, agent: AgentId) -> Result<bool, AgentTaskStoreError> {
+        let connection = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(db)?;
+        if version == 1 {
+            return Ok(false);
+        }
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM agent_suspensions WHERE id=?1)",
+                [agent.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(db)
+    }
+
+    /// Read the bounded set of operator holds before accepting work.
+    pub fn suspensions(&self) -> Result<BTreeSet<AgentId>, AgentTaskStoreError> {
+        let connection = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        let mut query = connection
+            .prepare("SELECT id FROM agent_suspensions LIMIT ?1")
+            .map_err(db)?;
+        let mut rows = query.query([MAX_SUSPENSIONS + 1]).map_err(db)?;
+        let mut agents = BTreeSet::new();
+        while let Some(row) = rows.next().map_err(db)? {
+            let id: String = row.get(0).map_err(db)?;
+            let agent = id
+                .parse()
+                .map_err(|_| AgentTaskStoreError::InvalidCheckpoint)?;
+            if !agents.insert(agent) || agents.len() > MAX_SUSPENSIONS as usize {
+                return Err(AgentTaskStoreError::InvalidCheckpoint);
+            }
+        }
+        Ok(agents)
+    }
+
+    /// Add or clear an explicit operator hold. Both operations are idempotent.
+    pub fn set_suspended(
+        &self,
+        agent: AgentId,
+        suspended: bool,
+    ) -> Result<(), AgentTaskStoreError> {
+        let id = agent.to_string();
+        let connection = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        if !suspended {
+            connection
+                .execute("DELETE FROM agent_suspensions WHERE id=?1", [id])
+                .map_err(db)?;
+            return Ok(());
+        }
+        let written = connection
+            .execute(
+                "INSERT INTO agent_suspensions (id)
+             SELECT ?1 WHERE (SELECT COUNT(*) FROM agent_suspensions) < ?2
+             ON CONFLICT(id) DO NOTHING",
+                params![id, MAX_SUSPENSIONS],
+            )
+            .map_err(db)?;
+        if written == 0
+            && !connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_suspensions WHERE id=?1)",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(db)?
+        {
+            return Err(AgentTaskStoreError::Capacity);
+        }
+        Ok(())
     }
 
     pub fn contains(&self, task_id: TaskId) -> Result<bool, AgentTaskStoreError> {

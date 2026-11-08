@@ -140,6 +140,8 @@ For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in 
 | `agents` | Offline declared agent inventory |
 | `provider-health` | Explicit bounded provider health polling, without model loading |
 | `run-agent` | One actual bounded agent task, followed by cleanup reporting |
+| `agent-state` | Inspect, set or release a durable operator hold in the private task store |
+| `agent-task-history` | Inspect durable task ownership and outcomes offline |
 | `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
 | `events` | Initialize, replay or follow a local event journal |
 | `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |

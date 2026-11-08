@@ -1200,6 +1200,93 @@ fn residency_journal_fences_an_interrupted_load_across_cli_processes() {
 }
 
 #[test]
+fn operator_suspension_survives_restart_and_resume_preserves_alternates() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = format!(
+        r#"{}
+[[agents]]
+status = "idle"
+[agents.identity]
+id = "88888888-8888-4888-8888-888888888888"
+name = "Alternate worker"
+role = "Fixture"
+[agents.model_policy]
+kind = "capability"
+required = ["text-generation"]
+"#,
+        runtime_config(&fixture, false, true)
+            .replace("permissions = []", "permissions = [\"delegate\"]"),
+    );
+    let alternate = "88888888-8888-4888-8888-888888888888";
+    let config_path = directory.write_config(&config);
+    let database = directory.0.join("agent-tasks.sqlite3");
+    let db = database.to_str().unwrap();
+    let state = |agent, action| {
+        execute(&[
+            "agent-state",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--database",
+            db,
+            "--agent",
+            agent,
+            action,
+        ])
+    };
+    assert!(!state(AGENT, "inspect").status.success());
+    assert!(!state(AGENT, "release").status.success());
+    assert!(!database.exists());
+    for action in ["suspend", "suspend", "inspect"] {
+        let output = state(AGENT, action);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["operator_suspended"], true);
+        assert_eq!(report["effective_status"], "suspended");
+    }
+    let flags = ["--resume", "--unload-after", "--task-store", db];
+    let rejected = run_fixture_agent(&directory, &config, &flags);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("durable operator suspension"));
+    let mut workflow = workflow_value();
+    let rejected = run_fixture_workflow(&directory, &config, &workflow.to_string(), &flags);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("durable operator suspension"));
+    assert!(fixture.captured().is_empty());
+
+    for action in ["release", "release", "inspect"] {
+        let output = state(AGENT, action);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["operator_suspended"], false);
+        assert_eq!(report["configured_status"], "suspended");
+        assert_eq!(report["effective_status"], "suspended");
+    }
+    assert!(state(alternate, "suspend").status.success());
+    workflow["steps"][0]["candidates"] = serde_json::json!([alternate, AGENT]);
+    let completed = run_fixture_workflow(&directory, &config, &workflow.to_string(), &flags);
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    assert_eq!(
+        report["workflow"]["attempts"][0]["result"]["agent_id"],
+        AGENT
+    );
+    assert_eq!(report["workflow"]["task"]["state"], "completed");
+}
+
+#[test]
 fn agent_task_store_fences_interrupted_ids_and_reopens_completed_results() {
     use std::process::Stdio;
     use std::time::{Duration, Instant};

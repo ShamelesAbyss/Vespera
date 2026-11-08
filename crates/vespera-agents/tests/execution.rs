@@ -544,6 +544,49 @@ async fn managed_execution_invokes_bounded_provider_and_preserves_provenance() {
 }
 
 #[tokio::test]
+async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activation() {
+    use vespera_agents::AgentTaskStore;
+
+    let (runtime, _, _, agent, _, _) = runtime_fixture().await;
+    let id = TaskId::new();
+    let path = std::env::temp_dir().join(format!("vespera-agent-migration-{id}.sqlite3"));
+    drop(AgentTaskStore::open(&path).unwrap());
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("DROP TABLE agent_suspensions; PRAGMA user_version=1;")
+            .unwrap();
+        db.execute(
+            "INSERT INTO agent_tasks (id, owner, state, task) VALUES (?1, ?2, 'queued', ?3)",
+            (
+                id.to_string(),
+                agent.to_string(),
+                serde_json::to_vec(&task(id)).unwrap(),
+            ),
+        )
+        .unwrap();
+    }
+    assert!(!AgentTaskStore::inspect_suspension(&path, agent).unwrap());
+    let store = AgentTaskStore::open(&path).unwrap();
+    store.set_suspended(agent, true).unwrap();
+    runtime.attach_task_store(store).unwrap();
+    assert_eq!(
+        runtime.get_agent(agent).await.unwrap().status,
+        AgentStatus::Suspended
+    );
+    assert!(matches!(
+        runtime.set_agent_status(agent, AgentStatus::Idle).await,
+        Err(AgentRuntimeError::DurablySuspended { agent_id }) if agent_id == agent
+    ));
+    drop(runtime);
+    let stored = AgentTaskStore::inspect(&path, id).unwrap();
+    assert_eq!(stored.task, task(id));
+    assert_eq!(stored.owner, agent);
+    assert!(stored.interrupted);
+    assert!(AgentTaskStore::inspect_suspension(&path, agent).unwrap());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn durable_result_write_failure_releases_the_owned_lease() {
     use vespera_agents::{AgentTaskStore, ExecutionError, ExecutionOptions};
 

@@ -83,6 +83,7 @@ Execute agents independently of model/provider identity.
 - Replace a model policy while retaining UUID, namespace, relationships, and history.
 - Enforce default-deny tool/network/delegation/memory access at actual boundaries; reject self-modification of identity or permissions.
 - Demonstrate bounded communication and suspend/resume/cancel; no unrestricted autonomous loop by default.
+- Operator suspension and task ownership now survive restart when using a private task store. Next, verify durable communication and bounded autonomous planning within explicit permissions.
 
 ## Milestone 8 — Persistent memory and retrieval
 

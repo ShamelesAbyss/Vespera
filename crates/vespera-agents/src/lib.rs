@@ -54,6 +54,12 @@ impl vespera_memory::MemoryAuthorizer for RuntimeMemoryAuthority {
 pub enum AgentRuntimeError {
     #[error(transparent)]
     TaskStore(#[from] AgentTaskStoreError),
+    /// An operator hold prevents the agent from accepting work.
+    #[error("agent {agent_id} has a durable operator suspension")]
+    DurablySuspended {
+        /// Suspended identity.
+        agent_id: AgentId,
+    },
     /// Invalid operator capacity policy.
     #[error("invalid runtime limit: {field}")]
     InvalidLimits {
@@ -213,6 +219,7 @@ struct RuntimeState {
     managed_tasks: BTreeMap<TaskId, CancellationToken>,
     logical_tick: u64,
     task_store: Option<AgentTaskStore>,
+    durably_suspended: BTreeSet<AgentId>,
 }
 
 #[derive(Debug)]
@@ -291,12 +298,19 @@ impl fmt::Debug for AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Attach durable ownership and execution history before accepting any tasks.
+    /// Attach durable ownership and apply operator holds before accepting any tasks.
     pub fn attach_task_store(&self, store: AgentTaskStore) -> Result<(), AgentRuntimeError> {
         let mut state = lock_state(&self.state);
         if state.task_store.is_some() || !state.tasks.is_empty() {
             return Err(AgentTaskStoreError::Busy.into());
         }
+        let suspended = store.suspensions()?;
+        for id in &suspended {
+            if let Some(agent) = state.agents.get_mut(id) {
+                agent.status = AgentStatus::Suspended;
+            }
+        }
+        state.durably_suspended = suspended;
         state.task_store = Some(store);
         Ok(())
     }
@@ -342,7 +356,10 @@ impl AgentRuntime {
     }
 
     /// Registers a validated agent definition and initializes its isolated memory and inbox.
-    pub async fn register_agent(&self, agent: AgentDefinition) -> Result<(), AgentRuntimeError> {
+    pub async fn register_agent(
+        &self,
+        mut agent: AgentDefinition,
+    ) -> Result<(), AgentRuntimeError> {
         agent.validate()?;
         let agent_id = agent.identity.id;
         if agent.status == AgentStatus::Running {
@@ -363,6 +380,9 @@ impl AgentRuntime {
         self.limits
             .reserve(&mut state, limits::agent_bytes(&agent)?)?;
 
+        if state.durably_suspended.contains(&agent_id) {
+            agent.status = AgentStatus::Suspended;
+        }
         state.agents.insert(agent_id, agent);
         state.memories.entry(agent_id).or_default();
         state.inbox.entry(agent_id).or_default();
@@ -469,6 +489,9 @@ impl AgentRuntime {
         status: AgentStatus,
     ) -> Result<(), AgentRuntimeError> {
         let mut state = lock_state(&self.state);
+        if status != AgentStatus::Suspended && state.durably_suspended.contains(&agent_id) {
+            return Err(AgentRuntimeError::DurablySuspended { agent_id });
+        }
         let agent = state
             .agents
             .get_mut(&agent_id)
@@ -760,6 +783,12 @@ impl AgentRuntime {
             return Err(AgentRuntimeError::AgentNotFound {
                 agent_id: to_agent_id,
             });
+        }
+
+        for agent_id in [from_agent_id, to_agent_id] {
+            if state.durably_suspended.contains(&agent_id) {
+                return Err(AgentRuntimeError::DurablySuspended { agent_id });
+            }
         }
 
         let task_id = task.id;

@@ -24,9 +24,21 @@ to read the stored owner, task and result. A nonterminal checkpoint is reported
 as interrupted and retains its last observed state. The store fences replay
 of that task ID. The database contains task prompts and generated results.
 
-The task store preserves accepted assignments and execution history.
-Agent configuration, operational status and inbox persistence are separate
-from task history.
+## Durable operator suspension
+
+`agent-state` manages an operator hold for a configured agent UUID. Use the
+same task database for the control command and later `run-agent` or
+`run-workflow` invocations. An invocation's `--resume` cannot bypass a hold.
+A held coordinator or decomposition roster member prevents execution.
+Authored workflows can select another eligible worker when a candidate is held.
+
+The store supports up to 256 holds. Opening a version 1 task database for
+execution or suspension adds hold storage while preserving task history.
+Releasing a hold restores the configured status. The database is exclusive
+while an invocation uses it, so issue operator state commands between runs.
+Configuration remains the authority for agent definitions, grants and model
+policy. Inbox records and transient runtime status still live in memory.
+See the [CLI reference](CLI.md#operator-suspension).
 
 ## Actual task inference
 

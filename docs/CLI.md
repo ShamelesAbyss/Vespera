@@ -134,6 +134,24 @@ matching candidate inventory. Health refresh targets eligible provider IDs.
 Generated output remains untrusted data: this command runs no tools and does not
 automatically read/write memories, change identity, or execute model instructions.
 
+## Operator suspension
+
+```powershell
+$agent = '33333333-3333-4333-8333-333333333333'
+$stateArgs = @('--config', 'config/local.toml', '--database', 'data/agent-tasks.sqlite3', '--agent', $agent)
+.\target\release\vespera.exe agent-state @stateArgs suspend
+.\target\release\vespera.exe agent-state @stateArgs inspect
+.\target\release\vespera.exe agent-state @stateArgs release
+```
+
+Use `--model-catalog <PATH>` if the configuration relies on catalog entries.
+`suspend` creates or updates the private task database. `inspect` and
+`release` require an existing database. All three commands work offline and
+return JSON with the configured status, explicit hold and effective status.
+Pass the same file to execution with `--task-store`. An operator hold takes
+precedence over `--resume`. Releasing it clears the hold, so a configured
+suspension still requires `--resume` for execution.
+
 ## Cleanup and provider sharing
 
 `run-agent` and `run-workflow` accept `--reconcile-residency`. The probes share
@@ -199,7 +217,7 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `--workflow-file <PATH>` | Authored workflow in strict UTF-8 JSON, at most one MiB. Supply either this or `--decomposition-file` |
 | `--decomposition-file <PATH>` | Strict JSON task, coordinator, authorized worker roster and planning limits |
 | `--workflow-store <PATH>` | Create or reopen a private SQLite checkpoint database |
-| `--task-store <PATH>` | Keep durable task ownership and outcomes for worker and planning calls |
+| `--task-store <PATH>` | Retain worker and planning task history and enforce operator holds |
 | `--resume-workflow` | Continue an interrupted workflow from a committed step boundary. Requires the original plan and an existing `--workflow-store` |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |

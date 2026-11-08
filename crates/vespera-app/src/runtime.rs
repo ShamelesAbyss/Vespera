@@ -356,6 +356,17 @@ impl VesperaRuntime {
         workflow: &Workflow,
         resume: bool,
     ) -> Result<Self, RuntimeError> {
+        Self::from_config_for_workflow_with_suspensions(config, workflow, resume, &BTreeSet::new())
+            .await
+    }
+
+    /// Compose a workflow without activating agents under durable operator holds.
+    pub async fn from_config_for_workflow_with_suspensions(
+        config: &AppConfig,
+        workflow: &Workflow,
+        resume: bool,
+        suspended: &BTreeSet<AgentId>,
+    ) -> Result<Self, RuntimeError> {
         config.validate()?;
         workflow.validate().map_err(OrchestratorError::from)?;
         let ids: BTreeSet<_> = workflow
@@ -386,11 +397,16 @@ impl VesperaRuntime {
                 if !agent.permissions.contains(&Permission::Delegate) {
                     return Err(OrchestratorError::CoordinatorDenied.into());
                 }
+                if suspended.contains(id) {
+                    return Err(AgentRuntimeError::DurablySuspended { agent_id: *id }.into());
+                }
                 if agent.status != AgentStatus::Idle && !resume {
                     return Err(RuntimeError::ActivationRequired { agent_id: *id });
                 }
             }
-            if resume && agent.status != AgentStatus::Idle {
+            if suspended.contains(id) {
+                agent.status = AgentStatus::Suspended;
+            } else if resume && agent.status != AgentStatus::Idle {
                 agent.status = AgentStatus::Idle;
             }
             selected.push(agent);

@@ -1,14 +1,16 @@
 //! CLI operation handlers; service behavior lives in the application runtime.
 use crate::scheduler_telemetry::Publisher;
-use crate::{AppError, RunAgentArgs, RunWorkflowArgs, event_commands};
+use crate::{AgentStateAction, AppError, RunAgentArgs, RunWorkflowArgs, event_commands};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::future::Future;
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::time::Duration;
 use vespera_agents::{
-    AgentTaskStore, AgentTaskStoreError, ExecutionOptions, MemoryContext, TaskExecutionResult,
+    AgentRuntimeError, AgentTaskStore, AgentTaskStoreError, ExecutionOptions, MemoryContext,
+    TaskExecutionResult,
 };
 use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{
@@ -17,8 +19,8 @@ use vespera_app::runtime::{
 };
 use vespera_config::AppConfig;
 use vespera_core::{
-    AgentId, EventKind, MemoryId, MemoryLayer, MemoryRecord, ModelId, Permission, ProviderId, Task,
-    TaskId, TaskState,
+    AgentId, AgentStatus, EventKind, MemoryId, MemoryLayer, MemoryRecord, ModelId, Permission,
+    ProviderId, Task, TaskId, TaskState,
 };
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
@@ -60,6 +62,52 @@ struct DecompositionReport {
 enum WorkflowInput {
     Authored(Workflow),
     Decompose(DecompositionRequest),
+}
+
+pub(crate) fn agent_state(
+    config: &AppConfig,
+    database: &Path,
+    agent: AgentId,
+    action: AgentStateAction,
+) -> Result<(), AppError> {
+    #[derive(Serialize)]
+    struct Report {
+        agent_id: AgentId,
+        configured_status: AgentStatus,
+        operator_suspended: bool,
+        effective_status: AgentStatus,
+    }
+    let configured_status = config
+        .agents
+        .iter()
+        .find(|definition| definition.identity.id == agent)
+        .ok_or_else(|| RuntimeError::from(AgentRuntimeError::AgentNotFound { agent_id: agent }))?
+        .status;
+    let operator_suspended = match action {
+        AgentStateAction::Inspect => AgentTaskStore::inspect_suspension(database, agent)?,
+        AgentStateAction::Suspend => {
+            AgentTaskStore::open(database)?.set_suspended(agent, true)?;
+            true
+        }
+        AgentStateAction::Release => {
+            AgentTaskStore::release_suspension(database, agent)?;
+            false
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&Report {
+            agent_id: agent,
+            configured_status,
+            operator_suspended,
+            effective_status: if operator_suspended {
+                AgentStatus::Suspended
+            } else {
+                configured_status
+            },
+        })?
+    );
+    Ok(())
 }
 
 pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> {
@@ -113,19 +161,43 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             return Err(WorkflowStoreError::Duplicate.into());
         }
     }
+    let task_store = args
+        .task_store
+        .as_deref()
+        .map(AgentTaskStore::open)
+        .transpose()?;
+    let suspended = task_store
+        .as_ref()
+        .map(AgentTaskStore::suspensions)
+        .transpose()?
+        .unwrap_or_default();
     let mut journal = event_commands::prepare(args.event_journal).await?;
     let runtime = match &input {
         WorkflowInput::Authored(workflow) => {
-            VesperaRuntime::from_config_for_workflow(&config, workflow, args.resume).await?
+            VesperaRuntime::from_config_for_workflow_with_suspensions(
+                &config,
+                workflow,
+                args.resume,
+                &suspended,
+            )
+            .await?
         }
         WorkflowInput::Decompose(request) => {
+            if let Some(agent_id) = std::iter::once(request.coordinator)
+                .chain(request.workers.iter().copied())
+                .find(|id| suspended.contains(id))
+            {
+                return Err(
+                    RuntimeError::from(AgentRuntimeError::DurablySuspended { agent_id }).into(),
+                );
+            }
             VesperaRuntime::from_config_for_decomposition(&config, request, args.resume).await?
         }
     };
-    if let Some(path) = &args.task_store {
+    if let Some(store) = task_store {
         runtime
             .agents()
-            .attach_task_store(AgentTaskStore::open(path)?)
+            .attach_task_store(store)
             .map_err(RuntimeError::from)?;
     }
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
@@ -502,10 +574,16 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         .as_deref()
         .map(AgentTaskStore::open)
         .transpose()?;
-    if let Some(store) = &task_store
-        && store.contains(task_id)?
-    {
-        return Err(AgentTaskStoreError::Duplicate.into());
+    if let Some(store) = &task_store {
+        if store.is_suspended(args.agent)? {
+            return Err(RuntimeError::from(AgentRuntimeError::DurablySuspended {
+                agent_id: args.agent,
+            })
+            .into());
+        }
+        if store.contains(task_id)? {
+            return Err(AgentTaskStoreError::Duplicate.into());
+        }
     }
     let journal = event_commands::prepare(args.event_journal).await?;
     let mut required = Vec::new();

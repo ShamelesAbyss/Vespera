@@ -76,6 +76,19 @@ enum Command {
         #[arg(long)]
         task: vespera_core::TaskId,
     },
+    /// Inspect, suspend or release a configured agent in a private task database.
+    AgentState {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long, default_value = "config/local.toml")]
+        config: PathBuf,
+        #[arg(long)]
+        model_catalog: Option<PathBuf>,
+        #[arg(long)]
+        agent: AgentId,
+        #[command(subcommand)]
+        action: AgentStateAction,
+    },
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
     /// Inspect a private workflow checkpoint without contacting providers.
@@ -129,6 +142,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentStateAction {
+    /// Read the current hold from an existing database.
+    Inspect,
+    /// Persist an operator hold for future invocations using the database.
+    Suspend,
+    /// Clear the operator hold and return control to the configured status.
+    Release,
 }
 
 #[derive(Debug, Args)]
@@ -401,6 +424,16 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::AgentTaskHistory { database, task } => {
             let record = vespera_agents::AgentTaskStore::inspect(&database, task)?;
             println!("{}", serde_json::to_string_pretty(&record)?);
+        }
+        Command::AgentState {
+            database,
+            config,
+            model_catalog,
+            agent,
+            action,
+        } => {
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
+            commands::agent_state(&config, &database, agent, action)?;
         }
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::WorkflowHistory { database, task } => {
