@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — World scale and independent resident replay
+
+Verified checkpoint `07413f24bf0dd8a68855d39de4929e2c82f3eea4`, pushed to `main`. The external mailbox implementation also passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42438622628).
+
+Windows formatting, strict workspace Clippy and the offline workspace suite passed. The new maximum-size fixture checked all 40 SQLite commits against independent engine state, including owned memories and relationships. Replay matched at revisions 2,560 and 5,120, and revision 128 returned the retention gap with earliest revision 1,024. One release run on Windows 11 and an Intel Core i9-14900HX measured 247 ms for direct ticks, 813 ms for SQLite commits including tick execution and 217 ms for latest replay. The database occupied 393,216 bytes. These timings describe one fixture with no inference or rendering.
+
+Live Ollama 0.40.13 with `hermes3:8b` completed six scheduled moves across Aster, Rowan and Lark. Each resident took two turns under its own `simulation_act` grant. The CLI reopened and replayed the same public snapshot at tick 24, revision 30. Local operator reads recovered 24, 19 and 24 resident action records respectively. Each resident had two encounter peers. Public snapshots omitted owned histories. The provider acknowledged unload and reported zero resident models afterward. The next gate is native command-center observability and renderer hardware validation in Milestone 12.
+
 ## 2026-11-07 — Durable external worker inboxes
 
 Verified implementation checkpoint `92b59939917bd0643414c991edc797bb182f310a`, pushed to `main`.
