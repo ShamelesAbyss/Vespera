@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Local host admission limits
+
+Verified implementation checkpoint `005cff016a2e6ea19f5f27640451c8328e652592` was pushed to `main`. The configurable scheduler policy passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42427577547).
+
+Opt-in `[scheduling].local_host_limits` tightens the startup RAM and concurrency ceilings for loopback provider scopes. The CLI exposes the observations and effective budget, and scheduler telemetry uses the effective ceilings. A fixture demonstrated rejection of a RAM cost within the declaration but outside measured headroom, without activation. A separate case rejected a remote provider scope. Unit tests cover optional process cgroup headroom, zero capacity and preservation of smaller declared limits.
+
+On Windows, Ollama 0.40.13 and `hermes3:8b` completed a request under a sampled 18,130,427,904-byte RAM ceiling and 32 inference slots. The configured VRAM ceiling stayed at 6 GiB. Acknowledged unload left residency empty. Windows formatting, strict workspace Clippy and offline workspace tests passed. Linux cgroup discovery awaits Ubuntu execution. Startup measurements can become stale, and the local sample does not identify provider GPU capacity. Latency-aware routing remains the next actionable scheduler gate.
+
 ## 2026-11-07 — Configurable scheduler policy
 
 Verified implementation checkpoint `742fc1137320c026eaa15d5f3f757f4c36130bad` was pushed to `main`. The durable residency journal passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42427116568).
