@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Official Windows application branding
+
+Verified branding checkpoint `e3ebf67eeab256c235914f4cf071189d2d3efd9c`, pushed to `main`. The canonical JPEG matches the supplied source. Regenerating the derivatives reproduced all checked asset hashes. A portable Windows run showed the icon beside the VESPERA name on Home and in the shared header in Hardware, Living World, and Models & Providers. Windows title-bar branding was observed. The desktop sets the Windows taskbar icon through winit. The graphics executable, console-free launcher and setup executable each contain the nine official ICO image sizes.
+
+The owner completed the per-user installation rehearsal. Both installed shortcuts target the installed launcher and their cached icons match the official ICO byte for byte. Installed binaries and branding assets matched the rehearsal payload, and the installed desktop process ran from the expected application directory. An optimized portable archive verified all 32 files after fresh extraction. Its SHA-256 is `7b4b820ee831b399188894312e49bb67d5ac7071a351fee9569e598efe1792d7`. The optimized setup built from the same staged candidate and verified all nine embedded icon images. Its SHA-256 is `56b3b04942128d8d394b0422538315cea3c84e5f6a0ba770eabbd498b8e7b28f`. The installed rehearsal used the debug payload. These local artifacts are unsigned. Native macOS app packaging and a supported production installer toolchain remain release work.
+
+Agent controls checkpoint `1cd3dcda3bfba326db979ce9b7855e8134151fa2` adds durable suspend/resume and explicit delegation grants. The automated desktop test verified selected-agent scoping, persistence, stale grant rejection and refusal to run held work before provider access. Workspace and graphics checks and the packager regression passed. The next desktop slice is a delegated workflow with durable attempt evidence.
+
 ## 2026-11-07 — Desktop agent roster and task history
 
 Verified implementation checkpoint `7bb2ae720b74b4b5c13085c1c93b21c4262ad17b`, pushed to `main`. The desktop supports up to 16 persistent agents with separate identities and roles. It reuses provider and model registrations across agents, keeps task limits scoped to the selected model, and preserves the selected agent's identity when rebinding. The history browser queries the existing durable store by owner and pages newest accepted tasks first. Selecting a task reads its retained prompt and outcome.
