@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Desktop provider discovery
+
+Verified implementation checkpoint `b0645b12aadd70949354b9053fc8983985e94ea8`, pushed to `main`. The desktop Models & Providers screen uses validated application configuration and the same Ollama and OpenAI-compatible adapters as the CLI. It supports endpoint editing, bounded background health and inventory requests, and paginated provider-reported model IDs. The adapter capability readout distinguishes lifecycle support from observed residency.
+
+Formatting, locked offline workspace and graphics suites, strict workspace and graphics Clippy, and the Windows graphics build passed. A compatible fixture checked both `/v1/models` requests and verified unsupported residency. A separate test rejected a non-loopback address and URL-embedded credentials. The native Windows walkthrough listed 12 models from Ollama 0.40.13 and paged through both result pages. Editing the compatible endpoint to the same server's `/v1` API produced the same model count and showed metadata, load, unload and residency as unsupported through that adapter. The graphical walkthrough used Ollama for both protocol paths. Previous Bionic daemon evidence is recorded in the provider guide.
+
+Desktop provider discovery currently covers unauthenticated loopback endpoints and session-only settings. Durable provider and model registration, graphical authentication, assigning a model to an agent, and executing a bounded task remain open.
+
 ## 2026-11-07 — Native Home and local world access
 
 Verified implementation checkpoint `f63963de8b8e6bc325a2205a341011a2d86fc238`, pushed to `main`. Launching the Bevy/wgpu client without flags now opens Home. OS CPU and available RAM observations are separate from the wgpu renderer identity. Home opens the existing Machine and Living World scenes in one window. Explicit Atlas, broker, journal and world flags retain their entry points. The desktop creates the starter database only after an explicit action and uses the existing revision-fenced world store for mutations.
