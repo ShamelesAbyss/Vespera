@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -5,13 +6,13 @@ use bevy::input::{ButtonState, keyboard::KeyboardInput};
 use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use vespera_app::runtime::{RuntimeError, configured_registry};
-use vespera_config::{AppConfig, CONFIG_SCHEMA_VERSION, ProviderConfig};
-use vespera_core::{ProviderId, ProviderKind};
+use vespera_core::ProviderKind;
 use vespera_providers::{
     CancellationToken, DiscoveredModel, ProviderHealthReport, ProviderLifecycleSupport,
 };
 
 use crate::atlas::{self, Layer, Layers};
+use crate::desktop_agent::{self, Binding, FinishedTask, Registration};
 use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
@@ -27,6 +28,8 @@ enum Action {
     Discover,
     Previous,
     Next,
+    Prompt,
+    Cancel,
 }
 
 #[derive(Component)]
@@ -40,28 +43,63 @@ struct Discovery {
 
 type ProbeResult = Result<Discovery, &'static str>;
 
+enum Edit {
+    Endpoint(String),
+    Registration {
+        model: DiscoveredModel,
+        fields: [String; 3],
+        index: usize,
+    },
+    Prompt(String),
+}
+
+enum Work {
+    Registration(Mutex<Receiver<Result<Binding, &'static str>>>),
+    Task {
+        result: Mutex<Receiver<Result<FinishedTask, String>>>,
+        cancel: CancellationToken,
+    },
+}
+
 #[derive(Resource)]
 struct Panel {
     kind: ProviderKind,
     endpoint: String,
-    draft: Option<String>,
+    draft: Option<Edit>,
     pending: Option<Mutex<Receiver<ProbeResult>>>,
     outcome: Option<ProbeResult>,
     page: usize,
+    dir: Option<PathBuf>,
+    binding: Option<Binding>,
+    work: Option<Work>,
+    feedback: String,
 }
 
-pub(super) fn install(app: &mut App) {
+pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
     atlas::register(app, Layer::Providers);
+    let restored = dir.as_deref().map_or(Ok(None), desktop_agent::load);
+    let (binding, feedback) = match restored {
+        Ok(binding) => (binding, String::new()),
+        Err(error) => (None, error.into()),
+    };
+    let (kind, endpoint) = binding.as_ref().map_or_else(
+        || (ProviderKind::Ollama, OLLAMA.into()),
+        |binding| (binding.provider().kind, binding.provider().endpoint.clone()),
+    );
     app.insert_resource(Panel {
-        kind: ProviderKind::Ollama,
-        endpoint: OLLAMA.into(),
+        kind,
+        endpoint,
         draft: None,
         pending: None,
         outcome: None,
         page: 0,
+        dir,
+        binding,
+        work: None,
+        feedback,
     })
     .add_systems(Startup, setup)
-    .add_systems(Update, (keyboard, receive, readout).chain());
+    .add_systems(Update, (keyboard, receive, receive_work, readout).chain());
 }
 
 fn setup(mut commands: Commands) {
@@ -121,6 +159,8 @@ fn setup(mut commands: Commands) {
                     children![
                         button(Action::Previous, "Previous models"),
                         button(Action::Next, "Next models"),
+                        button(Action::Prompt, "Run agent task"),
+                        button(Action::Cancel, "Cancel task"),
                     ]
                 ),
             ],
@@ -141,7 +181,14 @@ fn setup(mut commands: Commands) {
 }
 
 fn apply(action: Action, panel: &mut Panel) {
-    if panel.pending.is_some() || panel.draft.is_some() {
+    if matches!(action, Action::Cancel) {
+        if let Some(Work::Task { cancel, .. }) = &panel.work {
+            cancel.cancel();
+            panel.feedback = "Cancellation requested. Waiting for local cleanup.".into();
+        }
+        return;
+    }
+    if panel.pending.is_some() || panel.draft.is_some() || panel.work.is_some() {
         return;
     }
     match action {
@@ -153,7 +200,17 @@ fn apply(action: Action, panel: &mut Panel) {
             panel.outcome = None;
             panel.page = 0;
         }
-        Action::Edit => panel.draft = Some(panel.endpoint.clone()),
+        Action::Edit => panel.draft = Some(Edit::Endpoint(panel.endpoint.clone())),
+        Action::Prompt => {
+            if panel.binding.is_some() {
+                panel.draft = Some(Edit::Prompt(String::new()));
+            } else {
+                panel.feedback =
+                    "Discover a model and press its number to register it and bind an agent."
+                        .into();
+            }
+        }
+        Action::Cancel => {}
         Action::Discover => {
             let (sender, receiver) = mpsc::sync_channel(1);
             let kind = panel.kind;
@@ -174,6 +231,7 @@ fn apply(action: Action, panel: &mut Panel) {
             panel.pending = Some(Mutex::new(receiver));
             panel.outcome = None;
             panel.page = 0;
+            panel.feedback.clear();
         }
         Action::Previous => panel.page = panel.page.saturating_sub(1),
         Action::Next => {
@@ -188,24 +246,10 @@ fn apply(action: Action, panel: &mut Panel) {
 }
 
 async fn discover(kind: ProviderKind, endpoint: String) -> Result<Discovery, RuntimeError> {
-    let id = ProviderId::new();
-    let config = AppConfig {
-        schema_version: CONFIG_SCHEMA_VERSION,
-        network: default(),
-        resources: default(),
-        inference_overhead: default(),
-        scheduling: default(),
-        providers: vec![ProviderConfig {
-            id,
-            name: "Local provider".into(),
-            kind,
-            endpoint,
-            credential_env: None,
-            request_timeout_seconds: 5,
-        }],
-        models: vec![],
-        agents: vec![],
-    };
+    let mut declaration = desktop_agent::provider(kind, endpoint);
+    declaration.request_timeout_seconds = 5;
+    let id = declaration.id;
+    let config = desktop_agent::config(declaration);
     let registry = configured_registry(&config).await?;
     let provider = registry.get_provider(id).await?;
     let cancel = CancellationToken::new();
@@ -235,36 +279,230 @@ fn keyboard(
         .read()
         .filter(|event| event.state == ButtonState::Pressed)
     {
-        let Some(draft) = panel.draft.as_mut() else {
-            if event.key_code == KeyCode::Enter && !event.repeat {
-                apply(Action::Discover, &mut panel);
-            }
-            continue;
-        };
-        match event.key_code {
-            KeyCode::Enter if !event.repeat => {
-                if let Some(endpoint) = panel.draft.take() {
-                    panel.endpoint = endpoint;
-                    panel.outcome = None;
-                    panel.page = 0;
+        if panel.draft.is_none() {
+            if !event.repeat {
+                if event.key_code == KeyCode::Enter {
+                    apply(Action::Discover, &mut panel);
+                } else if let Some(index) = [
+                    KeyCode::Digit1,
+                    KeyCode::Digit2,
+                    KeyCode::Digit3,
+                    KeyCode::Digit4,
+                    KeyCode::Digit5,
+                    KeyCode::Digit6,
+                    KeyCode::Digit7,
+                    KeyCode::Digit8,
+                ]
+                .iter()
+                .position(|key| *key == event.key_code)
+                {
+                    select_model(&mut panel, index);
                 }
             }
+            continue;
+        }
+        match event.key_code {
+            KeyCode::Enter if !event.repeat => submit(&mut panel),
             KeyCode::Escape => panel.draft = None,
-            KeyCode::Backspace => {
-                draft.pop();
-            }
-            KeyCode::Delete => draft.clear(),
             _ => {
-                if let Some(text) = &event.text {
-                    draft.extend(
-                        text.chars()
-                            .filter(|c| c.is_ascii_alphanumeric() || ":/.[_-]".contains(*c))
-                            .take(ENDPOINT_LIMIT.saturating_sub(draft.len())),
-                    );
+                if let Some(edit) = panel.draft.as_mut() {
+                    update_edit(edit, event);
                 }
             }
         }
     }
+}
+
+fn select_model(panel: &mut Panel, index: usize) {
+    if panel.work.is_some() || panel.pending.is_some() {
+        return;
+    }
+    if panel.dir.is_none() {
+        panel.feedback = "A local desktop data directory is unavailable.".into();
+        return;
+    }
+    if let Some(Ok(discovery)) = &panel.outcome
+        && let Ok(models) = &discovery.models
+        && let Some(model) = models.get(panel.page * MODELS_PER_PAGE + index)
+    {
+        panel.feedback.clear();
+        panel.draft = Some(Edit::Registration {
+            model: model.clone(),
+            fields: [
+                panel
+                    .binding
+                    .as_ref()
+                    .map_or_else(String::new, |binding| binding.agent().identity.name.clone()),
+                String::new(),
+                String::new(),
+            ],
+            index: 0,
+        });
+    }
+}
+
+fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
+    let (field, limit, accepts): (&mut String, usize, fn(char) -> bool) = match edit {
+        Edit::Endpoint(value) => (value, ENDPOINT_LIMIT, |c| {
+            c.is_ascii_alphanumeric() || ":/.[_-]".contains(c)
+        }),
+        Edit::Registration {
+            fields, index: 0, ..
+        } => (&mut fields[0], 64, |c| !c.is_control()),
+        Edit::Registration { fields, index, .. } => {
+            (&mut fields[*index], 8, |c| c.is_ascii_digit())
+        }
+        Edit::Prompt(value) => (value, 1200, |c| !c.is_control()),
+    };
+    match event.key_code {
+        KeyCode::Backspace => {
+            field.pop();
+        }
+        KeyCode::Delete => field.clear(),
+        _ => {
+            if let Some(text) = &event.text {
+                field.extend(
+                    text.chars()
+                        .filter(|&c| accepts(c))
+                        .take(limit.saturating_sub(field.chars().count())),
+                );
+            }
+        }
+    }
+}
+
+fn submit(panel: &mut Panel) {
+    let Some(edit) = panel.draft.take() else {
+        return;
+    };
+    match edit {
+        Edit::Endpoint(endpoint) => {
+            panel.endpoint = endpoint;
+            panel.outcome = None;
+            panel.page = 0;
+        }
+        Edit::Registration {
+            model,
+            fields,
+            mut index,
+        } => {
+            let valid = match index {
+                0 => !fields[0].trim().is_empty(),
+                1 => fields[1].parse::<u32>().is_ok_and(|ram| ram > 0),
+                _ => fields[2].parse::<u32>().is_ok(),
+            };
+            if !valid || index < 2 {
+                panel.feedback = if valid {
+                    String::new()
+                } else {
+                    "Enter a valid value to continue.".into()
+                };
+                index += usize::from(valid);
+                panel.draft = Some(Edit::Registration {
+                    model,
+                    fields,
+                    index,
+                });
+                return;
+            }
+            if let Some(dir) = panel.dir.clone() {
+                let [agent_name, ram, vram] = fields;
+                let registration = Registration {
+                    provider: desktop_agent::provider(panel.kind, panel.endpoint.clone()),
+                    model,
+                    agent_name,
+                    ram_mib: ram.parse().expect("checked RAM input"),
+                    vram_mib: vram.parse().expect("checked VRAM input"),
+                };
+                let previous = panel.binding.clone();
+                let receiver = background(move |runtime| {
+                    runtime.block_on(desktop_agent::register(
+                        &dir,
+                        previous.as_ref(),
+                        registration,
+                    ))
+                });
+                panel.work = Some(Work::Registration(receiver));
+                panel.feedback = "Validating the model and saving the agent binding...".into();
+            }
+        }
+        Edit::Prompt(prompt) => {
+            if prompt.trim().is_empty() {
+                panel.feedback = "Enter a prompt before starting a task.".into();
+                panel.draft = Some(Edit::Prompt(prompt));
+            } else if let (Some(dir), Some(binding)) = (panel.dir.clone(), panel.binding.clone()) {
+                let cancel = CancellationToken::new();
+                let task_cancel = cancel.clone();
+                let result = background(move |runtime| {
+                    runtime.block_on(desktop_agent::run(&dir, binding, prompt, task_cancel))
+                });
+                panel.work = Some(Work::Task { result, cancel });
+                panel.feedback = "Task in progress. Waiting for the provider and scheduler.".into();
+            }
+        }
+    }
+}
+
+fn background<T: Send + 'static>(
+    operation: impl FnOnce(tokio::runtime::Runtime) -> T + Send + 'static,
+) -> Mutex<Receiver<T>> {
+    let (send, receive) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            let _ = send.send(operation(runtime));
+        }
+    });
+    Mutex::new(receive)
+}
+
+fn poll<T>(receiver: &Mutex<Receiver<T>>) -> Result<T, TryRecvError> {
+    receiver
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .try_recv()
+}
+
+fn receive_work(mut panel: ResMut<Panel>) {
+    match &panel.work {
+        Some(Work::Registration(result)) => match poll(result) {
+            Ok(Ok(binding)) => {
+                panel.binding = Some(binding);
+                panel.feedback = "Registered the model and saved the agent binding.".into();
+            }
+            Ok(Err(error)) => panel.feedback = error.into(),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panel.feedback = "The registration worker stopped.".into()
+            }
+        },
+        Some(Work::Task { result, .. }) => match poll(result) {
+            Ok(Ok(task)) => {
+                let preview: String = task
+                    .response
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n')
+                    .take(600)
+                    .collect();
+                panel.feedback = format!(
+                    "Task {} completed. {}\n{preview}",
+                    task.id,
+                    if task.cleanup_confirmed {
+                        "Local runtime drained."
+                    } else {
+                        "Cleanup was not confirmed."
+                    }
+                );
+            }
+            Ok(Err(error)) => panel.feedback = error,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => panel.feedback = "The task worker stopped.".into(),
+        },
+        None => return,
+    }
+    panel.work = None;
 }
 
 fn receive(mut panel: ResMut<Panel>) {
@@ -293,13 +531,64 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         ProviderKind::Ollama => "Ollama",
         _ => "OpenAI-compatible (including LM Studio Bionic)",
     };
-    let endpoint = panel.draft.as_ref().unwrap_or(&panel.endpoint);
+    let endpoint = match &panel.draft {
+        Some(Edit::Endpoint(endpoint)) => endpoint,
+        _ => &panel.endpoint,
+    };
     let mut content = format!("Adapter  |  {adapter}\nEndpoint  |  {endpoint}\n");
-    if panel.draft.is_some() {
-        content.push_str("\nEnter saves the endpoint, Esc cancels, Delete clears the field.");
+    if let Some(binding) = &panel.binding {
+        let _ = writeln!(
+            content,
+            "Saved agent  |  {}  |  Model {}\nTask endpoint  |  {}",
+            binding.agent().identity.name,
+            binding
+                .model()
+                .identifier
+                .chars()
+                .take(90)
+                .collect::<String>(),
+            binding.provider().endpoint
+        );
+    }
+    if !panel.feedback.is_empty() {
+        let _ = writeln!(content, "\n{}", panel.feedback);
+    }
+    if let Some(edit) = &panel.draft {
+        match edit {
+            Edit::Endpoint(_) => content.push_str("\nEnter saves the endpoint."),
+            Edit::Registration {
+                model,
+                fields,
+                index,
+            } => {
+                let labels = [
+                    "Agent name",
+                    "Estimated model RAM in MiB (positive)",
+                    "Estimated model VRAM in MiB (0 for CPU-only)",
+                ];
+                let _ = write!(
+                    content,
+                    "\nRegister {}\n{}: {}_\nThese operator estimates also set this profile's memory ceilings.\nEnter continues.",
+                    model
+                        .provider_model_name
+                        .chars()
+                        .take(90)
+                        .collect::<String>(),
+                    labels[*index],
+                    fields[*index]
+                );
+            }
+            Edit::Prompt(prompt) => {
+                let _ = write!(
+                    content,
+                    "\nTask prompt: {prompt}_\nEnter runs one task (128 output tokens, 50-second task budget)."
+                );
+            }
+        }
+        content.push_str("\nEsc cancels the edit. Delete clears the field.");
     } else if panel.pending.is_some() {
         content.push_str("\nChecking health and discovering models...");
-    } else {
+    } else if panel.work.is_none() && !panel.feedback.starts_with("Task ") {
         match &panel.outcome {
             None => content.push_str(
                 "\nLoopback servers without authentication. Select Test & discover or press Enter.",
@@ -327,15 +616,16 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                     Ok(models) => {
                         let _ = writeln!(
                             content,
-                            "\n{} exposed models  |  Page {} of {}",
+                            "\n{} exposed models  |  Page {} of {}  |  Press a model number to register",
                             models.len(),
                             panel.page + 1,
                             models.len().div_ceil(MODELS_PER_PAGE)
                         );
-                        for model in models
+                        for (index, model) in models
                             .iter()
                             .skip(panel.page * MODELS_PER_PAGE)
                             .take(MODELS_PER_PAGE)
+                            .enumerate()
                         {
                             let name: String = model
                                 .provider_model_name
@@ -343,7 +633,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                                 .filter(|c| !c.is_control())
                                 .take(90)
                                 .collect();
-                            let _ = writeln!(content, "  {name}");
+                            let _ = writeln!(content, "  {}. {name}", index + 1);
                         }
                     }
                 }

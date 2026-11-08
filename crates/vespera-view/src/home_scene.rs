@@ -38,9 +38,8 @@ struct WorldStatus;
 struct HardwareStatus;
 
 pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
-    let path = data_dir
-        .or_else(default_data_dir)
-        .map(|dir| dir.join("world.sqlite3"));
+    let data_dir = data_dir.or_else(default_data_dir);
+    let path = data_dir.as_ref().map(|dir| dir.join("world.sqlite3"));
     let status = if path.is_some() {
         "Create the starter world or reopen its saved state."
     } else {
@@ -49,7 +48,7 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
     let mut app = scene::desktop("Vespera", Color::srgb(0.029, 0.040, 0.065), Layer::Home);
     machine_scene::install(&mut app, None, reduced_motion);
     world_scene::install_scene(&mut app, reduced_motion);
-    provider_scene::install(&mut app);
+    provider_scene::install(&mut app, data_dir);
     atlas::register(&mut app, Layer::Home);
     app.world_mut()
         .resource_mut::<Layers>()
@@ -159,7 +158,7 @@ fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
                     TextColor(Color::srgb(0.69, 0.77, 0.85))
                 ),
                 (
-                    Text::new("Local desktop  |  No inference or broker connection configured"),
+                    Text::new("Local desktop  |  Inference runs only when requested"),
                     TextFont::from_font_size(14.0),
                     TextColor(Color::srgb(0.69, 0.77, 0.85))
                 ),

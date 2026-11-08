@@ -626,7 +626,15 @@ From Home, select **Models & Providers** or press **F6**. Select **Ollama** for 
 
 Select **Test & discover** or press **Enter** to check health and fetch the model inventory. The panel shows the observed health, round-trip time, provider model IDs and adapter support for metadata, load, unload and residency. Use **Previous models** and **Next models** to browse results. **F5** returns Home.
 
-This panel handles unauthenticated loopback servers. Endpoint changes and discovery results live in the current app session. The listed IDs describe server inventory. Model registration, task execution and model lifecycle actions are available through their existing supported backend paths.
+This panel handles unauthenticated loopback servers. Discovery results and unregistered endpoint edits live in the current app session.
+
+### Register a model and run a desktop agent
+
+From a discovery result, press the number beside a text model. Enter an agent name, a positive RAM estimate in MiB, and a VRAM estimate in MiB. Enter each field separately. Use zero VRAM for a CPU-only estimate. These estimates also set the profile's scheduler memory ceilings, with available host RAM applied as an additional limit. For Ollama, registration checks the model's reported text-generation capability. On the compatible interface, choosing a model declares that it supports text generation.
+
+Select **Run agent task**, enter a prompt, then press **Enter** to submit one task with a 128-output-token limit and a 50-second execution deadline. **Cancel task** signals local cancellation. The panel shows the result or failure and reports local cleanup. Native Ollama checks existing residency before admission and requests cleanup of models loaded by the runtime. The compatible path leaves residency and explicit unloading to the provider.
+
+The desktop keeps one saved agent binding in `desktop.sqlite3` under the desktop data directory. Registering a different model rebinds the same agent ID. Tasks use the saved endpoint even if discovery is pointed elsewhere. The agent has no optional grants. After restarting, use **Models & Providers** to see the saved binding. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID from the panel to `agent-task-history`. [Durable task ownership](AGENTS.md#durable-task-ownership)
 
 ### Switch layers in Atlas
 

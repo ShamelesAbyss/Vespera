@@ -1,4 +1,5 @@
 mod atlas;
+mod desktop_agent;
 mod gpu_telemetry;
 mod home_scene;
 mod machine_scene;

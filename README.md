@@ -16,7 +16,7 @@ cargo run --locked -p vespera-view --features graphics
 
 For a configured Atlas session, use `--atlas` and the flags for your broker, journal, or world database. **F1–F4** switch between the available 3D layers. [Atlas setup and controls](docs/CLI.md#switch-layers-in-atlas)
 
-From Home, open **Models & Providers** to check a loopback Ollama or OpenAI-compatible server and browse the model IDs it actually exposes. [Desktop provider discovery](docs/CLI.md#discover-local-models-in-the-desktop)
+From Home, open **Models & Providers** to check a loopback Ollama or OpenAI-compatible server, browse its exposed models, save a model binding, and run a bounded task through the agent runtime. [Desktop provider and agent walkthrough](docs/CLI.md#discover-local-models-in-the-desktop)
 
 The standalone Intelligence Network renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
 
