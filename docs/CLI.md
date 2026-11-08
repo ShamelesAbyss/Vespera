@@ -19,6 +19,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
 | `world` | Initialize, inspect and advance a persistent simulation or request a model decision | Local SQLite access. Decisions also require a configured agent and provider. |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
+| `agent-task-history` | Read a durable agent task checkpoint and owner | None |
 | `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
@@ -104,6 +105,8 @@ happen in TOML; no agent/model administrative subcommand is supplied yet.
 | `run-agent` option | Requirement/default |
 | --- | --- |
 | `--agent <UUID>` | Required configured agent |
+| `--task-store <PATH>` | Create or reopen private task ownership and outcome history |
+| `--task-id <UUID>` | Explicit durable task ID. Requires `--task-store` |
 | `--prompt-file <PATH>` | Required bounded UTF-8 task input |
 | `--resume` | Explicitly activate a suspended/failed agent for this invocation |
 | `--max-output-tokens <N>` | 1–131,072; default 256, constrained by admitted context |
@@ -117,6 +120,14 @@ happen in TOML; no agent/model administrative subcommand is supplied yet.
 | `--json` | Structured task state, result/error and cleanup evidence |
 
 `--resume` does not rewrite the file, grant permissions or persist status.
+A completed or interrupted durable task can be inspected after exit.
+
+```powershell
+.\target\release\vespera.exe agent-task-history --database data/agent-tasks.sqlite3 --task 77777777-7777-4777-8777-777777777777
+```
+
+Use the task ID returned by the execution command or supplied with
+`--task-id`. [Durable task ownership](AGENTS.md#durable-task-ownership)
 A fixed-agent invocation scopes composition to its provider/model; unrelated
 credentials and adapters are not initialized. Capability-based policies include
 matching candidate inventory. Health refresh targets eligible provider IDs.
@@ -188,6 +199,7 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `--workflow-file <PATH>` | Authored workflow in strict UTF-8 JSON, at most one MiB. Supply either this or `--decomposition-file` |
 | `--decomposition-file <PATH>` | Strict JSON task, coordinator, authorized worker roster and planning limits |
 | `--workflow-store <PATH>` | Create or reopen a private SQLite checkpoint database |
+| `--task-store <PATH>` | Keep durable task ownership and outcomes for worker and planning calls |
 | `--resume-workflow` | Continue an interrupted workflow from a committed step boundary. Requires the original plan and an existing `--workflow-store` |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |

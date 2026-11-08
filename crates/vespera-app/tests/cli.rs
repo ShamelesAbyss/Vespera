@@ -1200,6 +1200,124 @@ fn residency_journal_fences_an_interrupted_load_across_cli_processes() {
 }
 
 #[test]
+fn agent_task_store_fences_interrupted_ids_and_reopens_completed_results() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(1200, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true);
+    let config_path = directory.write_config(&config);
+    let prompt = directory.0.join("task.txt");
+    fs::write(&prompt, "bounded integrated task").unwrap();
+    let database = directory.0.join("agent-tasks.sqlite3");
+    let db = database.to_str().unwrap();
+    let interrupted_id = "11111111-aaaa-4aaa-8aaa-111111111111";
+    let completed_id = "22222222-aaaa-4aaa-8aaa-222222222222";
+    let inspect = |task| execute(&["agent-task-history", "--database", db, "--task", task]);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "run-agent",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--agent",
+            AGENT,
+            "--prompt-file",
+            prompt.to_str().unwrap(),
+            "--max-output-tokens",
+            "32",
+            "--resume",
+            "--task-store",
+            db,
+            "--task-id",
+            interrupted_id,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut busy = None;
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        if fixture
+            .captured()
+            .iter()
+            .any(|request| request.path == "/api/chat")
+        {
+            busy = Some(inspect(interrupted_id));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    assert!(!child.wait().unwrap().success());
+    let busy = busy.expect("first task reached the provider");
+    assert!(!busy.status.success());
+    assert!(String::from_utf8_lossy(&busy.stderr).contains("agent task database is in use"));
+    fixture.inference_delay_ms.store(0, Ordering::SeqCst);
+    let output = inspect(interrupted_id);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stored: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stored["task"]["state"], "running");
+    assert_eq!(stored["owner"], AGENT);
+    assert_eq!(stored["interrupted"], true);
+    assert!(stored["result"].is_null());
+
+    let before = fixture.captured().len();
+    let duplicate = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--reconcile-residency",
+            "--task-store",
+            db,
+            "--task-id",
+            interrupted_id,
+        ],
+    );
+    assert!(!duplicate.status.success());
+    assert!(
+        String::from_utf8_lossy(&duplicate.stderr).contains("agent task identity already exists")
+    );
+    assert_eq!(fixture.captured().len(), before);
+
+    let completed = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--resume",
+            "--unload-after",
+            "--task-store",
+            db,
+            "--task-id",
+            completed_id,
+        ],
+    );
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    let live: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    let output = inspect(completed_id);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stored: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stored["owner"], AGENT);
+    assert_eq!(stored["interrupted"], false);
+    assert_eq!(stored["result"], live["execution"]);
+}
+
+#[test]
 fn scheduler_telemetry_tracks_a_real_cli_lease_through_cleanup() {
     use std::time::{Duration, Instant};
     use vespera_core::{ReservationState, SchedulerSample};
@@ -1658,12 +1776,15 @@ model_id = "55555555-5555-4555-8555-555555555555"
                 .unwrap();
         input["workers"] = serde_json::json!(["66666666-6666-4666-8666-666666666666"]);
         fs::write(&request, input.to_string()).unwrap();
+        let task_store = directory.0.join("agent-tasks.sqlite3");
         let result = execute(&[
             "run-workflow",
             "--config",
             config.to_str().unwrap(),
             "--decomposition-file",
             request.to_str().unwrap(),
+            "--task-store",
+            task_store.to_str().unwrap(),
             "--resume",
             "--unload-after",
             "--json",
@@ -1687,6 +1808,19 @@ model_id = "55555555-5555-4555-8555-555555555555"
                 input["workers"]
             );
             assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 2);
+            let attempt = &report["workflow"]["attempts"][0];
+            let history = execute(&[
+                "agent-task-history",
+                "--database",
+                task_store.to_str().unwrap(),
+                "--task",
+                attempt["task_id"].as_str().unwrap(),
+            ]);
+            assert!(history.status.success());
+            let stored: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
+            assert_eq!(stored["owner"], input["workers"][0]);
+            assert_eq!(stored["delegated_by"], AGENT);
+            assert_eq!(stored["result"], attempt["result"]);
             let chats: Vec<_> = worker_calls
                 .iter()
                 .filter(|request| request.path == "/api/chat")

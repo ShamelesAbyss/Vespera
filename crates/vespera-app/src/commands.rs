@@ -7,7 +7,9 @@ use std::fs::File;
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::time::Duration;
-use vespera_agents::{ExecutionOptions, MemoryContext, TaskExecutionResult};
+use vespera_agents::{
+    AgentTaskStore, AgentTaskStoreError, ExecutionOptions, MemoryContext, TaskExecutionResult,
+};
 use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{
     CleanupReport, LocalHostLimits, ProviderCheck, RuntimeError, VesperaRuntime, check_providers,
@@ -120,6 +122,12 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             VesperaRuntime::from_config_for_decomposition(&config, request, args.resume).await?
         }
     };
+    if let Some(path) = &args.task_store {
+        runtime
+            .agents()
+            .attach_task_store(AgentTaskStore::open(path)?)
+            .map_err(RuntimeError::from)?;
+    }
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let live = if args.observe_workflow {
         journal
@@ -488,6 +496,17 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     if prompt.len() > 65_536 || prompt.trim().is_empty() {
         return Err(AppError::InvalidPrompt);
     }
+    let task_id = args.task_id.unwrap_or_default();
+    let task_store = args
+        .task_store
+        .as_deref()
+        .map(AgentTaskStore::open)
+        .transpose()?;
+    if let Some(store) = &task_store
+        && store.contains(task_id)?
+    {
+        return Err(AgentTaskStoreError::Duplicate.into());
+    }
     let journal = event_commands::prepare(args.event_journal).await?;
     let mut required = Vec::new();
     if args.memory_query_file.is_some() {
@@ -518,6 +537,12 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         None
     };
     let runtime = VesperaRuntime::from_config_for_agent(&config, args.agent).await?;
+    if let Some(store) = task_store {
+        runtime
+            .agents()
+            .attach_task_store(store)
+            .map_err(RuntimeError::from)?;
+    }
     let result_store = if args.remember_result {
         let database = args.memory_database;
         let authority = runtime.agents().memory_authorizer();
@@ -531,7 +556,6 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
     } else {
         None
     };
-    let task_id = TaskId::new();
     let task = Task {
         id: task_id,
         prompt,

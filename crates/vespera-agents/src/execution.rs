@@ -172,12 +172,17 @@ struct RunGuard {
     armed: bool,
 }
 impl RunGuard {
-    fn finish(&mut self, state: TaskState) -> Result<Task, AgentRuntimeError> {
+    fn finish(
+        &mut self,
+        state: TaskState,
+        result: Option<&TaskExecutionResult>,
+    ) -> Result<Task, AgentRuntimeError> {
         let task = self.runtime.finish_task_execution_inner(
             self.task_id,
             self.inference.model_id,
             state,
             Some(&self.inference),
+            result,
         )?;
         self.armed = false;
         Ok(task)
@@ -186,7 +191,7 @@ impl RunGuard {
 impl Drop for RunGuard {
     fn drop(&mut self) {
         if self.armed {
-            let _ = self.finish(TaskState::Cancelled);
+            let _ = self.finish(TaskState::Cancelled, None);
         }
     }
 }
@@ -342,16 +347,11 @@ impl AgentRuntime {
             .await;
             match outcome {
                 Ok((response, inference_elapsed)) => {
-                    let task = guard.finish(TaskState::Completed)?;
-                    if !response.content.trim().is_empty() {
-                        self.scheduler.record_inference_latency(
-                            &active.inference,
-                            options.max_output_tokens,
-                            inference_elapsed,
-                        );
-                    }
-                    Ok(TaskExecutionResult {
-                        task,
+                    let mut result = TaskExecutionResult {
+                        task: Task {
+                            state: TaskState::Completed,
+                            ..task.clone()
+                        },
                         agent_id,
                         model_id: active.inference.model_id,
                         provider_id: active.inference.provider_id,
@@ -360,7 +360,16 @@ impl AgentRuntime {
                         memory_context_ids,
                         elapsed_ms: u64::try_from(started.elapsed().as_millis())
                             .unwrap_or(u64::MAX),
-                    })
+                    };
+                    result.task = guard.finish(TaskState::Completed, Some(&result))?;
+                    if !result.response.content.trim().is_empty() {
+                        self.scheduler.record_inference_latency(
+                            &active.inference,
+                            options.max_output_tokens,
+                            inference_elapsed,
+                        );
+                    }
+                    Ok(result)
                 }
                 Err(error) => {
                     let terminal = if matches!(
@@ -371,7 +380,7 @@ impl AgentRuntime {
                     } else {
                         TaskState::Failed
                     };
-                    guard.finish(terminal)?;
+                    guard.finish(terminal, None)?;
                     Err(error)
                 }
             }

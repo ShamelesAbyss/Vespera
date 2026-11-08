@@ -69,6 +69,13 @@ enum Command {
     },
     /// Execute one bounded agent task using configured real provider adapters.
     RunAgent(RunAgentArgs),
+    /// Inspect a private agent task checkpoint without contacting providers.
+    AgentTaskHistory {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        task: vespera_core::TaskId,
+    },
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
     /// Inspect a private workflow checkpoint without contacting providers.
@@ -126,6 +133,12 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct RunAgentArgs {
+    /// Keep task ownership and outcomes in a private SQLite database.
+    #[arg(long)]
+    task_store: Option<PathBuf>,
+    /// Use an explicit task UUID in the durable task database.
+    #[arg(long, requires = "task_store")]
+    task_id: Option<vespera_core::TaskId>,
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
     reconcile_residency: bool,
@@ -181,6 +194,9 @@ struct RunAgentArgs {
 
 #[derive(Debug, Args)]
 struct RunWorkflowArgs {
+    /// Keep delegated task ownership and outcomes in a private SQLite database.
+    #[arg(long)]
+    task_store: Option<PathBuf>,
     /// Create or reopen a private SQLite workflow checkpoint database.
     #[arg(long)]
     workflow_store: Option<PathBuf>,
@@ -253,6 +269,8 @@ struct ConfigReport {
 
 #[derive(Debug, Error)]
 enum AppError {
+    #[error(transparent)]
+    AgentTaskStore(#[from] vespera_agents::AgentTaskStoreError),
     #[error(transparent)]
     Catalog(#[from] vespera_model_registry::CatalogError),
     #[error("model descriptor must be valid strict JSON and fit within 64 KiB")]
@@ -380,6 +398,10 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             }
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
+        Command::AgentTaskHistory { database, task } => {
+            let record = vespera_agents::AgentTaskStore::inspect(&database, task)?;
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        }
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::WorkflowHistory { database, task } => {
             let checkpoint = vespera_orchestrator::WorkflowStore::inspect(&database, task)?;

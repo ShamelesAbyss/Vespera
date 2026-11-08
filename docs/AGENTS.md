@@ -6,6 +6,28 @@ inspects agents, routes by fixed model or declared capabilities, coordinates
 owned task execution, and provides permission-gated in-process memory/messages.
 It is not yet a persistent autonomous ecosystem or an external-agent server.
 
+## Durable task ownership
+
+Pass `--task-store <PATH>` to `run-agent` or `run-workflow` to retain accepted
+tasks in a private local SQLite database. The runtime commits the owner before
+model preparation. Delegation records both the sender and the assigned worker.
+Managed completion commits the outcome, selected model and provider provenance.
+The database holds up to 256 tasks and 128 MiB of serialized payloads.
+Use a separate path from the workflow store, memory database and event journal.
+
+`run-agent --task-id <UUID>` selects a stable task identity and requires
+`--task-store`. Reusing an existing ID fails before provider access. The
+runtime generates an ID when the option is omitted.
+
+After the writer exits, use `agent-task-history --database <PATH> --task <UUID>`
+to read the stored owner, task and result. A nonterminal checkpoint is reported
+as interrupted and retains its last observed state. The store fences replay
+of that task ID. The database contains task prompts and generated results.
+
+The task store preserves accepted assignments and execution history.
+Agent configuration, operational status and inbox persistence are separate
+from task history.
+
 ## Actual task inference
 
 `AgentRuntime::execute_task(agent_id, task, options, cancel)` executes one bounded

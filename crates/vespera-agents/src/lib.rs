@@ -26,7 +26,9 @@ use vespera_scheduler::{
 mod execution;
 pub use execution::{ExecutionError, ExecutionOptions, MemoryContext, TaskExecutionResult};
 mod limits;
+mod task_store;
 pub use limits::{RuntimeLimits, RuntimeUsage};
+pub use task_store::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask};
 
 /// Current agent grants/accepted assignments, shared with durable storage without
 /// making model/provider identity an owner. Caller identity remains a trusted boundary.
@@ -50,6 +52,8 @@ impl vespera_memory::MemoryAuthorizer for RuntimeMemoryAuthority {
 /// Error taxonomy for agent runtime operations.
 #[derive(Debug, Error)]
 pub enum AgentRuntimeError {
+    #[error(transparent)]
+    TaskStore(#[from] AgentTaskStoreError),
     /// Invalid operator capacity policy.
     #[error("invalid runtime limit: {field}")]
     InvalidLimits {
@@ -208,6 +212,7 @@ struct RuntimeState {
     executions: BTreeMap<TaskId, OwnedInference>,
     managed_tasks: BTreeMap<TaskId, CancellationToken>,
     logical_tick: u64,
+    task_store: Option<AgentTaskStore>,
 }
 
 #[derive(Debug)]
@@ -238,12 +243,17 @@ impl Drop for TaskStartGuard {
         }
         let mut state = lock_state(&self.state);
         state.managed_tasks.remove(&self.task_id);
-        if let Some(task) = state.tasks.get_mut(&self.task_id) {
+        if let Some(mut task) = state.tasks.get(&self.task_id).cloned() {
+            let previous = task.state;
             let _ = task.state.transition(if self.failed {
                 TaskState::Failed
             } else {
                 TaskState::Cancelled
             });
+            if let Some(store) = &state.task_store {
+                let _ = store.transition(&task, self.agent_id, previous, None);
+            }
+            state.tasks.insert(self.task_id, task);
         }
         if let Some(agent) = state.agents.get_mut(&self.agent_id) {
             agent.status = if self.failed {
@@ -281,6 +291,15 @@ impl fmt::Debug for AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Attach durable ownership and execution history before accepting any tasks.
+    pub fn attach_task_store(&self, store: AgentTaskStore) -> Result<(), AgentRuntimeError> {
+        let mut state = lock_state(&self.state);
+        if state.task_store.is_some() || !state.tasks.is_empty() {
+            return Err(AgentTaskStoreError::Busy.into());
+        }
+        state.task_store = Some(store);
+        Ok(())
+    }
     /// Authorization port for explicit durable memory stores. This creates no file,
     /// runs no inference and does not replace the separate in-process memory APIs.
     pub fn memory_authorizer(&self) -> Arc<dyn vespera_memory::MemoryAuthorizer> {
@@ -426,12 +445,17 @@ impl AgentRuntime {
         if state.task_assignments.get(&task_id) != Some(&agent_id) {
             return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
         }
-        let task = state
+        let mut task = state
             .tasks
-            .get_mut(&task_id)
+            .get(&task_id)
+            .cloned()
             .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
         if task.state == TaskState::Queued {
             task.state.transition(TaskState::Cancelled)?;
+            if let Some(store) = &state.task_store {
+                store.transition(&task, agent_id, TaskState::Queued, None)?;
+            }
+            state.tasks.insert(task_id, task);
             Ok(true)
         } else {
             Ok(false)
@@ -745,8 +769,15 @@ impl AgentRuntime {
         if state.tasks.len() >= self.limits.max_tasks {
             return Err(limits::capacity("tasks"));
         }
+        let previous_bytes = state.retained_content_bytes;
         self.limits
             .reserve(&mut state, limits::task_bytes(&task)?)?;
+        if let Some(store) = &state.task_store
+            && let Err(error) = store.insert(&task, to_agent_id, Some(from_agent_id))
+        {
+            state.retained_content_bytes = previous_bytes;
+            return Err(error.into());
+        }
         state.tasks.insert(task_id, task);
         state.task_assignments.insert(task_id, to_agent_id);
         Ok(task_id)
@@ -902,7 +933,9 @@ impl AgentRuntime {
             {
                 return Err(AgentRuntimeError::TaskConflict { task_id: task.id });
             }
-            if !state.tasks.contains_key(&task.id) {
+            let queued = state.tasks.contains_key(&task.id);
+            let previous_bytes = state.retained_content_bytes;
+            if !queued {
                 if state.tasks.len() >= self.limits.max_tasks {
                     return Err(limits::capacity("tasks"));
                 }
@@ -910,6 +943,17 @@ impl AgentRuntime {
                     .reserve(&mut state, limits::task_bytes(&task)?)?;
             }
             task.state.transition(TaskState::Running)?;
+            if let Some(store) = &state.task_store {
+                let checkpoint = if queued {
+                    store.transition(&task, agent_id, TaskState::Queued, None)
+                } else {
+                    store.insert(&task, agent_id, None)
+                };
+                if let Err(error) = checkpoint {
+                    state.retained_content_bytes = previous_bytes;
+                    return Err(error.into());
+                }
+            }
             state.tasks.insert(task.id, task.clone());
             state.task_assignments.insert(task.id, agent_id);
             if let Some((token, _, _)) = &managed {
@@ -1014,7 +1058,7 @@ impl AgentRuntime {
         model_id: ModelId,
         terminal_state: TaskState,
     ) -> Result<Task, AgentRuntimeError> {
-        self.finish_task_execution_inner(task_id, model_id, terminal_state, None)
+        self.finish_task_execution_inner(task_id, model_id, terminal_state, None, None)
     }
 
     fn finish_task_execution_inner(
@@ -1023,6 +1067,7 @@ impl AgentRuntime {
         model_id: ModelId,
         terminal_state: TaskState,
         owned: Option<&ScheduledInference>,
+        result: Option<&TaskExecutionResult>,
     ) -> Result<Task, AgentRuntimeError> {
         if !matches!(
             terminal_state,
@@ -1050,10 +1095,15 @@ impl AgentRuntime {
         {
             return Err(AgentRuntimeError::ExecutionMismatch { task_id });
         }
-        let assigned_agent = state.task_assignments.get(&task_id).copied();
-        let task = state
+        let assigned_agent = state
+            .task_assignments
+            .get(&task_id)
+            .copied()
+            .ok_or(AgentRuntimeError::TaskReferenceDenied { task_id })?;
+        let mut task = state
             .tasks
-            .get_mut(&task_id)
+            .get(&task_id)
+            .cloned()
             .ok_or(AgentRuntimeError::TaskNotFound { task_id })?;
 
         if task.state != TaskState::Running {
@@ -1066,12 +1116,18 @@ impl AgentRuntime {
         }
 
         task.state.transition(terminal_state)?;
-        let snapshot = task.clone();
+        let checkpoint = state
+            .task_store
+            .as_ref()
+            .map(|store| store.transition(&task, assigned_agent, TaskState::Running, result))
+            .transpose();
+        if checkpoint.is_err() {
+            task.state = TaskState::Failed;
+        }
+        state.tasks.insert(task_id, task.clone());
 
-        if let Some(agent_id) = assigned_agent
-            && let Some(agent) = state.agents.get_mut(&agent_id)
-        {
-            agent.status = if terminal_state == TaskState::Failed {
+        if let Some(agent) = state.agents.get_mut(&assigned_agent) {
+            agent.status = if task.state == TaskState::Failed {
                 AgentStatus::Failed
             } else {
                 AgentStatus::Idle
@@ -1083,6 +1139,7 @@ impl AgentRuntime {
         }
         state.managed_tasks.remove(&task_id);
 
-        Ok(snapshot)
+        checkpoint?;
+        Ok(task)
     }
 }

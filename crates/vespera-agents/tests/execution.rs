@@ -544,6 +544,49 @@ async fn managed_execution_invokes_bounded_provider_and_preserves_provenance() {
 }
 
 #[tokio::test]
+async fn durable_result_write_failure_releases_the_owned_lease() {
+    use vespera_agents::{AgentTaskStore, ExecutionError, ExecutionOptions};
+
+    let (runtime, scheduler, _, agent, _, _) = runtime_fixture().await;
+    let id = TaskId::new();
+    let path = std::env::temp_dir().join(format!("vespera-agent-task-{id}.sqlite3"));
+    drop(AgentTaskStore::open(&path).unwrap());
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER reject_completed_task BEFORE UPDATE ON agent_tasks
+             WHEN NEW.state='completed'
+             BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;",
+        )
+        .unwrap();
+    }
+    runtime
+        .attach_task_store(AgentTaskStore::open(&path).unwrap())
+        .unwrap();
+    let result = runtime
+        .execute_task(
+            agent,
+            task(id),
+            ExecutionOptions::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ExecutionError::Runtime(AgentRuntimeError::TaskStore(_)))
+    ));
+    assert_eq!(runtime.task_state(id), Some(TaskState::Failed));
+    assert_eq!(scheduler.usage_snapshot().await.active_inferences, 0);
+    assert_eq!(scheduler.queue_snapshot().active, 0);
+    drop(runtime);
+    let stored = AgentTaskStore::inspect(&path, id).unwrap();
+    assert!(stored.interrupted);
+    assert_eq!(stored.owner, agent);
+    assert!(stored.result.is_none());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn provider_failure_and_invalid_results_fail_without_leaking_leases() {
     use vespera_agents::{ExecutionError, ExecutionOptions};
     for mode in [2, 4, 5, 6, 7] {
