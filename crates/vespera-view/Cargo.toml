@@ -41,7 +41,7 @@ bevy = { version = "0.20.1", optional = true, default-features = false, features
     "default_app", "std", "multi_threaded", "bevy_winit", "x11", "default_font",
     "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_render",
     "bevy_ui", "bevy_ui_render", "bevy_text", "bevy_picking", "mesh_picking", "ui_picking",
-    "bevy_gizmos", "bevy_gizmos_render",
+    "bevy_gizmos", "bevy_gizmos_render", "bevy_gltf", "png",
 ] }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]

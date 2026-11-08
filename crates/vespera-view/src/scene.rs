@@ -105,6 +105,7 @@ pub(super) struct Orbit {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    zoom_goal: Option<f32>,
     transition: Option<(Vec3, f32)>,
 }
 
@@ -115,6 +116,7 @@ impl Default for Orbit {
             yaw: 0.45,
             pitch: 0.62,
             distance: 17.0,
+            zoom_goal: None,
             transition: None,
         }
     }
@@ -131,6 +133,11 @@ impl Orbit {
     pub(super) fn at_home<const L: usize>(home: &CameraFocus<L>) -> Self {
         Self {
             focus: home.home_point,
+            pitch: if L == Layer::World as usize {
+                0.73
+            } else {
+                Self::default().pitch
+            },
             ..Self::with_distance(home.home_distance)
         }
     }
@@ -677,20 +684,42 @@ pub(super) fn camera<const L: usize>(
     };
     if keys.just_pressed(KeyCode::KeyR) {
         let (previous, distance) = (orbit.focus, orbit.distance);
-        *orbit = Orbit::with_distance(distance);
+        *orbit = Orbit::at_home(&focus);
         orbit.focus = previous;
+        orbit.distance = distance;
         orbit.transition = Some((focus.home_point, focus.home_distance));
     }
     if keys.just_pressed(KeyCode::KeyF)
         && let Some(focus) = focus.point
     {
-        orbit.transition = Some((focus, 9.0));
+        orbit.zoom_goal = None;
+        orbit.transition = Some((focus, if L == Layer::World as usize { 6.5 } else { 9.0 }));
     }
     if buttons.pressed(MouseButton::Right) {
         orbit.yaw -= motion.delta.x * 0.006;
         orbit.pitch = (orbit.pitch + motion.delta.y * 0.006).clamp(0.16, 1.46);
     }
-    orbit.distance = (orbit.distance * (-scroll.delta.y * 0.08).exp()).clamp(3.0, 85.0);
+    if scroll.delta.y != 0.0 {
+        let current = orbit.zoom_goal.unwrap_or(orbit.distance);
+        let maximum = if L == Layer::World as usize {
+            (focus.home_distance * 1.25).max(85.0)
+        } else {
+            85.0
+        };
+        let next = (current * (-scroll.delta.y * 0.08).exp()).clamp(3.0, maximum);
+        if L == Layer::World as usize && !focus.reduced_motion {
+            orbit.zoom_goal = Some(next);
+        } else {
+            orbit.distance = next;
+        }
+    }
+    if let Some(goal) = orbit.zoom_goal {
+        orbit.distance += (goal - orbit.distance) * (1.0 - (-17.0 * time.delta_secs()).exp());
+        if (goal - orbit.distance).abs() < 0.01 {
+            orbit.distance = goal;
+            orbit.zoom_goal = None;
+        }
+    }
     let lateral = f32::from(u8::from(keys.pressed(KeyCode::KeyD)))
         - f32::from(u8::from(keys.pressed(KeyCode::KeyA)));
     let forward = f32::from(u8::from(keys.pressed(KeyCode::KeyS)))
@@ -718,7 +747,12 @@ pub(super) fn camera<const L: usize>(
         }
     }
     let rotation = Quat::from_rotation_y(orbit.yaw);
-    orbit.focus += rotation * Vec3::new(lateral, 0.0, forward) * time.delta_secs() * 8.0;
+    let pan_speed = if L == Layer::World as usize {
+        (orbit.distance * 0.36).clamp(2.0, 18.0)
+    } else {
+        8.0
+    };
+    orbit.focus += rotation * Vec3::new(lateral, 0.0, forward) * time.delta_secs() * pan_speed;
     let offset = rotation * Vec3::new(0.0, orbit.pitch.sin(), orbit.pitch.cos()) * orbit.distance;
     *transform = Transform::from_translation(orbit.focus + offset).looking_at(orbit.focus, Vec3::Y);
 }

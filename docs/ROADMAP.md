@@ -138,6 +138,7 @@ Implement the central native Rust 3D orchestration and world views, evaluating B
 3. Swarm follows accepted workflow attempts, observed dependency inputs and terminal task states from the local journal. The signed operator feed shows worker message acceptance and opt-in recipient acknowledgements. Add combined source navigation and contention evidence.
 4. Living World supports individual choices and bounded resident reasoning through the scheduler. The view distinguishes preparation, active local inference and committed actions. Retained world commits replay without inference.
 5. World Mode can freeze, step through retained revisions with explicit gaps, and return live. Swarm and the Intelligence Network can replay captured observations while their feeds advance. Atlas can switch among configured layers, preserve view context and transfer exact observed agent identities. Add drill-downs through model, provider, hardware and task relationships as the corresponding evidence becomes available.
+6. Reconstruct the Living World as an interactive miniature settlement. Keep authored scenery and character poses separate from the simulation state. Use native Windows captures and frame timing to review each graphics checkpoint. See [Living World visuals](WORLD_VISUALS.md).
 
 Keep read-only operation as the default, require explicit authorization for controls, and show pending and committed outcomes. Preserve headless operation. Validate interactive graphics and performance on the RTX 4070 Laptop GPU, and label measurements and simulation state separately.
 

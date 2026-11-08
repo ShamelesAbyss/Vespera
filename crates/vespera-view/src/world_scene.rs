@@ -4,16 +4,19 @@ use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::time::{Duration, SystemTime};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
+use bevy::world_serialization::WorldInstanceReady;
 use tokio::sync::watch;
 use vespera_core::AgentId;
 use vespera_world::{
-    Position, ReasoningPhase, ReasoningStatus, Replay, ReplayDirection, Role, Snapshot, World,
+    Action, Position, ReasoningPhase, ReasoningStatus, Replay, ReplayDirection, Role, World,
     WorldChange, WorldError, WorldFence, WorldStore,
 };
 
 use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
+use crate::world_art::{self, Landscape, Models, grid_point};
 
 type Focus = CameraFocus<{ Layer::World as usize }>;
 
@@ -75,6 +78,7 @@ pub(super) struct View {
     playing: bool,
     clock: Timer,
     entities: BTreeMap<Object, Entity>,
+    shelters: Vec<Entity>,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,14 +98,6 @@ pub(super) fn selected_agent(world: &bevy::prelude::World) -> Option<AgentId> {
     }
 }
 
-#[derive(Resource)]
-struct Palette {
-    depot: Handle<Mesh>,
-    site: Handle<Mesh>,
-    resident: Handle<Mesh>,
-    material: [Handle<StandardMaterial>; 6],
-}
-
 #[derive(Component)]
 struct Details;
 
@@ -111,11 +107,7 @@ pub(super) fn run(
     allow_control: bool,
     reduced_motion: bool,
 ) -> Result<(), WorldError> {
-    let mut app = desktop(
-        "Vespera | World Simulation",
-        Color::srgb(0.04, 0.065, 0.06),
-        Layer::World,
-    );
+    let mut app = desktop("Vespera | World Simulation", world_art::SKY, Layer::World);
     install(&mut app, path, revision, allow_control, reduced_motion)?;
     app.run();
     Ok(())
@@ -170,11 +162,13 @@ pub(super) fn connect(
         playing: false,
         clock: Timer::from_seconds(0.5, TimerMode::Repeating),
         entities: BTreeMap::new(),
+        shelters: Vec::new(),
     })
 }
 
 pub(super) fn install_scene(app: &mut App, reduced_motion: bool) {
     register(app, Layer::World);
+    world_art::embed_assets(app);
     app.insert_resource(Focus {
         point: None,
         home_point: Vec3::ZERO,
@@ -188,6 +182,7 @@ pub(super) fn install_scene(app: &mut App, reduced_motion: bool) {
         (
             controls,
             sync_scene,
+            animate_residents,
             camera::<{ Layer::World as usize }>,
             links,
             inspect,
@@ -335,53 +330,70 @@ fn setup(
     layers: Res<Layers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: (Res<AssetServer>, ResMut<Assets<Image>>),
 ) {
-    let colors = [
-        Color::srgb(0.39, 0.72, 0.82),
-        Color::srgb(0.31, 0.70, 0.39),
-        Color::srgb(0.75, 0.56, 0.28),
-        Color::srgb(0.60, 0.41, 0.84),
-        Color::srgb(0.40, 0.45, 0.45),
-        Color::srgb(1.0, 0.91, 0.42),
-    ];
-    let unlit = |color| StandardMaterial {
-        base_color: color,
-        unlit: true,
-        ..default()
-    };
-    commands.insert_resource(Palette {
-        depot: meshes.add(Cuboid::new(0.84, 0.75, 0.84)),
-        site: meshes.add(Cylinder::new(0.32, 0.55)),
-        resident: meshes.add(Capsule3d::new(0.24, 0.47)),
-        material: colors.map(|color| materials.add(unlit(color))),
-    });
+    let (assets, mut images) = assets;
     let state = view.world.snapshot();
-    focus.home_distance = f32::from(state.width.max(state.depth))
-        .mul_add(1.35, 4.0)
-        .clamp(9.0, 85.0);
+    let landscape = Landscape::new(&state);
+    let models = Models::load(&assets);
+    let parent = layers.parent(Layer::World).0;
+    world_art::build(
+        &mut commands,
+        parent,
+        &landscape,
+        &models,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+    );
+    commands.insert_resource(landscape);
+    commands.insert_resource(models);
+    let span = f32::from(state.width.max(state.depth));
+    focus.home_distance = span.mul_add(1.39, 8.4) + (span - 20.0).max(0.0) * 0.44;
+    focus.home_point = Vec3::new(2.15, -0.28, -0.45);
+    let fog_end = (focus.home_distance * 3.3).max(65.0);
     let camera = commands
         .spawn((
             Layer::World,
             Camera {
                 is_active: layers.active == Layer::World,
+                clear_color: ClearColorConfig::Custom(world_art::SKY),
                 ..default()
             },
             Camera3d::default(),
-            Tonemapping::None,
-            Orbit::with_distance(focus.home_distance),
-            Transform::from_xyz(8.0, 10.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Tonemapping::AcesFitted,
+            Orbit::at_home(&focus),
+            AmbientLight {
+                color: Color::srgb(0.64, 0.77, 1.0),
+                brightness: 1050.0,
+                ..default()
+            },
+            DistanceFog {
+                color: world_art::SKY,
+                falloff: FogFalloff::Linear {
+                    start: focus.home_distance * 1.02,
+                    end: fog_end,
+                },
+                ..default()
+            },
         ))
         .id();
     commands.spawn((
-        layers.parent(Layer::World),
-        Mesh3d(meshes.add(Cuboid::new(
-            f32::from(state.width),
-            0.1,
-            f32::from(state.depth),
-        ))),
-        MeshMaterial3d(materials.add(unlit(Color::srgb(0.11, 0.19, 0.16)))),
-        Transform::from_xyz(0.0, -0.07, 0.0),
-        Pickable::IGNORE,
+        ChildOf(parent),
+        DirectionalLight {
+            color: Color::srgb(1.0, 0.87, 0.73),
+            illuminance: 6_500.0,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        CascadeShadowConfigBuilder {
+            num_cascades: 2,
+            first_cascade_far_bound: 14.0,
+            maximum_distance: focus.home_distance + 24.0,
+            ..default()
+        }
+        .build(),
+        Transform::from_xyz(-5.0, 10.0, 7.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
         UiTargetCamera(camera),
@@ -391,9 +403,10 @@ fn setup(
             left: px(24),
             ..default()
         },
-        Text::new("VESPERA  /  WORLD SIMULATION"),
+        Text::new("LIVING WORLD"),
         TextFont::from_font_size(24.0),
-        TextColor(Color::srgb(0.86, 0.98, 0.90)),
+        TextColor(Color::srgb(0.89, 0.96, 1.0)),
+        Pickable::IGNORE,
     ));
     commands.spawn((
         UiTargetCamera(camera),
@@ -402,14 +415,32 @@ fn setup(
             position_type: PositionType::Absolute,
             top: px(66),
             right: px(22),
-            width: px(315),
+            width: px(288),
             padding: UiRect::all(px(15)),
+            border_radius: BorderRadius::all(px(12)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.04, 0.09, 0.08, 0.94)),
+        BackgroundColor(Color::srgba(0.038, 0.063, 0.102, 0.90)),
         Text::new("Loading committed simulation state..."),
         TextFont::from_font_size(15.0),
-        TextColor(Color::srgb(0.87, 0.97, 0.90)),
+        TextColor(Color::srgb(0.89, 0.96, 1.0)),
+    ));
+    commands.spawn((
+        UiTargetCamera(camera),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(24),
+            top: px(65),
+            max_width: percent(45),
+            padding: UiRect::axes(px(11), px(8)),
+            border_radius: BorderRadius::all(px(8)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.038, 0.063, 0.102, 0.85)),
+        Text::new("Right drag  Orbit\nWheel  Zoom  |  WASD  Pan\nF  Focus  |  R  Overview"),
+        TextFont::from_font_size(13.0),
+        TextColor(Color::srgb(0.83, 0.91, 0.98)),
+        Pickable::IGNORE,
     ));
 }
 
@@ -430,7 +461,7 @@ fn receive(mut view: ResMut<View>, layers: Res<Layers>) {
             update.completed_requests,
         )
     };
-    if view.world != world {
+    if view.world != world || view.history.is_some() != history.is_some() {
         view.world = world;
         view.scene_dirty = true;
     }
@@ -549,178 +580,391 @@ fn movement(keys: &ButtonInput<KeyCode>) -> Option<(i16, i16)> {
     })
 }
 
-fn place(position: Position, state: &Snapshot<'_>, height: f32) -> Vec3 {
-    Vec3::new(
-        f32::from(position.x) - f32::from(state.width - 1) * 0.5,
-        height,
-        f32::from(position.z) - f32::from(state.depth - 1) * 0.5,
-    )
+#[derive(Component, Default)]
+struct SiteDisplay {
+    cargo: Vec<Entity>,
+}
+
+#[derive(Component)]
+struct ResidentMotion {
+    goal: Vec2,
+    cell: Position,
+    heading: Quat,
+    last_work: Option<(u64, Action)>,
+    work_age: f32,
+    active: bool,
+}
+
+#[derive(Component)]
+struct SuitJoint {
+    resident: Entity,
+    kind: Joint,
+    rest: Quat,
+}
+
+enum Joint {
+    Arm(f32),
+    Leg(f32),
+    Head,
+}
+
+fn rig_suit(
+    event: On<WorldInstanceReady>,
+    children: Query<&Children>,
+    nodes: Query<(&Name, &Transform)>,
+    mut commands: Commands,
+) {
+    for entity in children.iter_descendants(event.entity) {
+        let Ok((name, transform)) = nodes.get(entity) else {
+            continue;
+        };
+        let kind = match name.as_str() {
+            "armLeft" => Joint::Arm(1.0),
+            "armRight" => Joint::Arm(-1.0),
+            "legLeft" => Joint::Leg(1.0),
+            "legRight" => Joint::Leg(-1.0),
+            "head" => Joint::Head,
+            _ => continue,
+        };
+        commands.entity(entity).insert(SuitJoint {
+            resident: event.entity,
+            kind,
+            rest: transform.rotation,
+        });
+    }
 }
 
 fn sync_scene(
     mut commands: Commands,
     mut view: ResMut<View>,
     mut selected: ResMut<Selected>,
-    palette: Res<Palette>,
+    art: (Res<Models>, Res<Landscape>),
     mut focus: ResMut<Focus>,
     layers: Res<Layers>,
-    mut objects: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut objects: Query<(
+        &mut Transform,
+        Option<&mut ResidentMotion>,
+        Option<&SiteDisplay>,
+    )>,
 ) {
+    let view = &mut *view;
+    let (models, land) = art;
+    let state = view.world.snapshot();
     if let Some(id) = layers.incoming
-        && view
-            .world
-            .snapshot()
-            .residents
-            .iter()
-            .any(|resident| resident.id == id)
+        && state.residents.iter().any(|resident| resident.id == id)
     {
         selected.0 = Some(Object::Resident(id));
     }
     if !view.scene_dirty && !selected.is_changed() {
         return;
     }
-    view.scene_dirty = false;
-    let state = view.world.snapshot();
-    let height = 1.0 + f32::from(state.shelters.min(20)) * 0.13;
-    let mut render = vec![(
-        Object::Depot,
-        place(state.depot, &state, height * 0.37),
-        height,
-        &palette.depot,
-        0,
-    )];
-    render.extend(state.sites.iter().map(|site| {
-        let scale = 0.25 + f32::from(site.stock) / f32::from(site.capacity);
-        (
-            Object::Site(site.position),
-            place(site.position, &state, 0.22 * scale),
-            scale,
-            &palette.site,
-            1,
-        )
-    }));
-    // Coincident residents use a small fixed display offset. Grid coordinates stay authoritative.
-    render.extend(state.residents.iter().enumerate().map(|(index, resident)| {
-        let elevation = if resident.position == state.depot {
-            height * 0.75
-        } else {
-            state
-                .sites
-                .iter()
-                .find(|site| site.position == resident.position)
-                .map_or(0.0, |site| {
-                    0.50 * (0.25 + f32::from(site.stock) / f32::from(site.capacity))
-                })
-        };
-        let mut position = place(resident.position, &state, 0.50 + elevation);
-        let angle = index as f32 * 2.399_963;
-        position += Vec3::new(angle.cos() * 0.24, 0.0, angle.sin() * 0.24);
-        let color = match (resident.active, resident.role) {
-            (false, _) => 4,
-            (true, Role::Forager) => 2,
-            (true, Role::Builder) => 3,
-        };
-        (
-            Object::Resident(resident.id),
-            position,
-            1.0,
-            &palette.resident,
-            color,
-        )
-    }));
+    let changed = std::mem::replace(&mut view.scene_dirty, false);
+    let snap = focus.reduced_motion || view.history.is_some();
+    let parent = layers.parent(Layer::World).0;
     let mut remaining = std::mem::take(&mut view.entities);
     focus.point = None;
-    for (key, position, scale, mesh, color) in render {
-        let is_selected = selected.0 == Some(key);
-        if is_selected {
-            focus.point = Some(position);
+    let mut draw = |key: Object, transform: Transform, model: &Handle<WorldAsset>| {
+        if selected.0 == Some(key) {
+            focus.point = Some(transform.translation + Vec3::Y * 0.3);
         }
-        let material = &palette.material[if is_selected { 5 } else { color }];
-        let transform =
-            Transform::from_translation(position).with_scale(Vec3::new(1.0, scale, 1.0));
-        let entity = if let Some(entity) = remaining.remove(&key) {
-            if let Ok((mut pose, mut surface)) = objects.get_mut(entity) {
-                *pose = transform;
-                surface.0 = material.clone();
-            }
-            entity
-        } else {
-            commands
-                .spawn((
-                    layers.parent(Layer::World),
-                    key,
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material.clone()),
-                    transform,
-                ))
-                .observe(
-                    move |event: On<PointerClick>, mut selected: ResMut<Selected>| {
-                        if event.button == PointerButton::Primary {
-                            selected.0 = Some(key);
-                        }
-                    },
-                )
-                .id()
-        };
+        if let Some(entity) = remaining.remove(&key) {
+            view.entities.insert(key, entity);
+            return (entity, false);
+        }
+        let entity = commands
+            .spawn((
+                ChildOf(parent),
+                key,
+                WorldAssetRoot(model.clone()),
+                transform,
+            ))
+            .observe(
+                move |event: On<PointerClick>, mut selected: ResMut<Selected>| {
+                    if event.button == PointerButton::Primary {
+                        selected.0 = Some(key);
+                    }
+                },
+            )
+            .id();
         view.entities.insert(key, entity);
+        (entity, true)
+    };
+
+    draw(
+        Object::Depot,
+        Transform::from_translation(land.point(land.depot, 0.0)).with_scale(Vec3::splat(0.82)),
+        &models.depot,
+    );
+    let mut fresh_sites = Vec::new();
+    let mut cargo_updates = Vec::new();
+    for site in state.sites {
+        let point = grid_point(site.position, &state);
+        let count = (u32::from(site.stock) * 3).div_ceil(u32::from(site.capacity)) as usize;
+        let (entity, new) = draw(
+            Object::Site(site.position),
+            Transform::from_translation(land.point(point, 0.24)).with_scale(Vec3::splat(0.69)),
+            &models.drill,
+        );
+        if new {
+            fresh_sites.push((entity, count));
+        } else if let Ok((_, _, Some(display))) = objects.get(entity) {
+            for (index, &child) in display.cargo.iter().enumerate() {
+                cargo_updates.push((child, stock_visibility(index, count)));
+            }
+        }
+    }
+
+    let mut fresh_suits = Vec::new();
+    for (index, resident) in state.residents.iter().enumerate() {
+        let key = Object::Resident(resident.id);
+        // Display offsets keep residents beside the machinery on occupied grid cells.
+        let mut point = grid_point(resident.position, &state);
+        let angle = index as f32 * 2.399_963;
+        let offset = Vec2::from_angle(angle) * 0.26;
+        point += if resident.position == state.depot {
+            Vec2::new(offset.x * 2.0, 1.06 + offset.y)
+        } else if state
+            .sites
+            .iter()
+            .any(|site| site.position == resident.position)
+        {
+            Vec2::new(offset.x * 1.6, 0.61 + offset.y * 0.65)
+        } else {
+            offset
+        };
+        let suit = match resident.role {
+            Role::Forager => &models.suits[0],
+            Role::Builder => &models.suits[1],
+        };
+        let scale = if resident.role == Role::Builder {
+            1.50
+        } else {
+            1.40
+        };
+        let heading = Quat::from_rotation_y(std::f32::consts::PI + angle.sin() * 0.62);
+        let transform = Transform::from_translation(land.point(point, 0.03))
+            .with_scale(Vec3::splat(scale))
+            .with_rotation(heading);
+        let (entity, new) = draw(key, transform, suit);
+        let last_work = view.world.memory(resident.id).ok().and_then(|memory| {
+            memory.iter().rev().find_map(|entry| {
+                matches!(entry.action, Action::Gathered { .. } | Action::Built {})
+                    .then_some((entry.tick, entry.action))
+            })
+        });
+        if new {
+            fresh_suits.push((
+                entity,
+                ResidentMotion {
+                    goal: point,
+                    cell: resident.position,
+                    heading,
+                    last_work,
+                    work_age: f32::INFINITY,
+                    active: resident.active,
+                },
+            ));
+        } else if changed && let Ok((mut pose, Some(mut motion), _)) = objects.get_mut(entity) {
+            let delta = point - motion.goal;
+            if view.history.is_some() {
+                motion.heading = heading;
+            } else if delta.length_squared() > 0.001 {
+                // The suits face -Z in their source files.
+                motion.heading = Quat::from_rotation_y((-delta.x).atan2(-delta.y));
+            }
+            let cells = motion.cell.x.abs_diff(resident.position.x)
+                + motion.cell.z.abs_diff(resident.position.z);
+            if snap || !resident.active || cells > 1 {
+                pose.translation = transform.translation;
+                pose.rotation = motion.heading;
+                motion.work_age = f32::INFINITY;
+            } else if let Some((tick, _)) = last_work
+                && tick == state.tick
+                && motion.last_work != last_work
+            {
+                motion.work_age = 0.0;
+            }
+            motion.goal = point;
+            motion.cell = resident.position;
+            motion.last_work = last_work;
+            motion.active = resident.active;
+        }
+    }
+    for (entity, visibility) in cargo_updates {
+        commands.entity(entity).insert(visibility);
+    }
+    for (entity, count) in fresh_sites {
+        let cargo = (0..3)
+            .map(|index| {
+                commands
+                    .spawn((
+                        ChildOf(entity),
+                        WorldAssetRoot(models.cargo.clone()),
+                        Transform::from_xyz(-0.58 + index as f32 * 0.36, -0.30, 0.69)
+                            .with_scale(Vec3::splat(0.54)),
+                        stock_visibility(index, count),
+                    ))
+                    .id()
+            })
+            .collect();
+        commands.entity(entity).insert(SiteDisplay { cargo });
+    }
+    for (entity, motion) in fresh_suits {
+        commands.entity(entity).insert(motion).observe(rig_suit);
     }
     for entity in remaining.into_values() {
         commands.entity(entity).despawn();
     }
-}
 
-fn links(view: Res<View>, selected: Res<Selected>, mut gizmos: Gizmos) {
-    let state = view.world.snapshot();
-    let half_width = f32::from(state.width) * 0.5;
-    let half_depth = f32::from(state.depth) * 0.5;
-    let grid = Color::srgb(0.19, 0.29, 0.23);
-    for column in 0..=state.width {
-        let x = f32::from(column) - half_width;
-        gizmos.line(
-            Vec3::new(x, -0.01, -half_depth),
-            Vec3::new(x, -0.01, half_depth),
-            grid,
+    // Shelter coordinates aren't stored by the engine. The diorama displays a bounded cluster.
+    let plots = land.shelters(state.shelters);
+    let count = plots.len();
+    while view.shelters.len() > count {
+        if let Some(entity) = view.shelters.pop() {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (index, plot) in plots.enumerate().skip(view.shelters.len()) {
+        view.shelters.push(
+            commands
+                .spawn((
+                    ChildOf(parent),
+                    WorldAssetRoot(models.shelter.clone()),
+                    Transform::from_translation(plot)
+                        .with_scale(Vec3::splat(0.57))
+                        .with_rotation(Quat::from_rotation_y(index as f32 * 2.399_963)),
+                ))
+                .observe(world_art::ignore_decoration)
+                .id(),
         );
     }
-    for row in 0..=state.depth {
-        let z = f32::from(row) - half_depth;
-        gizmos.line(
-            Vec3::new(-half_width, -0.01, z),
-            Vec3::new(half_width, -0.01, z),
-            grid,
+}
+
+fn stock_visibility(index: usize, count: usize) -> Visibility {
+    if index < count {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
+}
+
+fn animate_residents(
+    time: Res<Time>,
+    view: Res<View>,
+    focus: Res<Focus>,
+    land: Res<Landscape>,
+    mut residents: Query<(&mut Transform, &mut ResidentMotion)>,
+    mut joints: Query<(&mut Transform, &SuitJoint), Without<ResidentMotion>>,
+) {
+    let snap = focus.reduced_motion || view.history.is_some();
+    let step = time.delta_secs();
+    let seconds = time.elapsed_secs();
+    let blend = 1.0 - (-14.0 * step).exp();
+    for (mut transform, mut motion) in &mut residents {
+        let position = Vec2::new(transform.translation.x, transform.translation.z);
+        let next = if snap || position.distance_squared(motion.goal) < 0.0001 {
+            motion.goal
+        } else {
+            position.lerp(motion.goal, blend)
+        };
+        if next != position {
+            transform.translation = land.point(next, 0.03);
+        }
+        if !transform.rotation.abs_diff_eq(motion.heading, 0.0001) {
+            transform.rotation = transform.rotation.slerp(motion.heading, blend);
+        }
+        motion.work_age += step;
+    }
+    for (mut transform, joint) in &mut joints {
+        let Ok((body, motion)) = residents.get(joint.resident) else {
+            continue;
+        };
+        let distance = Vec2::new(body.translation.x, body.translation.z).distance(motion.goal);
+        let gait = (seconds * 25.0).sin() * (distance * 3.5).min(0.66);
+        let work = if motion.work_age < 0.42 {
+            (motion.work_age / 0.42 * std::f32::consts::PI).sin()
+        } else {
+            0.0
+        };
+        let pitch = if snap || !motion.active {
+            0.0
+        } else {
+            match joint.kind {
+                Joint::Leg(side) => gait * side,
+                Joint::Arm(side) => {
+                    let lift = match motion.last_work {
+                        Some((_, Action::Built {})) => work * (1.15 + side * 0.42),
+                        _ => work * (0.72 - side * 0.24),
+                    };
+                    -gait * side * 0.72 + lift
+                }
+                Joint::Head => (seconds * 1.8).sin() * 0.035 + work * 0.22,
+            }
+        };
+        transform.rotation = joint.rest * Quat::from_rotation_x(pitch);
+    }
+}
+
+fn links(
+    view: Res<View>,
+    selected: Res<Selected>,
+    land: Res<Landscape>,
+    positions: Query<&Transform, With<Object>>,
+    mut gizmos: Gizmos,
+) {
+    let state = view.world.snapshot();
+    let position = |key| {
+        positions
+            .get(*view.entities.get(&key)?)
+            .ok()
+            .map(|pose| pose.translation)
+    };
+    let ring = |center: Vec3| {
+        Isometry3d::new(
+            center + Vec3::Y * 0.035,
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        )
+    };
+    if let Some(key) = selected.0
+        && let Some(center) = position(key)
+    {
+        let (lift, radius) = match key {
+            Object::Depot => (0.0, 1.21),
+            Object::Site(_) => (-0.21, 0.60),
+            Object::Resident(_) => (0.0, 0.36),
+        };
+        gizmos.circle(
+            ring(center + Vec3::Y * lift),
+            radius,
+            Color::srgb(0.45, 0.95, 1.0),
         );
     }
     if let Some(reasoning) = view.reasoning
-        && let Some(resident) = state
-            .residents
-            .iter()
-            .find(|resident| resident.id == reasoning.resident)
+        && let Some(center) = position(Object::Resident(reasoning.resident))
     {
         let color = match reasoning.phase {
             ReasoningPhase::Preparing {} => Color::srgb(1.0, 0.66, 0.20),
-            ReasoningPhase::InferenceActive { .. } => Color::srgb(0.28, 0.90, 1.0),
+            ReasoningPhase::InferenceActive { .. } => Color::srgb(0.70, 0.50, 1.0),
         };
-        let center = place(resident.position, &state, 0.08);
-        gizmos.cube(
-            Transform::from_translation(center).with_scale(Vec3::new(0.9, 0.15, 0.9)),
-            color,
-        );
+        gizmos.circle(ring(center), 0.41, color);
     }
     if let Some(Object::Resident(id)) = selected.0
         && let Some(resident) = state.residents.iter().find(|resident| resident.id == id)
     {
+        let from = position(Object::Resident(id))
+            .unwrap_or_else(|| land.point(grid_point(resident.position, &state), 0.03));
         for other in &state.residents {
-            if resident.relationships.contains_key(&other.id) {
-                gizmos.line(
-                    place(resident.position, &state, 0.9),
-                    place(other.position, &state, 0.9),
-                    Color::srgb(0.83, 0.68, 0.40),
-                );
+            if resident.relationships.contains_key(&other.id)
+                && let Some(to) = position(Object::Resident(other.id))
+            {
+                let mid = from.lerp(to, 0.5) + Vec3::Y * 1.05;
+                let color = Color::srgba(0.81, 0.72, 1.0, 0.65);
+                gizmos.line(from + Vec3::Y * 0.60, mid, color);
+                gizmos.line(mid, to + Vec3::Y * 0.60, color);
             }
         }
     }
 }
-
 fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text, With<Details>>) {
     let state = view.world.snapshot();
     let detail = match selected.0 {
@@ -768,9 +1012,9 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
     let controls = if view.history.is_some() {
         "[ / ] - earlier / later\nT - return to live"
     } else if view.allow_control {
-        "Space - step   P - play/pause\nEnter - activate/suspend\nArrows or IJKL - move\nT - freeze   [ - earlier commit"
+        "Space  Step    P  Play/pause\nEnter  Activate/suspend\nArrows or IJKL  Move\nT  Freeze     [  Earlier"
     } else {
-        "T - freeze   [ - earlier commit"
+        "T  Freeze     [  Earlier"
     };
     let history = view.history.map_or_else(String::new, |position| {
         format!(
@@ -779,7 +1023,7 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
         )
     });
     let text = format!(
-        "SIMULATED STATE\n{}\nTick {} | Revision {}\n{} | Stock {} | Shelters {}{history}\n\n{detail}\n\n{controls}\n\nRight drag - orbit\nWheel - zoom   WASD - pan\nF - focus   R - reset",
+        "SIMULATED STATE\n{}\nTick {} | Revision {}\n{}\nStock {}  |  Shelters {}{history}\n\n{detail}\n\n{controls}",
         view.status,
         state.tick,
         state.revision,
