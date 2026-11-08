@@ -536,6 +536,8 @@ Remove-Item Env:VESPERA_OPERATOR_TOKEN, Env:VESPERA_WORKER_TOKEN
 
 See the [protocol reference](PROTOCOL.md#implemented-loopback-worker-api) for operations, statuses, credentials and bounds.
 An optional `message_targets` array on a worker entry grants outbound messaging to those approved worker IDs. [Worker message contract](PROTOCOL.md#worker-messages)
+
+An optional top-level `"operator_mailbox_receipts": true` publishes acknowledged-message metadata to the operator feed. Enable it once operator clients can read event schema 8. [Receipt compatibility](PROTOCOL.md#worker-messages)
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
 ### Switch layers in Atlas
@@ -687,7 +689,7 @@ To observe live worker messages, use broker mode with the operator signing key i
 cargo run --locked -p vespera-view --features graphics -- --swarm-broker --broker 127.0.0.1:8765
 ```
 
-Amber arrows show message acceptance from the authenticated sender to an approved recipient. Acceptance records an inbox enqueue. The inspector shows the peer and signed feed sequence. Journal and broker modes use separate sources. Delivery acknowledgements and contention evidence remain roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
+Amber arrows show an accepted inbox enqueue from the authenticated sender to an approved recipient. With broker receipts enabled, pink arrows point from the acknowledging recipient back to the sender. The inspector shows the peer, observed operation and signed feed sequence. Journal and broker modes use separate sources. Contention evidence remains roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
 
 In either Swarm mode, press T to freeze the current evidence window or return live. Press [ to freeze and step back, then use [ and ] to move between retained observations and the captured range boundaries. The inspector displays the viewed sequence and the live source position separately. New events continue to arrive while frozen. An attempt's terminal state appears only once the viewed sequence includes its terminal event.
 

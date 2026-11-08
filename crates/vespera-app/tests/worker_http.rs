@@ -346,6 +346,9 @@ async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy()
         } else {
             create_policy(first, second)
         };
+        let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
+        access["operator_mailbox_receipts"] = json!(true);
+        std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
         let (process, base) = launch_command(server_command(&policy, Some(&db.0)), policy);
         let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
         let operator =
@@ -359,19 +362,53 @@ async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy()
     let acknowledged = Uuid::new_v4();
     let pending = [Uuid::new_v4(), Uuid::new_v4()];
     let (process, operator, sender, recipient) = start(true);
+    let mut live = operator.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut live).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
     sender
         .send_message(second, acknowledged, "private acknowledged content")
         .await
         .unwrap();
-    recipient
+    sender
         .acknowledge_message(first, acknowledged)
         .await
         .unwrap();
+    let (one, two) = tokio::join!(
+        recipient.acknowledge_message(first, acknowledged),
+        recipient.acknowledge_message(first, acknowledged)
+    );
+    one.unwrap();
+    two.unwrap();
+    assert!(
+        matches!(live_frame(&mut live).await, BrokerStreamFrame::Event { entry } if matches!(entry.event.kind, EventKind::AgentMessageSent { .. }))
+    );
+    let BrokerStreamFrame::Event { entry: receipt } = live_frame(&mut live).await else {
+        panic!("expected acknowledgement on the operator stream");
+    };
+    assert_eq!(receipt.event.schema_version, 8);
+    assert_eq!(
+        receipt.event.kind,
+        EventKind::AgentMessageAcknowledged {
+            from_agent_id: first,
+            to_agent_id: second
+        }
+    );
+    let encoded = serde_json::to_string(&receipt).unwrap();
+    assert!(
+        !encoded.contains(&acknowledged.to_string())
+            && !encoded.contains("private acknowledged content")
+    );
+    assert!(sender.replay(None, 64).await.unwrap().entries.is_empty());
+    assert!(recipient.replay(None, 64).await.unwrap().entries.is_empty());
+    drop(live);
     for id in pending {
         sender.send_message(second, id, "pending").await.unwrap();
     }
     let before = operator.replay(None, 64).await.unwrap();
-    assert_eq!(before.entries.len(), 3);
+    assert_eq!(before.entries.len(), 4);
+    assert_eq!(before.entries[1], receipt);
     drop(process);
 
     let (process, operator, sender, recipient) = start(true);
@@ -404,6 +441,10 @@ async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy()
         })
     ));
     assert_eq!(recipient.inbox().await.unwrap().len(), 2);
+    recipient
+        .acknowledge_message(first, acknowledged)
+        .await
+        .unwrap();
     assert_eq!(
         operator.replay(None, 64).await.unwrap().entries,
         before.entries
@@ -442,6 +483,16 @@ async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy()
     ));
     assert!(matches!(
         recipient.inbox().await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::StorageUnavailable),
+            ..
+        })
+    ));
+    drop(process);
+
+    let (process, _, _, recipient) = start(true);
+    assert!(matches!(
+        recipient.acknowledge_message(first, acknowledged).await,
         Err(ClientError::Rejected {
             code: Some(ErrorCode::StorageUnavailable),
             ..

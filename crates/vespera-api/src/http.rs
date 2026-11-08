@@ -71,6 +71,8 @@ pub enum ServerError {
 #[serde(deny_unknown_fields)]
 struct AccessFile {
     operator_token_env: String,
+    #[serde(default)]
+    operator_mailbox_receipts: bool,
     workers: Vec<WorkerAccess>,
 }
 
@@ -89,6 +91,7 @@ struct Service {
     broker: LeaseBroker,
     store: Option<Store>,
     storage_failed: bool,
+    operator_mailbox_receipts: bool,
     mailboxes: mailbox::Mailboxes,
 }
 
@@ -111,6 +114,7 @@ impl Service {
             broker: LeaseBroker::default(),
             store: None,
             storage_failed: false,
+            operator_mailbox_receipts: policy.operator_mailbox_receipts,
             mailboxes: mailbox::Mailboxes::default(),
         };
         service
@@ -147,6 +151,7 @@ impl Service {
                 &mut self.mailboxes,
                 worker,
                 decode(bytes)?,
+                self.operator_mailbox_receipts,
             ),
         };
         self.persist(revoked.filter(|_| result.is_ok()))?;
@@ -495,6 +500,7 @@ fn work(
     mailboxes: &mut mailbox::Mailboxes,
     worker: AgentId,
     operation: WorkerRequest,
+    operator_mailbox_receipts: bool,
 ) -> Result<Reply, HttpError> {
     let reply = match operation {
         WorkerRequest::Claim {} => match broker.claim(worker)? {
@@ -523,7 +529,9 @@ fn work(
         }
         WorkerRequest::Inbox {} => reply(StatusCode::OK, mailboxes.inbox(worker)?),
         WorkerRequest::AcknowledgeMessage { sender, message_id } => {
-            mailboxes.acknowledge(worker, sender, message_id)?;
+            if mailboxes.acknowledge(worker, sender, message_id)? && operator_mailbox_receipts {
+                broker.events.publish_mailbox_receipt(sender, worker);
+            }
             reply(StatusCode::NO_CONTENT, &())
         }
     };

@@ -30,6 +30,7 @@ enum Relation {
         workflow: Option<TaskId>,
     },
     Message,
+    MessageAcknowledged,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -153,6 +154,17 @@ impl Evidence {
                     from: from_agent_id,
                     to: to_agent_id,
                     relation: Relation::Message,
+                });
+            }
+            EventKind::AgentMessageAcknowledged {
+                from_agent_id,
+                to_agent_id,
+            } => {
+                self.edges.push_back(Edge {
+                    sequence,
+                    from: to_agent_id,
+                    to: from_agent_id,
+                    relation: Relation::MessageAcknowledged,
                 });
             }
             EventKind::TaskCompleted { task_id } if workflow_evidence => {
@@ -303,7 +315,10 @@ impl Filter {
             Self::All => true,
             Self::Delegation => matches!(edge.relation, Relation::Delegation { .. }),
             Self::Dependencies => matches!(edge.relation, Relation::Dependency { .. }),
-            Self::Messages => matches!(edge.relation, Relation::Message),
+            Self::Messages => matches!(
+                edge.relation,
+                Relation::Message | Relation::MessageAcknowledged
+            ),
         }
     }
 
@@ -646,6 +661,7 @@ fn draw(feed: Res<Feed>, layout: Res<Layout>, mut gizmos: Gizmos) {
             Relation::Delegation { .. } => (Color::srgb(0.3, 0.85, 1.0), 0.15),
             Relation::Dependency { .. } => (Color::srgb(0.43, 0.96, 0.51), 0.34),
             Relation::Message => (Color::srgb(1.0, 0.62, 0.23), -0.12),
+            Relation::MessageAcknowledged => (Color::srgb(0.98, 0.44, 0.83), 0.46),
         };
         let offset = Vec3::Y * height;
         if edge.from == edge.to {
@@ -697,7 +713,13 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
         }
         if let Some(edge) = latest {
             let peer = if edge.from == id { edge.to } else { edge.from };
-            let direction = if edge.from == edge.to {
+            let direction = if edge.relation == Relation::MessageAcknowledged {
+                if edge.from == id {
+                    "Acknowledged to"
+                } else {
+                    "Acknowledged by"
+                }
+            } else if edge.from == edge.to {
                 "Self"
             } else if edge.from == id {
                 "Sent to"
@@ -737,6 +759,7 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
                     )
                 }
                 Relation::Message => "Message accepted".into(),
+                Relation::MessageAcknowledged => "Recipient acknowledged a message".into(),
             };
             detail.push_str(&format!(
                 "\nLatest sequence {}\n{direction} {peer}\n{observation}",
@@ -764,7 +787,7 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
         String::new()
     };
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Amber message\nGreen dependency\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
@@ -776,6 +799,44 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
 mod tests {
     use super::*;
     use vespera_core::WorkflowDependency;
+
+    #[test]
+    fn receipt_adds_a_reverse_link_only_at_its_observed_sequence() {
+        let from = AgentId::new();
+        let to = AgentId::new();
+        let mut live = Evidence::default();
+        for (sequence, kind) in [
+            (
+                1,
+                EventKind::AgentMessageSent {
+                    from_agent_id: from,
+                    to_agent_id: to,
+                },
+            ),
+            (
+                2,
+                EventKind::AgentMessageAcknowledged {
+                    from_agent_id: from,
+                    to_agent_id: to,
+                },
+            ),
+        ] {
+            live.push(
+                sequence,
+                EventEnvelope::new("worker_broker", 0, kind).unwrap(),
+            );
+        }
+        let mut frozen = Frozen::new(live);
+        let projection = frozen.projection();
+        let receipt = projection.edges.back().unwrap();
+        assert_eq!((receipt.from, receipt.to), (to, from));
+        assert!(receipt.relation == Relation::MessageAcknowledged);
+        assert!(Filter::Messages.includes(receipt));
+        frozen.step(true);
+        let projection = frozen.projection();
+        assert_eq!(projection.edges.len(), 1);
+        assert!(projection.edges[0].relation == Relation::Message);
+    }
 
     #[test]
     fn durable_workflow_outcomes_and_agent_status_follow_the_replay_cursor() {

@@ -204,7 +204,7 @@ impl Mailboxes {
         worker: AgentId,
         sender: AgentId,
         id: Uuid,
-    ) -> Result<(), HttpError> {
+    ) -> Result<bool, HttpError> {
         let inbox = &mut self.approved.get_mut(&worker).ok_or(UNAUTHORIZED)?.inbox;
         if let Some(index) = inbox
             .pending
@@ -224,7 +224,8 @@ impl Mailboxes {
                 hash: content_hash(&message.content),
             });
             self.dirty.insert(worker);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 }

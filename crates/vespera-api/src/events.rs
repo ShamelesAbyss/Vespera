@@ -84,6 +84,10 @@ impl Feed {
                     EventKind::AgentMessageSent {
                         from_agent_id,
                         to_agent_id,
+                    }
+                    | EventKind::AgentMessageAcknowledged {
+                        from_agent_id,
+                        to_agent_id,
                     } => {
                         worker.is_none()
                             && entry.event.correlation_task_id.is_none()
@@ -180,15 +184,22 @@ impl EventFeeds {
     }
 
     pub(super) fn publish_message(&mut self, from_agent_id: AgentId, to_agent_id: AgentId) {
-        let event = EventEnvelope::new(
-            "worker_broker",
-            timestamp(),
-            EventKind::AgentMessageSent {
-                from_agent_id,
-                to_agent_id,
-            },
-        )
-        .expect("accepted mailbox message uses validated identities");
+        self.publish_mailbox_event(EventKind::AgentMessageSent {
+            from_agent_id,
+            to_agent_id,
+        });
+    }
+
+    pub(super) fn publish_mailbox_receipt(&mut self, from_agent_id: AgentId, to_agent_id: AgentId) {
+        self.publish_mailbox_event(EventKind::AgentMessageAcknowledged {
+            from_agent_id,
+            to_agent_id,
+        });
+    }
+
+    fn publish_mailbox_event(&mut self, kind: EventKind) {
+        let event = EventEnvelope::new("worker_broker", timestamp(), kind)
+            .expect("mailbox event uses validated identities");
         self.operator.push(event);
     }
 

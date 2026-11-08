@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Latest supported event wire schema. Each kind emits its earliest compatible version.
-pub const EVENT_SCHEMA_VERSION: u32 = 7;
+pub const EVENT_SCHEMA_VERSION: u32 = 8;
 
 /// Effective state of expiring provider health evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +146,11 @@ pub enum EventKind {
         from_agent_id: AgentId,
         to_agent_id: AgentId,
     },
+    /// The recipient acknowledged one previously pending mailbox message.
+    AgentMessageAcknowledged {
+        from_agent_id: AgentId,
+        to_agent_id: AgentId,
+    },
     AgentMemoryUpdated {
         agent_id: AgentId,
         memory_id: MemoryId,
@@ -211,6 +216,7 @@ pub struct WorkflowDependency {
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::AgentMessageAcknowledged { .. } => 8,
             Self::AgentRegistered { .. } | Self::AgentStatusChanged { .. } => 7,
             Self::ProviderHealthObserved { .. } => 6,
             Self::AgentMemoryDeleted { .. } => 5,
