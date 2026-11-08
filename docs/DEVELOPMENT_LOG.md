@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Swarm status and durable outcome replay
+
+Verified implementation checkpoint `9c66452fac73c941af9fae7245042842945c7709`, pushed to `main`.
+
+Swarm now projects agent registrations and status changes and recognizes attempt and root outcomes from the durable workflow store. Historical projection filters all three kinds of evidence by the selected sequence. The Windows graphics suite passed seven executable tests, strict graphics Clippy and the graphics build. The headless workspace suite passed at the preceding registration checkpoint.
+
+In the native Swarm window, two live Ollama workflows fed the same journal. The selected agent showed Running in frozen sequence 11 while the live journal advanced to 30. Returning live showed Idle at sequence 27 and the second workflow's Completed outcome. At sequence 13, the first attempt completion was visible and the workflow outcome appeared one step later. Ollama acknowledged both unloads. This verifies the bounded Milestone 9 event gates. The next gate is durable external inbox and cross-host interoperability in Milestone 10.
+
 ## 2026-11-07 — Runtime registration and agent status evidence
 
 Verified implementation checkpoint `4ef3aa2996bdd41ccbf7c273bf53c0ae8ff7c5f3`, pushed to `main`.
