@@ -185,7 +185,7 @@ struct RunWorkflowArgs {
     #[arg(long)]
     workflow_store: Option<PathBuf>,
     /// Continue an interrupted workflow from its last committed step boundary.
-    #[arg(long, requires = "workflow_store")]
+    #[arg(long, requires_all = ["workflow_store", "workflow_file"])]
     resume_workflow: bool,
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
@@ -218,8 +218,15 @@ struct RunWorkflowArgs {
     #[arg(long)]
     model_catalog: Option<PathBuf>,
     /// Strict UTF-8 JSON workflow, at most one MiB.
-    #[arg(long)]
-    workflow_file: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "decomposition_file",
+        conflicts_with = "decomposition_file"
+    )]
+    workflow_file: Option<PathBuf>,
+    /// Strict JSON operator task, worker roster and automatic decomposition bounds.
+    #[arg(long, required_unless_present = "workflow_file")]
+    decomposition_file: Option<PathBuf>,
     /// Overall command bound, including provider health and workflow execution.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
     timeout_seconds: u64,

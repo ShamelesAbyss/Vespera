@@ -1,6 +1,9 @@
 # Bounded workflow orchestration
 
-`vespera-orchestrator` executes operator-authored sequential workflows through the real agent, scheduler and provider interfaces. It is available through the library API and the native `run-workflow` command; see [CLI.md](CLI.md) and the [strict JSON example](../config/workflow.example.json). It does not ask a model to invent a plan or interpret generated text as control-plane authority.
+`vespera-orchestrator` executes bounded sequential workflows through the agent,
+scheduler and provider interfaces. The native `run-workflow` command accepts
+an [authored plan](../config/workflow.example.json) or an operator request
+with a roster and bounds for automatic decomposition.
 
 ## Execution and authorization
 
@@ -14,6 +17,30 @@ An optional [scheduler latency preference](SCHEDULER.md#observed-latency-prefere
 can rank eligible models for a capability-based worker using completed calls
 in the same runtime. The workflow still chooses agents from the authored
 candidate order and records both the candidate and the actual result model.
+
+## Automatic decomposition
+
+Pass `--decomposition-file <PATH>` with a strict JSON request that identifies
+the root task, one configured coordinator and an ordered allowlist of up to
+32 workers. The coordinator needs a model with `text-generation` and the
+`delegate` grant. Use `--resume` to activate suspended roster agents for this
+invocation. [Example request](../config/decomposition.example.json)
+
+Vespera makes one bounded planning call. The model proposes step names,
+instructions, capability requirements, dependencies and a final output step.
+Vespera derives eligible candidates from the operator roster and each
+worker's model policy. It rejects unknown fields, unavailable capability
+combinations, invalid dependencies, and steps that do not contribute to
+the designated output. The accepted plan uses one attempt per step and
+operator-supplied token, context and time limits. Generated step instructions
+are untrusted task input. Execution uses the existing authorization path.
+
+The command deadline covers planning and execution. The generated workflow's
+durable deadline starts when execution accepts the validated plan. JSON
+output includes the accepted plan and planning-call identity under
+`decomposition`. The workflow store retains the accepted plan and worker
+attempts. To resume from a checkpoint, extract that plan from history and
+use `--workflow-file` with `--resume-workflow`.
 
 ## Bounds and failure semantics
 

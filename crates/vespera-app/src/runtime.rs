@@ -18,7 +18,8 @@ use vespera_model_registry::{
     ModelRegistration, ModelRegistry, ProviderHealthState, RegistryError,
 };
 use vespera_orchestrator::{
-    Orchestrator, OrchestratorError, Workflow, WorkflowReport, WorkflowStore,
+    DecompositionError, DecompositionRequest, Orchestrator, OrchestratorError, WorkerCapabilities,
+    Workflow, WorkflowReport, WorkflowStore,
 };
 use vespera_providers::{
     CancellationToken, EndpointPolicy, InferenceProvider, OllamaConfig, OllamaProvider,
@@ -32,6 +33,8 @@ use vespera_scheduler::{
 /// Application errors deliberately exclude configuration endpoints/credential values.
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error(transparent)]
+    Decomposition(#[from] DecompositionError),
     /// Process host measurements cannot represent a remote provider's machine.
     #[error("local host limits require loopback providers")]
     LocalHostLimitsRequireLoopback,
@@ -258,6 +261,94 @@ fn configured_endpoint(
 }
 
 impl VesperaRuntime {
+    /// Compose only the planning coordinator and the explicitly authorized roster.
+    pub async fn from_config_for_decomposition(
+        config: &AppConfig,
+        request: &DecompositionRequest,
+        resume: bool,
+    ) -> Result<Self, RuntimeError> {
+        request.validate()?;
+        let coordinator = config
+            .agents
+            .iter()
+            .find(|agent| agent.identity.id == request.coordinator)
+            .ok_or(OrchestratorError::CoordinatorDenied)?;
+        if !coordinator.permissions.contains(&Permission::Delegate) {
+            return Err(OrchestratorError::CoordinatorDenied.into());
+        }
+        let mut roster = request.workers.clone();
+        if !roster.contains(&request.coordinator) {
+            roster.push(request.coordinator);
+        }
+        let mut scoped = config.clone();
+        for id in &roster {
+            let agent = scoped
+                .agents
+                .iter_mut()
+                .find(|agent| agent.identity.id == *id)
+                .ok_or(AgentRuntimeError::AgentNotFound { agent_id: *id })?;
+            if agent.status != AgentStatus::Idle {
+                if !resume {
+                    return Err(RuntimeError::ActivationRequired { agent_id: *id });
+                }
+                agent.status = AgentStatus::Idle;
+            }
+        }
+        Self::from_config_for_agents(&scoped, &roster).await
+    }
+
+    /// Execute one bounded planning call and accept only a validated proposal.
+    pub async fn decompose_workflow(
+        &self,
+        request: &DecompositionRequest,
+        cancel: CancellationToken,
+    ) -> Result<(Workflow, TaskExecutionResult), RuntimeError> {
+        request.validate()?;
+        let coordinator = self.agents.get_agent(request.coordinator).await?;
+        if coordinator.status != AgentStatus::Idle
+            || !coordinator.permissions.contains(&Permission::Delegate)
+        {
+            return Err(OrchestratorError::CoordinatorDenied.into());
+        }
+        let models = self.registry.list_registrations().await;
+        let mut profiles = Vec::with_capacity(request.workers.len());
+        for id in &request.workers {
+            let worker = self.agents.get_agent(*id).await?;
+            if worker.status != AgentStatus::Idle {
+                return Err(RuntimeError::ActivationRequired { agent_id: *id });
+            }
+            let capabilities = models
+                .iter()
+                .filter(|model| {
+                    model.available
+                        && match &worker.model_policy {
+                            ModelSelectionPolicy::Fixed { model_id } => model.model_id == *model_id,
+                            ModelSelectionPolicy::Capability { required } => {
+                                required.is_subset(&model.capabilities)
+                            }
+                        }
+                })
+                .map(|model| model.capabilities.clone())
+                .collect();
+            profiles.push(WorkerCapabilities {
+                agent_id: *id,
+                models: capabilities,
+            });
+        }
+        let task = request.planning_task(&profiles)?;
+        let result = self
+            .run_agent(
+                request.coordinator,
+                task,
+                request.planning_options(),
+                false,
+                cancel,
+            )
+            .await?;
+        let workflow = request.accept(&result.response.content, &profiles)?;
+        Ok((workflow, result))
+    }
+
     /// Compose only a workflow's named agents and matching worker inventory.
     /// The coordinator's model is unnecessary unless it is also a step candidate.
     pub async fn from_config_for_workflow(

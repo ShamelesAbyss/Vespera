@@ -1590,6 +1590,120 @@ fn run_fixture_workflow(
 }
 
 #[test]
+fn workflow_decomposition_executes_only_validated_steps_on_the_authorized_roster() {
+    let proposal = serde_json::json!({
+        "steps": [
+            {"name":"draft","prompt":"Produce a brief draft.","required_capabilities":["summarization"],"dependencies":[]},
+            {"name":"summary","prompt":"Summarize the draft.","required_capabilities":["summarization"],"dependencies":["draft"]}
+        ],
+        "output_step": "summary"
+    });
+    let mut unauthorized = proposal.clone();
+    unauthorized["steps"][0]["candidates"] = serde_json::json!([AGENT]);
+    let mut unsupported = proposal.clone();
+    unsupported["steps"][0]["required_capabilities"] = serde_json::json!(["coding"]);
+    let mut disconnected = proposal.clone();
+    disconnected["steps"][1]["dependencies"] = serde_json::json!([]);
+    for (proposed, accepts) in [
+        (proposal, true),
+        (unauthorized, false),
+        (unsupported, false),
+        (disconnected, false),
+    ] {
+        let planner = HttpFixture::with_ollama_answer(false, &proposed.to_string());
+        let worker = HttpFixture::new(false);
+        let directory = ScratchDirectory::new();
+        let config = format!(
+            r#"{}
+[[providers]]
+id = "44444444-4444-4444-8444-444444444444"
+name = "Worker provider"
+kind = "ollama"
+endpoint = "{}"
+
+[[models]]
+id = "55555555-5555-4555-8555-555555555555"
+provider_id = "44444444-4444-4444-8444-444444444444"
+name = "Worker model"
+identifier = "worker-model"
+capabilities = ["summarization"]
+availability = "available"
+context_window_tokens = 2048
+[models.resources]
+ram_bytes = 100
+vram_bytes = 0
+
+[[agents]]
+status = "suspended"
+[agents.identity]
+id = "66666666-6666-4666-8666-666666666666"
+name = "Summary worker"
+role = "Fixture"
+[agents.model_policy]
+kind = "fixed"
+model_id = "55555555-5555-4555-8555-555555555555"
+"#,
+            runtime_config(&planner, false, true)
+                .replace("permissions = []", "permissions = [\"delegate\"]")
+                .replace(
+                    "context_window_tokens = 512",
+                    "context_window_tokens = 2048"
+                ),
+            worker.endpoint,
+        );
+        let config = directory.write_config(&config);
+        let request = directory.0.join("decomposition.json");
+        let mut input: serde_json::Value =
+            serde_json::from_str(include_str!("../../../config/decomposition.example.json"))
+                .unwrap();
+        input["workers"] = serde_json::json!(["66666666-6666-4666-8666-666666666666"]);
+        fs::write(&request, input.to_string()).unwrap();
+        let result = execute(&[
+            "run-workflow",
+            "--config",
+            config.to_str().unwrap(),
+            "--decomposition-file",
+            request.to_str().unwrap(),
+            "--resume",
+            "--unload-after",
+            "--json",
+        ]);
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(result.status.success(), accepts, "{report}");
+        assert_eq!(
+            planner
+                .captured()
+                .iter()
+                .filter(|request| request.path == "/api/chat")
+                .count(),
+            1
+        );
+        let worker_calls = worker.captured();
+        if accepts {
+            assert_eq!(report["workflow"]["task"]["state"], "completed");
+            assert_eq!(report["decomposition"]["agent_id"], AGENT);
+            assert_eq!(
+                report["decomposition"]["plan"]["steps"][0]["candidates"],
+                input["workers"]
+            );
+            assert_eq!(report["workflow"]["attempts"].as_array().unwrap().len(), 2);
+            let chats: Vec<_> = worker_calls
+                .iter()
+                .filter(|request| request.path == "/api/chat")
+                .collect();
+            assert_eq!(chats.len(), 2);
+            let body: serde_json::Value = serde_json::from_str(&chats[1].body).unwrap();
+            let prompt: serde_json::Value =
+                serde_json::from_str(body["messages"][0]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(prompt["untrusted_dependency_outputs"][0]["step"], "draft");
+        } else {
+            assert!(worker_calls.is_empty(), "{report}");
+            assert!(report["workflow"].is_null());
+        }
+    }
+}
+
+#[test]
 fn workflow_store_retains_lineage_and_fences_an_interrupted_attempt() {
     use std::process::Stdio;
     use std::time::{Duration, Instant};

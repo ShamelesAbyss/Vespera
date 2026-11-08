@@ -19,7 +19,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `serve` | Host the external worker task broker | Loopback by default, opt-in remote TLS |
 | `world` | Initialize, inspect and advance a persistent simulation or request a model decision | Local SQLite access. Decisions also require a configured agent and provider. |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
-| `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
+| `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
 | `events` | Initialize, replay or follow a local event journal | None. Local SQLite access. |
@@ -185,7 +185,8 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `run-workflow` option | Requirement/default |
 | --- | --- |
 | `--config <PATH>` | Default `config/local.toml` |
-| `--workflow-file <PATH>` | Required strict UTF-8 JSON, at most one MiB |
+| `--workflow-file <PATH>` | Authored workflow in strict UTF-8 JSON, at most one MiB. Supply either this or `--decomposition-file` |
+| `--decomposition-file <PATH>` | Strict JSON task, coordinator, authorized worker roster and planning limits |
 | `--workflow-store <PATH>` | Create or reopen a private SQLite checkpoint database |
 | `--resume-workflow` | Continue an interrupted workflow from a committed step boundary. Requires the original plan and an existing `--workflow-store` |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
@@ -215,6 +216,17 @@ semantics](ORCHESTRATION.md#durable-workflow-history).
 To continue an eligible interrupted workflow, add `--resume-workflow`
 to the original invocation. Completed steps retain their committed results.
 The original workflow deadline still applies.
+
+To decompose and execute a task, configure the coordinator with the
+`delegate` grant and a model that supports `text-generation`.
+
+```powershell
+.\target\release\vespera.exe run-workflow --config config/local.private.toml --decomposition-file config/decomposition.example.json --resume --unload-after --json
+```
+
+Use the request's worker roster to select configured agents. The JSON
+response includes the validated plan when planning succeeds. [Decomposition
+and authorization](ORCHESTRATION.md#automatic-decomposition)
 
 See [ORCHESTRATION.md](ORCHESTRATION.md) for strict plan fields, bounds, retry/selection/conflict policies and in-process retention limits. [Live evidence](../artifacts/live-workflow-2026-11-06.json) records one native two-step sample, not broad interoperability or factual validation.
 

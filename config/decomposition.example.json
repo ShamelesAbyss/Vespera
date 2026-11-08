@@ -1,0 +1,15 @@
+{
+  "task": {
+    "id": "99999999-9999-4999-8999-999999999999",
+    "prompt": "Draft a short description of a local-first task runner, then summarize its purpose in one sentence.",
+    "required_capabilities": ["summarization"],
+    "state": "queued"
+  },
+  "coordinator": "33333333-3333-4333-8333-333333333333",
+  "workers": ["33333333-3333-4333-8333-333333333333"],
+  "max_steps": 3,
+  "planning_output_tokens": 512,
+  "worker_output_tokens": 128,
+  "context_tokens": 2048,
+  "timeout_ms": 60000
+}

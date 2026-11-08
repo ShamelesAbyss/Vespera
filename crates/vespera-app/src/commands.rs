@@ -15,11 +15,14 @@ use vespera_app::runtime::{
 };
 use vespera_config::AppConfig;
 use vespera_core::{
-    EventKind, MemoryId, MemoryLayer, MemoryRecord, Permission, Task, TaskId, TaskState,
+    AgentId, EventKind, MemoryId, MemoryLayer, MemoryRecord, ModelId, Permission, ProviderId, Task,
+    TaskId, TaskState,
 };
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
-use vespera_orchestrator::{Workflow, WorkflowReport, WorkflowStore, WorkflowStoreError};
+use vespera_orchestrator::{
+    DecompositionRequest, Workflow, WorkflowReport, WorkflowStore, WorkflowStoreError,
+};
 use vespera_providers::CancellationToken;
 use vespera_scheduler::StartupResidencyReport;
 
@@ -29,6 +32,8 @@ struct WorkflowRunReport {
     workflow: Option<WorkflowReport>,
     error: Option<String>,
     cleanup: CleanupReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decomposition: Option<DecompositionReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_host_limits: Option<LocalHostLimits>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,10 +46,29 @@ struct WorkflowRunReport {
     event_publication: Option<event_commands::Publication>,
 }
 
+#[derive(Serialize)]
+struct DecompositionReport {
+    plan: Workflow,
+    planning_task_id: TaskId,
+    agent_id: AgentId,
+    model_id: ModelId,
+    provider_id: ProviderId,
+}
+
+enum WorkflowInput {
+    Authored(Workflow),
+    Decompose(DecompositionRequest),
+}
+
 pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> {
     let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let mut input = String::new();
-    File::open(&args.workflow_file)
+    let path = args
+        .workflow_file
+        .as_ref()
+        .or(args.decomposition_file.as_ref())
+        .ok_or(AppError::InvalidWorkflow)?;
+    File::open(path)
         .map_err(|_| AppError::WorkflowIo)?
         .take(1_048_577)
         .read_to_string(&mut input)
@@ -52,9 +76,21 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     if input.len() > 1_048_576 {
         return Err(AppError::InvalidWorkflow);
     }
-    let workflow: Workflow = serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
-    workflow.validate()?;
-    let task_id = workflow.task.id;
+    let input = if args.workflow_file.is_some() {
+        let workflow: Workflow =
+            serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
+        workflow.validate()?;
+        WorkflowInput::Authored(workflow)
+    } else {
+        let request: DecompositionRequest =
+            serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
+        request.validate().map_err(RuntimeError::from)?;
+        WorkflowInput::Decompose(request)
+    };
+    let task_id = match &input {
+        WorkflowInput::Authored(workflow) => workflow.task.id,
+        WorkflowInput::Decompose(request) => request.task.id,
+    };
     let workflow_store = args
         .workflow_store
         .as_deref()
@@ -67,14 +103,23 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         })
         .transpose()?;
     if let Some(store) = &workflow_store {
-        if args.resume_workflow {
-            store.ensure_resumable(&workflow)?;
+        if let WorkflowInput::Authored(workflow) = &input
+            && args.resume_workflow
+        {
+            store.ensure_resumable(workflow)?;
         } else if store.contains(task_id)? {
             return Err(WorkflowStoreError::Duplicate.into());
         }
     }
     let mut journal = event_commands::prepare(args.event_journal).await?;
-    let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
+    let runtime = match &input {
+        WorkflowInput::Authored(workflow) => {
+            VesperaRuntime::from_config_for_workflow(&config, workflow, args.resume).await?
+        }
+        WorkflowInput::Decompose(request) => {
+            VesperaRuntime::from_config_for_decomposition(&config, request, args.resume).await?
+        }
+    };
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
     let live = if args.observe_workflow {
         journal
@@ -84,40 +129,56 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         None
     };
     let cancel = CancellationToken::new();
-    let outcome = cancellable(
-        Duration::from_secs(args.timeout_seconds),
-        cancel.clone(),
-        async {
-            if let Some(path) = &args.residency_journal {
-                runtime
-                    .reconcile_startup_with_journal(
-                        path,
-                        args.acknowledge_residency_recovery,
-                        cancel.clone(),
-                    )
-                    .await?;
-            } else if args.reconcile_residency {
-                runtime.reconcile_startup(cancel.clone()).await?;
+    let timeout = Duration::from_secs(args.timeout_seconds);
+    let timeout = match &input {
+        WorkflowInput::Authored(_) => timeout,
+        WorkflowInput::Decompose(request) => timeout.min(Duration::from_millis(request.timeout_ms)),
+    };
+    let mut decomposition = None;
+    let outcome = cancellable(timeout, cancel.clone(), async {
+        if let Some(path) = &args.residency_journal {
+            runtime
+                .reconcile_startup_with_journal(
+                    path,
+                    args.acknowledge_residency_recovery,
+                    cancel.clone(),
+                )
+                .await?;
+        } else if args.reconcile_residency {
+            runtime.reconcile_startup(cancel.clone()).await?;
+        }
+        let observer = live.as_ref().map(|live| &live.sender);
+        let workflow = match input {
+            WorkflowInput::Authored(workflow) => workflow,
+            WorkflowInput::Decompose(request) => {
+                let (plan, result) = runtime.decompose_workflow(&request, cancel.clone()).await?;
+                decomposition = Some(DecompositionReport {
+                    plan: plan.clone(),
+                    planning_task_id: result.task.id,
+                    agent_id: result.agent_id,
+                    model_id: result.model_id,
+                    provider_id: result.provider_id,
+                });
+                plan
             }
-            let observer = live.as_ref().map(|live| &live.sender);
-            if args.resume_workflow {
-                runtime
-                    .orchestrator()
-                    .resume_checkpointed(
-                        workflow,
-                        cancel,
-                        observer,
-                        workflow_store.as_ref().expect("resume requires store"),
-                    )
-                    .await
-                    .map_err(RuntimeError::from)
-            } else {
-                runtime
-                    .run_workflow_checkpointed(workflow, cancel, observer, workflow_store.as_ref())
-                    .await
-            }
-        },
-    )
+        };
+        if args.resume_workflow {
+            runtime
+                .orchestrator()
+                .resume_checkpointed(
+                    workflow,
+                    cancel,
+                    observer,
+                    workflow_store.as_ref().expect("resume requires store"),
+                )
+                .await
+                .map_err(RuntimeError::from)
+        } else {
+            runtime
+                .run_workflow_checkpointed(workflow, cancel, observer, workflow_store.as_ref())
+                .await
+        }
+    })
     .await;
     let cleanup = runtime
         .cleanup(args.unload_after, Duration::from_secs(5))
@@ -175,6 +236,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 workflow,
                 error: error.as_ref().map(ToString::to_string),
                 cleanup,
+                decomposition,
                 local_host_limits,
                 startup_residency,
                 admission_residency,
@@ -183,6 +245,13 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             })?
         );
     } else {
+        if let Some(decomposition) = decomposition {
+            println!(
+                "Accepted {} planned steps from coordinator {}",
+                decomposition.plan.steps.len(),
+                decomposition.agent_id
+            );
+        }
         print_local_host_limits(local_host_limits);
         print_residency("startup", startup_residency);
         print_residency("latest admission", admission_residency);
