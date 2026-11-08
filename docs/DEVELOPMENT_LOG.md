@@ -1,10 +1,18 @@
 # Development log
 
+## 2026-11-07 — Live authored workflow comparisons
+
+Verified implementation checkpoint `899db706eca09542b001a0bf7c62451f8f13214f`, pushed to `main`. The memory comparison checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42442180179).
+
+`experiment-workflows` runs two authored plans on paired private cases. It exports numbered plan structure, exact-match results, actual attempts, timings, provider observations and journal cursors. Fixture coverage verified delegation denial before provider I/O, redaction and replay of an accepted dependency. Windows formatting, offline workspace and graphics tests, and both strict Clippy passes succeeded. Swarm projection tests verified historical outcomes from the experiment journal source.
+
+Live Ollama with `hermes3:8b` compared one direct step with a two-step answer-and-check plan. Both plans matched both arithmetic cases. The runner observed two baseline attempts and four candidate attempts. Journal replay found six accepted attempts, six attempt outcomes and four root outcomes. It confirmed the exact predecessor for each of the two dependent attempts. Every runtime confirmed cleanup and the provider reported zero resident models. Milestone 13 is verified within the deterministic simulation and native Ollama scope. The next milestone is local release package and fresh-workspace validation, followed by upgrade and recovery evidence.
+
 ## 2026-11-07 — Live paired memory experiments
 
 Verified implementation checkpoint `dcff7bb27f7778f2685c1099fffe659c10cfc2d9`, pushed to `main`.
 
-`experiment-models --memory-database` holds model and agent fixed and compares no retrieval with authorized literal phrase retrieval. Preflight loads candidate snapshots read-only before contacting a provider. Reports carry retrieval duration and the count of records included in successful requests. Formatting, strict Clippy and offline workspace tests passed. The signed-off fixture verified permission denial before provider I/O, isolation from a second owner, a zero-match request, redaction and unchanged database bytes.
+`experiment-models --memory-database` holds model and agent fixed and compares no retrieval with authorized literal phrase retrieval. Preflight loads candidate snapshots read-only before contacting a provider. Reports carry retrieval duration and the count of records included in successful requests. Formatting, strict Clippy and offline workspace tests passed. The fixture verified permission denial before provider I/O, isolation from a second owner, a zero-match request, redaction and unchanged database bytes.
 
 Live Ollama with `hermes3:8b` completed all four trials. With one owned observation, the retrieval arm matched the synthetic code case and the baseline missed it. Both arms matched the arithmetic case, for which retrieval found no record. The comparison reported 1/2 and 2/2 exact matches, four terminal journal observations and confirmed cleanup. A separate residency check returned zero models and the memory database hash matched before and after. These scores describe two cases. Live orchestration policy comparisons remain open.
 
