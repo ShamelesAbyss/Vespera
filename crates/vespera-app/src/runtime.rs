@@ -24,7 +24,7 @@ use vespera_orchestrator::{
 use vespera_providers::{
     CancellationToken, EndpointPolicy, InferenceProvider, OllamaConfig, OllamaProvider,
     OpenAiCompatibleProvider, OpenAiConfig, ProviderError, ProviderHealthStatus, SecretRef,
-    ValidatedEndpoint,
+    SecretString, ValidatedEndpoint,
 };
 use vespera_scheduler::{
     QueuePolicy, ResourceScheduler, SchedulerError, SchedulingPolicy, SchedulingPreferences,
@@ -58,6 +58,9 @@ pub enum RuntimeError {
     /// Provider construction/protocol failure.
     #[error("{0}")]
     Provider(#[from] ProviderError),
+    /// The platform credential store cannot supply the selected secret.
+    #[error("provider {provider_id} could not read its Windows credential")]
+    WindowsCredentialUnavailable { provider_id: ProviderId },
     /// Registry mutation failure.
     #[error("{0}")]
     Registry(#[from] RegistryError),
@@ -145,13 +148,18 @@ pub async fn configured_registry(config: &AppConfig) -> Result<Arc<ModelRegistry
             .as_ref()
             .map(|name| SecretRef::new(declared.id, name))
             .transpose()?;
+        let pre_resolved_secret = if declared.credential_windows {
+            Some(windows_credential(declared)?)
+        } else {
+            None
+        };
         let timeout = Duration::from_secs(u64::from(declared.request_timeout_seconds));
         let provider: Arc<dyn InferenceProvider> = match declared.kind {
             ProviderKind::Ollama => Arc::new(OllamaProvider::new(OllamaConfig {
                 provider_id: declared.id,
                 endpoint,
                 auth_secret_ref,
-                pre_resolved_secret: None,
+                pre_resolved_secret,
                 connect_timeout: timeout.min(Duration::from_secs(5)),
                 request_timeout: timeout,
                 stream_idle_timeout: timeout.min(Duration::from_secs(30)),
@@ -162,7 +170,7 @@ pub async fn configured_registry(config: &AppConfig) -> Result<Arc<ModelRegistry
                     provider_id: declared.id,
                     endpoint,
                     auth_secret_ref,
-                    pre_resolved_secret: None,
+                    pre_resolved_secret,
                     connect_timeout: timeout.min(Duration::from_secs(5)),
                     request_timeout: timeout,
                     stream_idle_timeout: timeout.min(Duration::from_secs(30)),
@@ -196,6 +204,46 @@ pub async fn configured_registry(config: &AppConfig) -> Result<Arc<ModelRegistry
             .await?;
     }
     Ok(registry)
+}
+
+/// A Windows generic credential target for the exact adapter and endpoint.
+pub fn windows_credential_target(provider: &ProviderConfig) -> String {
+    use std::fmt::Write as _;
+
+    let adapter = match provider.kind {
+        ProviderKind::Ollama => "ollama",
+        ProviderKind::OpenAiCompatible => "openai-compatible",
+        ProviderKind::Custom => "custom",
+    };
+    // Windows compares credential targets case-insensitively. URL paths can be case-sensitive.
+    let digest = ring::digest::digest(&ring::digest::SHA256, provider.endpoint.as_bytes());
+    let mut target = format!("Vespera/provider/{adapter}/");
+    for byte in digest.as_ref() {
+        write!(target, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    target
+}
+
+fn windows_credential(provider: &ProviderConfig) -> Result<SecretString, RuntimeError> {
+    let unavailable = RuntimeError::WindowsCredentialUnavailable {
+        provider_id: provider.id,
+    };
+    #[cfg(target_os = "windows")]
+    {
+        let value = keyring::Entry::new_with_target(
+            &windows_credential_target(provider),
+            "Vespera",
+            "provider",
+        )
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| RuntimeError::WindowsCredentialUnavailable {
+            provider_id: provider.id,
+        })?;
+        if !value.trim().is_empty() {
+            return Ok(SecretString::new_in_memory(value));
+        }
+    }
+    Err(unavailable)
 }
 
 /// Explicitly owned application services, initially containing no scheduler activations.

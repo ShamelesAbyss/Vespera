@@ -95,13 +95,21 @@ operation/category and HTTP status. Never put actual credentials in TOML,
 provider/model names, command arguments, Git, memory or event records.
 
 Configuration schema version 1 permits provider categories `ollama`,
-`open_ai_compatible` and `custom`; `custom` is a declaration, not an installed
-adapter. `credential_env` is a variable-name reference, not a value. Parsing
-performs no credential resolution or provider I/O. `network.allow_remote` and
-`network.allow_insecure_http` govern offline declarations; future composition
-must map them into the runtime endpoint policy.
+`open_ai_compatible` and `custom`. The `custom` category is reserved for
+declarations without an installed adapter. `credential_env` names a process
+environment variable. On Windows, `credential_windows = true` selects an
+endpoint-bound generic credential for a loopback adapter. Choose one source.
+Parsing performs no credential resolution or provider I/O. The runtime
+applies `network.allow_remote` and `network.allow_insecure_http` when it builds
+an adapter. [Windows credential setup](CLI.md#discover-local-models-in-the-desktop)
 
 ## Verification and live scope
+
+On Windows, the opt-in credential test creates a uniquely named synthetic generic credential, verifies the bearer header against a loopback HTTP fixture, and removes the credential when the test exits.
+
+```powershell
+cargo test --locked -p vespera-app --test windows_credentials -- --ignored
+```
 
 The opt-in native Ollama test uses an already installed text model and an idle loopback backend on port 11434. It explicitly loads and unloads that model. Run it while other clients are idle.
 

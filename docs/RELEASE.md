@@ -76,6 +76,8 @@ Rehearse the new binaries on copies of the backed-up stores. Verify the catalog,
 
 For rollback, use the previous binaries with their pre-upgrade backups and compatible configuration. Preserve the upgraded stores separately for reconciliation. Reopening an upgraded live database with an older binary is only supported where the subsystem explicitly documents compatibility.
 
+A profile using Windows Credential Manager stores the source choice and endpoint. The Windows account supplies the credential independently of the profile backup. Use the pre-upgrade profile with builds that predate the `credential_windows` field.
+
 ## Release evidence
 
 - Record the Git revision, Windows or Linux architecture, build profile and package checksums.

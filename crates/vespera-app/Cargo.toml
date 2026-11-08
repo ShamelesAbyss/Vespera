@@ -29,16 +29,19 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+ring = { version = "0.17", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 nvml-wrapper = { version = "=0.13.0", default-features = false }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
 
 [dev-dependencies]
 rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqlite3-sys", "bundled"] }
 vespera-sdk = { path = "../vespera-sdk" }
 reqwest.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
-ring = { version = "0.17", default-features = false }
 uuid.workspace = true
 
 [lints]

@@ -37,7 +37,7 @@ fn default_timeout_seconds() -> u32 {
 
 /// A provider declaration, not an active provider connection.
 ///
-/// Credentials are referenced by environment-variable name, never embedded.
+/// Credentials are referenced by environment-variable name or a Windows store flag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
@@ -47,6 +47,8 @@ pub struct ProviderConfig {
     pub endpoint: String,
     #[serde(default)]
     pub credential_env: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub credential_windows: bool,
     #[serde(default = "default_timeout_seconds")]
     pub request_timeout_seconds: u32,
 }
@@ -298,6 +300,9 @@ fn validate_provider(
     if !(1..=3600).contains(&provider.request_timeout_seconds) {
         return Err(error("request timeout must be between 1 and 3600 seconds"));
     }
+    if provider.credential_windows && provider.credential_env.is_some() {
+        return Err(error("choose one credential source"));
+    }
     if let Some(name) = &provider.credential_env {
         let mut chars = name.chars();
         let first_valid = chars
@@ -330,6 +335,15 @@ fn validate_provider(
         Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         None => return Err(error("endpoint must have a host")),
     };
+    if provider.credential_windows
+        && (!loopback
+            || provider.endpoint.len() > 2048
+            || provider.endpoint.chars().any(char::is_control))
+    {
+        return Err(error(
+            "Windows credentials require a bounded loopback endpoint",
+        ));
+    }
     if !loopback && !network.allow_remote {
         return Err(error(
             "non-loopback endpoint denied by local-first network policy",
@@ -348,6 +362,22 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = include_str!("../../../config/local.toml");
+
+    #[test]
+    fn windows_credential_requires_an_exclusive_loopback_binding() {
+        let mut config = AppConfig::parse(SAMPLE).unwrap();
+        let provider = &mut config.providers[0];
+        assert!(!provider.credential_windows);
+        provider.credential_windows = true;
+        config.validate().unwrap();
+
+        config.providers[0].credential_env = Some("VESPERA_FIXTURE".into());
+        assert!(config.validate().is_err());
+        config.providers[0].credential_env = None;
+        config.providers[0].endpoint = "https://192.0.2.1".into();
+        config.network.allow_remote = true;
+        assert!(config.validate().is_err());
+    }
 
     #[test]
     fn scheduling_rejects_invalid_limits_and_unknown_model_references() {

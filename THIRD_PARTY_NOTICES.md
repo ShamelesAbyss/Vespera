@@ -12,7 +12,7 @@ This notice accompanies internal builds while distribution review is in progress
 
 ## Windows x64 dependency inventory
 
-The [resolved Cargo inventory](licenses/windows-x64-cargo-inventory.txt) records 425 third-party package and version entries for the Windows x64 CLI and graphics build, including build dependencies. Its expressions are the package declarations as published. An alternative expression does not record a license election. A build dependency appearing here does not establish that its code ships in the executable. [Inventory command](https://github.com/ShamelesAbyss/Vespera/blob/main/docs/DEPENDENCIES.md)
+The [resolved Cargo inventory](licenses/windows-x64-cargo-inventory.txt) records 429 third-party package and version entries for the Windows x64 CLI and graphics build, including build dependencies. Its expressions are the package declarations as published. An alternative expression does not record a license election. A build dependency appearing here does not establish that its code ships in the executable. [Inventory command](https://github.com/ShamelesAbyss/Vespera/blob/main/docs/DEPENDENCIES.md)
 
 Artifact review must reconcile these declarations with the source and files actually shipped. In particular, inspect the Ring package's bundled native code and its separate BoringSSL and other-bits notices, the bundled SQLite source, Unicode and ICU data and notices, trust-root data, platform runtime files, and the WiX bootstrapper payload. Use exact versions and preserve the complete upstream copyright, license, and notice text where required. Review both the MSI and Setup executable in addition to the portable archive.
 

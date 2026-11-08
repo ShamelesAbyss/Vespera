@@ -143,6 +143,7 @@ pub(super) fn provider(kind: ProviderKind, endpoint: String) -> ProviderConfig {
         kind,
         endpoint,
         credential_env: None,
+        credential_windows: false,
         request_timeout_seconds: 45,
     }
 }
@@ -200,6 +201,7 @@ pub(super) async fn register(
         existing.kind == provider.kind
             && existing.endpoint == provider.endpoint
             && existing.credential_env == provider.credential_env
+            && existing.credential_windows == provider.credential_windows
     }) {
         provider.id = existing.id;
     } else {
@@ -651,6 +653,22 @@ mod tests {
         assert!(!credential_name("PATH"));
         assert!(!credential_name("VESPERA_"));
         assert!(!credential_name("VESPERA_invalid"));
+        fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn windows_credential_binding_survives_reopening_the_profile() {
+        let dir = std::env::temp_dir().join(format!("vespera-credential-{}", TaskId::new()));
+        let mut configured = registration("fixture");
+        configured.provider.credential_windows = true;
+        let endpoint = configured.provider.endpoint.clone();
+        register(&dir, None, configured).await.unwrap();
+        let roster = load(&dir).unwrap().unwrap();
+        let (_, _, provider) = roster.selection(0).unwrap();
+        assert!(provider.credential_windows);
+        assert!(provider.credential_env.is_none());
+        assert_eq!(provider.endpoint, endpoint);
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
         fs::remove_dir(dir).unwrap();
     }

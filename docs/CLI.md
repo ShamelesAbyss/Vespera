@@ -632,6 +632,20 @@ Closing the desktop window requests cancellation of active discovery, tasks, or 
 
 The panel connects to loopback endpoints. For a server that requires authentication, set the secret in the desktop's launch environment, then choose **Credential reference** and enter its variable name. Desktop references start with `VESPERA_` and use uppercase ASCII letters, numbers and underscores. Enter the name alone. The adapter reads its value from the process environment. Changing the endpoint or adapter clears the discovery reference. To save a reference for tasks, register the discovered model or rebind the selected agent. The saved profile contains the variable name and requires the value again on later launches.
 
+On Windows, select **Windows credential** to display the exact target for the chosen adapter and endpoint. In Windows Credential Manager, open **Windows Credentials** and add a **generic credential**. Use the displayed target as the network address, `vespera` as the username, and the provider token as the password. Then run **Test & discover** and register or rebind the agent to retain the source choice. Rotate or remove the token in Windows Credential Manager. Vespera reads the token when it creates the adapter. A missing or unreadable credential stops adapter initialization.
+
+For the Windows CLI, set `credential_windows = true` in the provider declaration and leave `credential_env` unset. The target includes the adapter and a SHA-256 digest of the exact endpoint text. This keeps paths with different letter case distinct in Windows Credential Manager. Use PowerShell 7 to print the target.
+
+```powershell
+$adapter = 'ollama' # or 'openai-compatible'
+$endpoint = 'http://127.0.0.1:11434' # use the exact configured text
+$digest = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($endpoint))
+$target = "Vespera/provider/$adapter/$([Convert]::ToHexString($digest).ToLowerInvariant())"
+$target
+```
+
+This source is limited to loopback endpoints. Profile backups retain the source choice and endpoint. A restored profile needs its credential provisioned in the Windows account where it will run.
+
 In PowerShell 7.2 or later, launch the app from the same shell where you read the token.
 
 ```powershell

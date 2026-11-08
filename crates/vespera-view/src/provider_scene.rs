@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
-use vespera_app::runtime::{RuntimeError, configured_registry};
+use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
 use vespera_config::ProviderConfig;
 use vespera_core::{AgentId, Permission, ProviderKind};
 use vespera_providers::{
@@ -37,6 +37,8 @@ enum Action {
     Compatible,
     Edit,
     Credential,
+    #[cfg(target_os = "windows")]
+    WindowsCredential,
     Discover,
     Previous,
     Next,
@@ -126,6 +128,7 @@ struct Panel {
     kind: ProviderKind,
     endpoint: String,
     credential: Option<String>,
+    credential_windows: bool,
     draft: Option<Edit>,
     outcome: Option<ProbeResult>,
     page: usize,
@@ -146,16 +149,17 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         Ok(roster) => (roster, String::new()),
         Err(error) => (None, error.into()),
     };
-    let (kind, endpoint, credential) = roster
+    let (kind, endpoint, credential, credential_windows) = roster
         .as_ref()
         .and_then(|roster| roster.selection(0))
         .map_or_else(
-            || (ProviderKind::Ollama, OLLAMA.into(), None),
+            || (ProviderKind::Ollama, OLLAMA.into(), None, false),
             |(_, _, provider)| {
                 (
                     provider.kind,
                     provider.endpoint.clone(),
                     provider.credential_env.clone(),
+                    provider.credential_windows,
                 )
             },
         );
@@ -163,6 +167,7 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         kind,
         endpoint,
         credential,
+        credential_windows,
         draft: None,
         outcome: None,
         page: 0,
@@ -181,6 +186,13 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
 }
 
 fn setup(mut commands: Commands) {
+    #[cfg(target_os = "windows")]
+    let windows_credential_button = button(Action::WindowsCredential, "Windows credential");
+    #[cfg(not(target_os = "windows"))]
+    let windows_credential_button = Node {
+        display: Display::None,
+        ..default()
+    };
     let camera = commands
         .spawn((
             Layer::Providers,
@@ -260,6 +272,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Prompt, "Run agent task"),
                         button(Action::Chain, "Build workflow"),
                         button(Action::Cancel, "Cancel work"),
+                        windows_credential_button,
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
@@ -319,6 +332,7 @@ fn apply(action: Action, panel: &mut Panel) {
             };
             if panel.kind != kind || panel.endpoint != endpoint {
                 panel.credential = None;
+                panel.credential_windows = false;
             }
             panel.kind = kind;
             panel.endpoint = endpoint.into();
@@ -331,6 +345,14 @@ fn apply(action: Action, panel: &mut Panel) {
             panel.draft = Some(Edit::Credential(
                 panel.credential.clone().unwrap_or_default(),
             ));
+        }
+        #[cfg(target_os = "windows")]
+        Action::WindowsCredential => {
+            panel.credential_windows = !panel.credential_windows;
+            panel.credential = None;
+            panel.outcome = None;
+            panel.page = 0;
+            panel.feedback.clear();
         }
         Action::Prompt => {
             if panel.roster.is_some() {
@@ -440,6 +462,8 @@ fn apply(action: Action, panel: &mut Panel) {
                         "Provider discovery cancelled.",
                     RuntimeError::Provider(ProviderError::SecretResolutionFailed { .. }) =>
                         "Credential reference unavailable. Check the variable in the launch environment.",
+                    RuntimeError::WindowsCredentialUnavailable { .. } =>
+                        "Windows credential unavailable. Check the generic credential target shown above.",
                     RuntimeError::Provider(ProviderError::AuthenticationFailed { .. }) =>
                         "Provider authentication failed. Check the configured credential reference.",
                     _ => "Could not verify provider health. Check the endpoint and server.",
@@ -477,6 +501,7 @@ fn apply(action: Action, panel: &mut Panel) {
 fn panel_provider(panel: &Panel) -> ProviderConfig {
     let mut provider = desktop_agent::provider(panel.kind, panel.endpoint.clone());
     provider.credential_env = panel.credential.clone();
+    provider.credential_windows = panel.credential_windows;
     provider
 }
 
@@ -709,6 +734,7 @@ fn select_model(panel: &mut Panel, index: usize) {
             && provider.kind == panel.kind
             && provider.endpoint == panel.endpoint
             && provider.credential_env == panel.credential
+            && provider.credential_windows == panel.credential_windows
         {
             fields[2] = saved
                 .resources
@@ -788,6 +814,7 @@ fn submit(panel: &mut Panel) {
         Edit::Endpoint(endpoint) => {
             if panel.endpoint != endpoint {
                 panel.credential = None;
+                panel.credential_windows = false;
             }
             panel.endpoint = endpoint;
             panel.outcome = None;
@@ -801,6 +828,7 @@ fn submit(panel: &mut Panel) {
                 return;
             }
             panel.credential = (!name.is_empty()).then_some(name);
+            panel.credential_windows = false;
             panel.outcome = None;
             panel.page = 0;
             panel.feedback.clear();
@@ -1217,6 +1245,13 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     let mut content = format!(
         "Adapter  |  {adapter}\nEndpoint  |  {endpoint}\nCredential variable  |  {credential}\n"
     );
+    if panel.credential_windows {
+        let _ = writeln!(
+            content,
+            "Windows credential target  |  {}",
+            windows_credential_target(&panel_provider(&panel))
+        );
+    }
     if let Some(roster) = &panel.roster
         && let Some((agent, model, provider)) = roster.selection(panel.selected)
     {
@@ -1237,6 +1272,9 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         );
         if let Some(name) = &provider.credential_env {
             let _ = writeln!(content, "Task credential variable  |  {name}");
+        }
+        if provider.credential_windows {
+            let _ = writeln!(content, "Task credential  |  Windows Credential Manager");
         }
     }
     if !panel.feedback.is_empty() {
@@ -1481,6 +1519,25 @@ mod tests {
 
     async fn discover(declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
         super::discover(declaration, CancellationToken::new()).await
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_credential_selection_is_exclusive_and_clears_on_endpoint_edit() {
+        let mut app = App::new();
+        app.insert_resource(Layers::new(Layer::Providers));
+        install(&mut app, None);
+        let mut panel = app.world_mut().resource_mut::<Panel>();
+        panel.credential = Some("VESPERA_FIXTURE".into());
+        apply(Action::WindowsCredential, &mut panel);
+        let configured = panel_provider(&panel);
+        assert!(configured.credential_windows);
+        assert!(configured.credential_env.is_none());
+        assert!(windows_credential_target(&configured).starts_with("Vespera/provider/ollama/"));
+
+        panel.draft = Some(Edit::Endpoint("http://127.0.0.1:8000".into()));
+        submit(&mut panel);
+        assert!(!panel_provider(&panel).credential_windows);
     }
 
     #[test]

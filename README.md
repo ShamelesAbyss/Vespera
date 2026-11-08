@@ -131,7 +131,7 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view
 3. Choose **New agent** and press the number next to an exposed model. Enter the agent name, role, and credible RAM and VRAM estimates in MiB.
 4. Choose **Run agent task** or press **P**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
 
-For a loopback server that requires authentication, set the token in the desktop launch environment and choose **Credential reference** before discovery. Enter the environment variable name. [PowerShell and Bash setup](docs/CLI.md#discover-local-models-in-the-desktop)
+For an authenticated loopback server, choose **Credential reference** to use a launch environment variable. On Windows, **Windows credential** can read a generic credential provisioned in Windows Credential Manager for that adapter and endpoint. [Provider setup](docs/CLI.md#discover-local-models-in-the-desktop)
 
 Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. Grant delegation to a coordinator, then use **G** for **Draft + review** or **C** to author and preview a workflow with two to six sequential steps. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow builder](docs/CLI.md#author-a-sequential-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 

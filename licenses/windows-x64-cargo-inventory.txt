@@ -215,6 +215,7 @@ is_terminal_polyfill v1.70.2|MIT OR Apache-2.0
 itertools v0.14.0|MIT OR Apache-2.0
 itertools v0.15.0|MIT OR Apache-2.0
 itoa v1.0.18|MIT OR Apache-2.0
+keyring v3.6.3|MIT OR Apache-2.0
 lalrpop-util v0.23.2|Apache-2.0 OR MIT
 lazy_static v1.5.1|MIT OR Apache-2.0
 lexical v7.0.5|MIT/Apache-2.0
@@ -392,6 +393,7 @@ wgsl-types v0.6.0|MIT OR Apache-2.0
 winapi v0.3.9|MIT/Apache-2.0
 windows v0.62.2|MIT OR Apache-2.0
 windows_x86_64_msvc v0.52.6|MIT OR Apache-2.0
+windows_x86_64_msvc v0.53.1|MIT OR Apache-2.0
 windows-collections v0.3.2|MIT OR Apache-2.0
 windows-core v0.62.2|MIT OR Apache-2.0
 windows-future v0.3.2|MIT OR Apache-2.0
@@ -402,8 +404,10 @@ windows-numerics v0.3.1|MIT OR Apache-2.0
 windows-result v0.4.1|MIT OR Apache-2.0
 windows-strings v0.5.1|MIT OR Apache-2.0
 windows-sys v0.52.0|MIT OR Apache-2.0
+windows-sys v0.60.2|MIT OR Apache-2.0
 windows-sys v0.61.2|MIT OR Apache-2.0
 windows-targets v0.52.6|MIT OR Apache-2.0
+windows-targets v0.53.5|MIT OR Apache-2.0
 windows-threading v0.2.1|MIT OR Apache-2.0
 winit v0.30.13|Apache-2.0
 winnow v0.7.15|MIT
