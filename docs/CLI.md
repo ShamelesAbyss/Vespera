@@ -659,6 +659,12 @@ the workflow state. Live mode then publishes the committed envelopes as
 they become available, including the root outcome once it commits. If
 publication stops, use [workflow event recovery](#recover-workflow-events).
 
+Pass the same journal path to `--lifecycle-journal` to show registered
+agents and their latest observed runtime status in Swarm. The inspector
+shows the status sequence. Frozen replay shows only statuses and outcomes
+through the selected sequence. A shared journal displays observations in
+append order, including when separate runs observe the same agent UUID.
+
 Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
 
 To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
@@ -671,7 +677,7 @@ Amber arrows show message acceptance from the authenticated sender to an approve
 
 In either Swarm mode, press T to freeze the current evidence window or return live. Press [ to freeze and step back, then use [ and ] to move between retained observations and the captured range boundaries. The inspector displays the viewed sequence and the live source position separately. New events continue to arrive while frozen. An attempt's terminal state appears only once the viewed sequence includes its terminal event.
 
-Both modes are read-only. A window keeps up to 128 relationships and 128 terminal observations, with up to 24 agents visible. The inspector labels the cutoff when source retention or the window limit removes earlier evidence. Replay stays within the captured window, and returning live refreshes it from the current feed.
+Both modes are read-only. A window keeps up to 128 relationships, 128 terminal observations and 128 agent status observations, with up to 24 agents visible. The inspector labels the cutoff when source retention or the window limit removes earlier evidence. Replay stays within the captured window, and returning live refreshes it from the current feed.
 
 ### Follow committed events
 

@@ -13,8 +13,8 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 5: scheduler | Verified in the native Ollama scope. Admission uses conservative estimates, optional host RAM and CPU ceilings and an operator-mapped NVIDIA VRAM ceiling. Fixtures and live runs cover lifecycle, contention, latency routing, external pressure and durable restart recovery. Other GPU backends use declared ceilings. |
 | 6: master orchestration | Verified for bounded native Ollama workflows. The coordinator can decompose a task within an authorized roster and explicit budgets. Durable history supports resume at a committed step boundary. Fixtures verify routing, retries, cancellation and conflict policies. See [ORCHESTRATION.md](ORCHESTRATION.md). |
 | 7: agents | Bounded records, permissions, delegation and owned inference are verified. An opt-in task store preserves ownership and outcomes across restart and fences duplicate IDs. Durable agent status, inboxes and autonomous planning remain. See [AGENTS.md](AGENTS.md). |
-| 8: memory | Authorized SQLite library with FTS, lineage, quotas, transactional initialization and process-exit recovery tested; real agent adapter/rebind/reopen verified. Offline CLI initialization/inspection/write/consolidation/deletion verified across processes. Opt-in retrieval and generated-result persistence verified through single-agent inference. Backup, restore and durable task sources remain. See [MEMORY.md](MEMORY.md). |
-| 9: events | Local SQLite task outcome journal with bounded retention and read-only cursor replay. Local streaming supports resume and explicit retention gaps. Versioned failure and cancellation events accompany successful completions. Broader lifecycle coverage and durable audit coordination remain. |
+| 8: memory | Verified local SQLite namespaces, FTS, lineage, backup and restore. Live inference retrieved memory from a restored database. See [MEMORY.md](MEMORY.md). |
+| 9: events | Verified local SQLite replay, recoverable audit, signed broker delivery and native Windows Swarm live and historical observation. See the [event journal CLI](CLI.md#local-task-outcome-journal). |
 | 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls and scoped events. Optional SQLite recovers work, revocations and feeds. Opt-in TLS 1.3 supports remote binding. Cross-host deployment and broader authorized messaging remain. |
 | 11: simulation | Persistent deterministic world, native CLI and graphical inspection are integrated. Explicit decisions and bounded resident reasoning use revision fences. World Mode shows preparation and active leases. Retained commits replay without a provider in the CLI and fixed-revision 3D view. |
 | 12: 3D command center | The optional Bevy executable opens an observed broker graph or a persistent simulated world with selection, inspection and controls. Full orchestration telemetry, model-driven world behavior and hardware validation remain release gates. |
@@ -101,6 +101,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 - Test schema compatibility, event IDs, ordering scope, restart, duplicate handling, and cursor expiry.
 - Exercise slow/disconnected subscribers, buffer limits, redaction, retention, and journal failure; explicitly report gaps.
 - Distinguish critical audit transitions from expendable telemetry and expose no credentials or private hidden chain-of-thought.
+- Verified in the local journal and authenticated broker feed. Native Swarm followed real workflow events and replayed agent statuses at their observed sequence.
 
 ## Milestone 10 — External agent interoperability
 

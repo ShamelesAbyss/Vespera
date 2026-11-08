@@ -5,7 +5,7 @@ use std::time::Duration;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use tokio::sync::{mpsc, watch};
-use vespera_core::{AgentId, EventEnvelope, EventKind, TaskId, TaskState};
+use vespera_core::{AgentId, AgentStatus, EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
 
 use crate::Update;
@@ -44,6 +44,7 @@ struct Edge {
 struct Evidence {
     edges: VecDeque<Edge>,
     outcomes: VecDeque<(u64, TaskId, TaskState)>,
+    statuses: VecDeque<(u64, AgentId, AgentStatus)>,
     floor: u64,
     clipped_through: u64,
     head: u64,
@@ -75,6 +76,7 @@ impl Evidence {
         let floor = self.floor.max(self.clipped_through);
         self.edges.retain(|edge| edge.sequence > floor);
         self.outcomes.retain(|(sequence, _, _)| *sequence > floor);
+        self.statuses.retain(|(sequence, _, _)| *sequence > floor);
     }
 
     fn reset(&mut self, status: &'static str) {
@@ -87,7 +89,14 @@ impl Evidence {
 
     fn push(&mut self, sequence: u64, event: EventEnvelope) {
         self.head = self.head.max(sequence);
+        let workflow_evidence = matches!(event.source.as_str(), "run-workflow" | "workflow-store");
         match event.kind {
+            EventKind::AgentRegistered { agent_id, status }
+            | EventKind::AgentStatusChanged {
+                agent_id, status, ..
+            } if event.source == "agent-runtime" => {
+                self.statuses.push_back((sequence, agent_id, status));
+            }
             EventKind::TaskDelegated {
                 task_id,
                 from_agent_id,
@@ -132,9 +141,7 @@ impl Evidence {
                     },
                 });
             }
-            EventKind::WorkflowAttemptFinished { task_id, state }
-                if event.source == "run-workflow" =>
-            {
+            EventKind::WorkflowAttemptFinished { task_id, state } if workflow_evidence => {
                 self.outcomes.push_back((sequence, task_id, state));
             }
             EventKind::AgentMessageSent {
@@ -148,15 +155,15 @@ impl Evidence {
                     relation: Relation::Message,
                 });
             }
-            EventKind::TaskCompleted { task_id } if event.source == "run-workflow" => {
+            EventKind::TaskCompleted { task_id } if workflow_evidence => {
                 self.outcomes
                     .push_back((sequence, task_id, TaskState::Completed));
             }
-            EventKind::TaskFailed { task_id } if event.source == "run-workflow" => {
+            EventKind::TaskFailed { task_id } if workflow_evidence => {
                 self.outcomes
                     .push_back((sequence, task_id, TaskState::Failed));
             }
-            EventKind::TaskCancelled { task_id } if event.source == "run-workflow" => {
+            EventKind::TaskCancelled { task_id } if workflow_evidence => {
                 self.outcomes
                     .push_back((sequence, task_id, TaskState::Cancelled));
             }
@@ -173,6 +180,11 @@ impl Evidence {
             self.clipped_through = self.clipped_through.max(through);
             self.retain_window();
         }
+        if self.statuses.len() > MAX_OBSERVATIONS {
+            let through = self.statuses[0].0;
+            self.clipped_through = self.clipped_through.max(through);
+            self.retain_window();
+        }
     }
 
     fn outcome(&self, task: TaskId, accepted_at: u64) -> Option<TaskState> {
@@ -182,6 +194,30 @@ impl Evidence {
             .find_map(|(sequence, id, state)| {
                 (*id == task && *sequence > accepted_at).then_some(*state)
             })
+    }
+
+    fn agent_status(&self, agent: AgentId) -> Option<(u64, AgentStatus)> {
+        self.statuses
+            .iter()
+            .rev()
+            .find_map(|&(sequence, id, status)| (agent == id).then_some((sequence, status)))
+    }
+
+    fn visible_agents(&self) -> BTreeSet<AgentId> {
+        let mut agents = BTreeSet::new();
+        let related = self
+            .edges
+            .iter()
+            .rev()
+            .flat_map(|edge| [edge.from, edge.to]);
+        let registered = self.statuses.iter().rev().map(|&(_, id, _)| id);
+        for agent in related.chain(registered) {
+            if agents.len() == MAX_AGENTS {
+                break;
+            }
+            agents.insert(agent);
+        }
+        agents
     }
 }
 
@@ -211,6 +247,7 @@ impl Frozen {
             .iter()
             .map(|edge| edge.sequence)
             .chain(self.captured.outcomes.iter().map(|outcome| outcome.0))
+            .chain(self.captured.statuses.iter().map(|status| status.0))
             .chain([
                 self.captured.floor.max(self.captured.clipped_through),
                 self.captured.head,
@@ -230,6 +267,9 @@ impl Frozen {
         evidence.edges.retain(|edge| edge.sequence <= self.sequence);
         evidence
             .outcomes
+            .retain(|(sequence, _, _)| *sequence <= self.sequence);
+        evidence
+            .statuses
             .retain(|(sequence, _, _)| *sequence <= self.sequence);
         evidence.head = self.sequence;
         evidence
@@ -516,14 +556,7 @@ fn sync(
         .frozen
         .as_ref()
         .map_or_else(|| feed.live.clone(), Frozen::projection);
-    let mut agents = BTreeSet::new();
-    for edge in feed.evidence.edges.iter().rev() {
-        for id in [edge.from, edge.to] {
-            if agents.len() < MAX_AGENTS {
-                agents.insert(id);
-            }
-        }
-    }
+    let agents = feed.evidence.visible_agents();
     layout.agents.retain(|id, (entity, _)| {
         if agents.contains(id) {
             return true;
@@ -657,6 +690,11 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
         } else {
             format!("AGENT\n{id}\n\nOutside the visible agent set")
         };
+        if let Some((sequence, status)) = evidence.agent_status(id) {
+            detail.push_str(&format!(
+                "\nRuntime status {status:?} at sequence {sequence}"
+            ));
+        }
         if let Some(edge) = latest {
             let peer = if edge.from == id { edge.to } else { edge.from };
             let direction = if edge.from == edge.to {
@@ -738,6 +776,102 @@ fn inspect(feed: Res<Feed>, layout: Res<Layout>, mut readout: Single<&mut Text, 
 mod tests {
     use super::*;
     use vespera_core::WorkflowDependency;
+
+    #[test]
+    fn durable_workflow_outcomes_and_agent_status_follow_the_replay_cursor() {
+        let agent = AgentId::new();
+        let root = TaskId::new();
+        let task = TaskId::new();
+        let mut live = Evidence::default();
+        live.push(
+            1,
+            EventEnvelope::new(
+                "agent-runtime",
+                0,
+                EventKind::AgentRegistered {
+                    agent_id: agent,
+                    status: AgentStatus::Idle,
+                },
+            )
+            .unwrap(),
+        );
+        assert_eq!(live.visible_agents(), BTreeSet::from([agent]));
+        live.push(
+            2,
+            EventEnvelope::new(
+                "agent-runtime",
+                0,
+                EventKind::AgentStatusChanged {
+                    agent_id: agent,
+                    previous: AgentStatus::Idle,
+                    status: AgentStatus::Running,
+                },
+            )
+            .unwrap(),
+        );
+        live.push(
+            3,
+            EventEnvelope::new(
+                "workflow-store",
+                0,
+                EventKind::WorkflowAttemptAccepted {
+                    task_id: task,
+                    from_agent_id: agent,
+                    to_agent_id: agent,
+                    dependencies: vec![],
+                },
+            )
+            .unwrap(),
+        );
+        live.push(
+            4,
+            EventEnvelope::new(
+                "workflow-store",
+                0,
+                EventKind::WorkflowAttemptFinished {
+                    task_id: task,
+                    state: TaskState::Completed,
+                },
+            )
+            .unwrap(),
+        );
+        live.push(
+            5,
+            EventEnvelope::new(
+                "workflow-store",
+                0,
+                EventKind::TaskCompleted { task_id: root },
+            )
+            .unwrap(),
+        );
+        live.push(
+            6,
+            EventEnvelope::new(
+                "agent-runtime",
+                0,
+                EventKind::AgentStatusChanged {
+                    agent_id: agent,
+                    previous: AgentStatus::Running,
+                    status: AgentStatus::Idle,
+                },
+            )
+            .unwrap(),
+        );
+        assert_eq!(live.agent_status(agent), Some((6, AgentStatus::Idle)));
+        let mut frozen = Frozen::new(live);
+        frozen.step(true);
+        let projection = frozen.projection();
+        assert_eq!(
+            projection.agent_status(agent),
+            Some((2, AgentStatus::Running))
+        );
+        assert_eq!(projection.outcome(task, 3), Some(TaskState::Completed));
+        assert_eq!(projection.outcome(root, 3), Some(TaskState::Completed));
+        frozen.step(true);
+        assert_eq!(frozen.projection().outcome(root, 3), None);
+        frozen.step(true);
+        assert_eq!(frozen.projection().outcome(task, 3), None);
+    }
 
     #[test]
     fn replay_steps_through_whole_observations_and_hides_future_results() {
