@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-08 — Owner-approved licensing and Windows 0.1.2 candidate
+
+Christopher Dodd approved Proprietary Freeware License v1.0 as the project's software licensing policy in checkpoint `46819b7886db4cf078c77a588e28c9dad08b6d4e`. The checkpoint preserves the prior ownership, interoperability, redistribution, warranty, and liability sections and adds the user-controlled AI and third-party model terms. Third-party notices stayed byte-identical. The README rendered with the new policy, existing screenshots, and Mermaid diagrams. Independent legal review and third-party rights verification remain public release gates.
+
+Checkpoint `070ead8beb137a2c39fe91534bf3cbeef07323fd` moved all 14 workspace packages to software version `0.1.2` and updated the hosted MSI baseline to `0.1.1`. The optimized Windows archive was restaged from `46819b7` to include the owner-approved license. Fresh ZIP extraction verified 45 entries. Windows Installer administrative extraction verified 13 staged payloads. WiX extracted the Setup bundle and confirmed its embedded MSI matches the standalone MSI. The MSI transaction sequence places `RemoveExistingProducts` between initialization and finalization.
+
+The extracted CLI authenticated to a loopback fixture with a temporary synthetic Windows credential. A path case change failed before any network connection, and the test deleted the fixture credential. The CLI reopened the prior three-step desktop workflow. The portable launcher opened a scratch Home window from a different working directory, and packaged Atlas rendered Machine through Vulkan with a 60-update sample after 120 warmup updates. The earlier all-layer walkthrough remains recorded under the `0.1.1` candidate.
+
+The portable rollback test used the actual optimized `0.1.1` binary to create a revision 8 world. `0.1.2` advanced a copy to 9 and replayed 8. The earlier binary reopened the unchanged revision 8 backup. The initial scratch assertion read the replay revision from the wrong JSON field. The corrected rehearsal checked the nested world revision and passed on fresh data. The hosted version checkpoint passed the Windows MSI lifecycle with debug fixtures, alongside Ubuntu foundation and native graphics CI. [Candidate checksums and scope](RELEASE.md#validated-windows-x64-candidate)
+
 ## 2026-11-08 — Endpoint-bound Windows provider credentials
 
 Checkpoint `0c1baa6f7038c2378503d63014c5d21cb35f0157` adds an opt-in generic Windows Credential Manager reference for the desktop and CLI loopback providers. The saved profile carries the source flag and provider endpoint. The operator provisions the token in Windows. Vespera reads it when building the adapter and fails closed if the credential is missing. A SHA-256 digest preserves distinctions between endpoint paths with different letter case even though Windows credential target names compare case-insensitively. Existing environment references still work, and configuration rejects combining both sources.

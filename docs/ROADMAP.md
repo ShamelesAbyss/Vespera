@@ -19,7 +19,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 11: simulation | Persistent deterministic world, native CLI and graphical inspection are integrated. Explicit decisions and bounded resident reasoning use revision fences. World Mode shows preparation and active leases. Retained commits replay without a provider in the CLI and fixed-revision 3D view. |
 | 12: 3D command center | All four Atlas modes and Living World persistence and replay were exercised in the Windows x64 candidate. Living World also rendered and replayed through software Vulkan on Ubuntu WSLg. The Windows desktop verified sequential workflow authoring, retained history, and focused Swarm evidence. The Windows runtime supports endpoint-bound Credential Manager references. Branching workflow authoring and broader graphics and platform qualification remain open. |
 | 13: experiments | Deterministic world experiments and bounded native Ollama comparisons are verified. Additional providers and broader statistical benchmarking remain outside that scope. |
-| 14: release readiness | Windows x64 has an internal `0.1.1` candidate with portable package verification, a hosted per-user MSI lifecycle rehearsal and local rollback evidence. The owner approved the freeware policy. Public distribution requires independent legal review, third-party rights verification, artifact-specific notices, signing, and a supported production installer toolchain. See [RELEASE.md](RELEASE.md). |
+| 14: release readiness | Windows x64 has an internal `0.1.2` candidate with verified portable and installer payloads, packaged credential authentication, native launch, and rollback evidence from `0.1.1`. The owner approved the freeware policy. Public distribution requires independent legal review, third-party rights verification, artifact-specific notices, signing, and a supported production installer toolchain. See [RELEASE.md](RELEASE.md). |
 
 ## Milestone 0 — Repository inspection and architecture
 
@@ -157,7 +157,7 @@ The [world policy runner](CLI.md#compare-two-world-policies) compares roster pol
 
 Release only after integrated behavior and limitations are verified.
 
-The `0.1.1` Windows x64 internal candidate passed optimized archive and MSI payload verification, portable backup recovery, and the per-user installer lifecycle on Windows CI. Remaining release qualification includes signing, artifact-specific distribution notices, independent legal review and third-party rights verification, and other platforms. [Candidate validation](RELEASE.md#validated-windows-x64-candidate)
+The `0.1.2` Windows x64 internal candidate passed optimized archive and MSI payload verification, packaged launch, and portable backup recovery. The earlier `0.1.1` candidate passed the per-user installer lifecycle on Windows CI. Remaining release qualification includes signing, artifact-specific distribution notices, independent legal review and third-party rights verification, and other platforms. [Candidate validation](RELEASE.md#validated-windows-x64-candidate)
 
 - Run offline tests plus an explicit live-provider matrix; record CPU-only operation, optional GPUs, permission checks, and interruption recovery.
 - Validate packaging, distribution rights and legal review, dependencies, migration/backup recovery, protocol compatibility, and a fresh-user walkthrough.

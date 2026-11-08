@@ -341,7 +341,7 @@ The offline suites use local fixtures. Opt-in live tests require their named dae
 
 Vespera is under active development. The Windows desktop has verified Home, hardware inspection, persistent world controls, native and compatible inference, durable agent history, branded installation and a live two-agent workflow. Headless tests run in Ubuntu CI.
 
-The `0.1.1` Windows x64 internal candidate passed archive integrity, all four Atlas views, and a per-user MSI install, upgrade and restore rehearsal. A Windows SDK client also verified authenticated TLS recovery with an Ubuntu WSL2 broker on the same physical machine. [Candidate validation](docs/RELEASE.md#validated-windows-x64-candidate) · [TLS rehearsal](docs/PROTOCOL.md#rehearse-a-non-loopback-tls-deployment)
+The `0.1.2` Windows x64 internal candidate passed portable and installer payload verification, native launch, and portable rollback from `0.1.1`. The earlier `0.1.1` walkthrough covered all four Atlas views and a per-user MSI install, upgrade, and restore. A Windows SDK client also verified authenticated TLS recovery with an Ubuntu WSL2 broker on the same physical machine. [Candidate validation](docs/RELEASE.md#validated-windows-x64-candidate) · [TLS rehearsal](docs/PROTOCOL.md#rehearse-a-non-loopback-tls-deployment)
 
 The rebuilt Living World was exercised from Home and Atlas on Windows. At 1200×800 on an RTX 4070 Laptop GPU, the development build recorded p95 update intervals of 11.63 ms for the example settlement and 12.66 ms for a 64×64 fixture. The samples cover steady views on that adapter. [Fixture details and measurement scope](docs/WORLD_VISUALS.md#windows-validation)
 

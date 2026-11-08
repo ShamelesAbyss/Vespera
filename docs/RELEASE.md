@@ -66,7 +66,7 @@ Start-Process -FilePath (Resolve-Path target/Vespera-Setup.exe).Path -Wait
 & (Join-Path $env:LOCALAPPDATA 'Programs/Vespera/bin/vespera-launcher.exe')
 ```
 
-Use a higher three-component product version for each MSI upgrade. The `0.1.1` candidate supersedes the earlier `0.1.0` rehearsal. Old-product removal is part of the Windows Installer transaction. Use the same committed candidate for both the MSI and its Setup bundle.
+Use a higher three-component product version for each MSI upgrade. The `0.1.2` candidate supersedes `0.1.1`. Old-product removal is part of the Windows Installer transaction. Use the same committed candidate for both the MSI and its Setup bundle.
 
 ## Upgrade and recovery
 
@@ -86,6 +86,20 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
 ### Validated Windows x64 candidate
+
+The optimized `0.1.2` internal candidate was built from `46819b7886db4cf078c77a588e28c9dad08b6d4e`. The portable ZIP verified all 45 manifest entries after extraction, including the owner-approved license. Administrative MSI extraction matched all 13 payload files against the stage. WiX extracted the Setup bundle and confirmed that its embedded MSI matched the standalone MSI byte for byte. The MSI and Setup are unsigned.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| `vespera-0.1.2-rc2-windows-x64.zip` | `D7F2966DDE6915CE049A76850BA79722F7805AD72FBC4F61409794A26C067A83` |
+| `vespera-0.1.2.msi` | `54815DE98D99E30DC9C940AC3FF0E4BB1540441304028474FD8B2DD26343D643` |
+| `Vespera-Setup-0.1.2.exe` | `BF85A44DE29D4F4B5F577ED77BDC67D03470A7769026BF5FF77C71E341E1CDEB` |
+
+The extracted CLI passed configuration validation and host diagnostics. It read a temporary generic Windows credential, authenticated to a loopback fixture, and rejected a case-changed endpoint before connecting. The CLI also reopened the retained three-step desktop workflow. The packaged launcher opened Home from an unrelated working directory. The packaged Atlas rendered Machine on the RTX 4070 Laptop GPU through Vulkan and reported a focused 60-update sample after 120 warmup updates at 1200×800.
+
+In the portable recovery rehearsal, the optimized `0.1.1` CLI created a world at revision 8. The `0.1.2` CLI advanced a copy to revision 9 and replayed revision 8. The older CLI reopened the original backup at revision 8, and its hash stayed unchanged. The hosted Windows job at the `0.1.2` version checkpoint passed the per-user `0.1.1` to `0.1.2` lifecycle with debug MSI fixtures, including downgrade rejection, notice hashes, and restoration of the saved world. [Hosted lifecycle](https://github.com/ShamelesAbyss/Vespera/actions/runs/42531557849/job/128886658103) · [Candidate source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42532064448)
+
+### Earlier Windows x64 candidate evidence
 
 The optimized `0.1.1` archive was built from `3d232672abacbfac1f0467cbbc5c64e58157702d`. All 41 manifest entries verified after fresh extraction. The packaged CLI passed configuration validation and host diagnostics. Windows Installer's administrative extraction matched all 10 staged files carried by the MSI.
 
