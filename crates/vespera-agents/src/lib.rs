@@ -30,6 +30,7 @@ mod task_store;
 pub use limits::{RuntimeLimits, RuntimeUsage};
 pub use task_store::{
     AgentTaskStore, AgentTaskStoreError, InboxAuditCursor, InboxAuditPage, StoredAgentTask,
+    StoredTaskSummary,
 };
 
 /// Current agent grants/accepted assignments, shared with durable storage without

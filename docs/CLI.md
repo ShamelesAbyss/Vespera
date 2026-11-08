@@ -624,17 +624,19 @@ The Home world uses deterministic simulation rules. Provider-backed decisions, s
 
 From Home, select **Models & Providers** or press **F6**. Select **Ollama** for the native adapter at `http://127.0.0.1:11434`, or **OpenAI-compatible** for the compatible adapter at `http://127.0.0.1:1234/v1`, the usual LM Studio endpoint. The server must already be running. For a different loopback address or port, select **Edit endpoint**, type the URL and press **Enter** to save it for the session. **Delete** clears the field while editing and **Esc** cancels the edit.
 
-Select **Test & discover** or press **Enter** to check health and fetch the model inventory. The panel shows the observed health, round-trip time, provider model IDs and adapter support for metadata, load, unload and residency. Use **Previous models** and **Next models** to browse results. **F5** returns Home.
+Select **Test & discover** or press **Enter** to check health and fetch the model inventory. The panel shows the observed health, round-trip time, provider model IDs and adapter support for metadata, load, unload and residency. Use **Previous page** and **Next page** to browse results. **F5** returns Home.
 
 This panel handles unauthenticated loopback servers. Discovery results and unregistered endpoint edits live in the current app session.
 
 ### Register a model and run a desktop agent
 
-From a discovery result, press the number beside a text model. Enter an agent name, a positive RAM estimate in MiB, and a VRAM estimate in MiB. Enter each field separately. Use zero VRAM for a CPU-only estimate. These estimates also set the profile's scheduler memory ceilings, with available host RAM applied as an additional limit. For Ollama, registration checks the model's reported text-generation capability. On the compatible interface, choosing a model declares that it supports text generation.
+Choose **New agent**, then press the number beside a text model in the discovery results. Enter an agent name, role, positive RAM estimate in MiB, and VRAM estimate in MiB. Press **Enter** after each field. Use zero VRAM for a CPU-only estimate. These estimates set the task's scheduler memory ceilings, with available host RAM applied as an additional limit. Agents sharing one model registration share its estimates. For Ollama, registration checks the model's reported text-generation capability. On the compatible interface, choosing a model declares that it supports text generation.
 
 Select **Run agent task**, enter a prompt, then press **Enter** to submit one task with a 128-output-token limit and a 50-second execution deadline. **Cancel task** signals local cancellation. The panel shows the result or failure and reports local cleanup. Native Ollama checks existing residency before admission and requests cleanup of models loaded by the runtime. The compatible path leaves residency and explicit unloading to the provider.
 
-The desktop keeps one saved agent binding in `desktop.sqlite3` under the desktop data directory. Registering a different model rebinds the same agent ID. Tasks use the saved endpoint even if discovery is pointed elsewhere. The agent has no optional grants. After restarting, use **Models & Providers** to see the saved binding. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID from the panel to `agent-task-history`. [Durable task ownership](AGENTS.md#durable-task-ownership)
+The desktop saves up to 16 agents in `desktop.sqlite3` under the desktop data directory. Use **Previous agent** and **Next agent** to select the agent that will run the task. To keep its identity and bind it to another model, select **Rebind selected**, then choose the model. Tasks use the selected agent's saved endpoint even if discovery is pointed elsewhere. New agents start without optional grants.
+
+Select **Task history** to see the selected agent's retained tasks, newest accepted first. Use the page controls to browse and press a task number for a prompt and response preview. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID to `agent-task-history` to inspect the full checkpoint. [Durable task ownership](AGENTS.md#durable-task-ownership)
 
 ### Switch layers in Atlas
 

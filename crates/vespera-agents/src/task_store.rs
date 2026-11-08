@@ -59,6 +59,13 @@ pub struct StoredAgentTask {
     pub interrupted: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StoredTaskSummary {
+    pub id: TaskId,
+    pub state: TaskState,
+    pub interrupted: bool,
+}
+
 #[derive(Debug)]
 pub struct AgentTaskStore(Mutex<Connection>);
 
@@ -390,6 +397,46 @@ impl AgentTaskStore {
         Ok(Some(event))
     }
 
+    /// List retained checkpoints for one owner, newest accepted first, without loading prompts.
+    pub fn recent(
+        path: &Path,
+        owner: AgentId,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<StoredTaskSummary>, AgentTaskStoreError> {
+        let store = Self::connect(path, false, false)?;
+        let connection = store.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        let mut statement = connection.prepare(
+            "SELECT id, state FROM agent_tasks WHERE owner=?1 ORDER BY rowid DESC LIMIT ?2 OFFSET ?3",
+        ).map_err(db)?;
+        let records = statement
+            .query_map(
+                params![owner.to_string(), i64::from(limit).min(MAX_TASKS), offset],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(db)?;
+        records
+            .map(|record| {
+                let (id, state) = record.map_err(db)?;
+                let state = match state.as_str() {
+                    "queued" => TaskState::Queued,
+                    "running" => TaskState::Running,
+                    "completed" => TaskState::Completed,
+                    "failed" => TaskState::Failed,
+                    "cancelled" => TaskState::Cancelled,
+                    _ => return Err(AgentTaskStoreError::InvalidCheckpoint),
+                };
+                Ok(StoredTaskSummary {
+                    id: id
+                        .parse()
+                        .map_err(|_| AgentTaskStoreError::InvalidCheckpoint)?,
+                    state,
+                    interrupted: matches!(state, TaskState::Queued | TaskState::Running),
+                })
+            })
+            .collect()
+    }
+
     /// Inspect the retained owner and outcome after acquiring the exclusive connection.
     pub fn inspect(path: &Path, task_id: TaskId) -> Result<StoredAgentTask, AgentTaskStoreError> {
         let store = Self::connect(path, false, false)?;
@@ -485,4 +532,43 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>, AgentTaskStoreError> {
         return Err(AgentTaskStoreError::Capacity);
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_is_owner_scoped_and_pages_newest_accepted_first() {
+        let path =
+            std::env::temp_dir().join(format!("vespera-task-history-{}.sqlite3", TaskId::new()));
+        let owner = AgentId::new();
+        let other = AgentId::new();
+        let store = AgentTaskStore::open(&path).unwrap();
+        let task = |state| Task {
+            id: TaskId::new(),
+            prompt: "Private fixture prompt".into(),
+            required_capabilities: Default::default(),
+            state,
+        };
+        let older = task(TaskState::Queued);
+        let recent = task(TaskState::Cancelled);
+        store.insert(&older, owner, None).unwrap();
+        store
+            .insert(&task(TaskState::Completed), other, None)
+            .unwrap();
+        store.insert(&recent, owner, None).unwrap();
+        drop(store);
+
+        let first = AgentTaskStore::recent(&path, owner, 0, 1).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].id, recent.id);
+        assert_eq!(first[0].state, TaskState::Cancelled);
+        assert!(!first[0].interrupted);
+        let second = AgentTaskStore::recent(&path, owner, 1, 2).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].id, older.id);
+        assert!(second[0].interrupted);
+        std::fs::remove_file(path).unwrap();
+    }
 }

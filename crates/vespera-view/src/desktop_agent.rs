@@ -16,24 +16,38 @@ use vespera_providers::{CancellationToken, DiscoveredModel};
 const APPLICATION_ID: i32 = 0x5644_534b;
 const MAX_CONFIG: usize = 65_536;
 const MIB: u64 = 1024 * 1024;
+const MAX_AGENTS: usize = 16;
 
 #[derive(Clone)]
-pub(super) struct Binding {
+pub(super) struct Roster {
     pub revision: i64,
     config: AppConfig,
 }
 
-impl Binding {
-    pub fn agent(&self) -> &AgentDefinition {
-        &self.config.agents[0]
+impl Roster {
+    pub fn len(&self) -> usize {
+        self.config.agents.len()
     }
 
-    pub fn model(&self) -> &ModelDescriptor {
-        &self.config.models[0]
-    }
-
-    pub fn provider(&self) -> &ProviderConfig {
-        &self.config.providers[0]
+    pub fn selection(
+        &self,
+        index: usize,
+    ) -> Option<(&AgentDefinition, &ModelDescriptor, &ProviderConfig)> {
+        let agent = self.config.agents.get(index)?;
+        let ModelSelectionPolicy::Fixed { model_id } = agent.model_policy else {
+            return None;
+        };
+        let model = self
+            .config
+            .models
+            .iter()
+            .find(|model| model.id == model_id)?;
+        let provider = self
+            .config
+            .providers
+            .iter()
+            .find(|provider| provider.id == model.provider_id)?;
+        Some((agent, model, provider))
     }
 }
 
@@ -41,6 +55,8 @@ pub(super) struct Registration {
     pub provider: ProviderConfig,
     pub model: DiscoveredModel,
     pub agent_name: String,
+    pub role: String,
+    pub rebind: Option<AgentId>,
     pub ram_mib: u32,
     pub vram_mib: u32,
 }
@@ -56,7 +72,7 @@ type Failure = &'static str;
 const STORAGE: Failure = "Could not access the desktop profile database.";
 const FORMAT: Failure = "The desktop profile database has an unrecognized format.";
 
-pub(super) fn load(dir: &Path) -> Result<Option<Binding>, Failure> {
+pub(super) fn load(dir: &Path) -> Result<Option<Roster>, Failure> {
     let path = dir.join("desktop.sqlite3");
     match path.symlink_metadata() {
         Ok(info) if info.is_file() => {}
@@ -84,7 +100,7 @@ fn identity(db: &Connection) -> Result<(i32, u32), Failure> {
     ))
 }
 
-fn read(db: &Connection) -> Result<Option<Binding>, Failure> {
+fn read(db: &Connection) -> Result<Option<Roster>, Failure> {
     let record: Option<(i64, Vec<u8>)> = db
         .query_row(
             "SELECT revision, payload FROM desktop_profile WHERE singleton = 1 AND length(payload) <= ?",
@@ -96,16 +112,23 @@ fn read(db: &Connection) -> Result<Option<Binding>, Failure> {
     let (revision, payload) = record.ok_or(FORMAT)?;
     let config: AppConfig = serde_json::from_slice(&payload).map_err(|_| FORMAT)?;
     if revision < 0
-        || config.providers.len() != 1
-        || config.models.len() != 1
-        || config.agents.len() != 1
+        || !(1..=MAX_AGENTS).contains(&config.agents.len())
+        || config.providers.len() > MAX_AGENTS
+        || config.models.len() > MAX_AGENTS
         || config.network.allow_remote
-        || config.providers[0].credential_env.is_some()
+        || config
+            .providers
+            .iter()
+            .any(|provider| provider.credential_env.is_some())
+        || config
+            .agents
+            .iter()
+            .any(|agent| !matches!(agent.model_policy, ModelSelectionPolicy::Fixed { .. }))
     {
         return Err(FORMAT);
     }
     config.validate().map_err(|_| FORMAT)?;
-    Ok(Some(Binding { revision, config }))
+    Ok(Some(Roster { revision, config }))
 }
 
 pub(super) fn provider(kind: ProviderKind, endpoint: String) -> ProviderConfig {
@@ -134,31 +157,49 @@ pub(super) fn config(provider: ProviderConfig) -> AppConfig {
 
 pub(super) async fn register(
     dir: &Path,
-    previous: Option<&Binding>,
+    previous: Option<&Roster>,
     registration: Registration,
-) -> Result<Binding, Failure> {
+) -> Result<(Roster, usize), Failure> {
     let Registration {
         mut provider,
         model,
         agent_name,
+        role,
+        rebind,
         ram_mib,
         vram_mib,
     } = registration;
-    if let Some(previous) = previous
-        && previous.provider().kind == provider.kind
-        && previous.provider().endpoint == provider.endpoint
-    {
-        provider.id = previous.provider().id;
+    if ram_mib == 0 {
+        return Err("Enter a positive model RAM estimate.");
     }
     let native = provider.kind == ProviderKind::Ollama;
-    let mut config = config(provider);
-    config.providers[0].request_timeout_seconds = 5;
-    let id = config.providers[0].id;
+    let mut inventory = previous.map_or_else(|| config(provider.clone()), |old| old.config.clone());
+    if let Some(existing) = inventory
+        .providers
+        .iter()
+        .find(|existing| existing.kind == provider.kind && existing.endpoint == provider.endpoint)
+    {
+        provider.id = existing.id;
+    } else {
+        inventory.providers.push(provider.clone());
+    }
+    let id = provider.id;
+    let index = match rebind {
+        Some(agent) => inventory
+            .agents
+            .iter()
+            .position(|entry| entry.identity.id == agent)
+            .ok_or("The selected agent no longer exists.")?,
+        None if inventory.agents.len() < MAX_AGENTS => inventory.agents.len(),
+        None => return Err("This desktop profile already has 16 agents."),
+    };
     let text = Capability::new("text-generation").expect("static capability is valid");
     let mut context = None;
     let mut quantization = model.quantization_level;
     if native {
-        let registry = configured_registry(&config)
+        let mut probe = provider;
+        probe.request_timeout_seconds = 5;
+        let registry = configured_registry(&config(probe))
             .await
             .map_err(|_| "Invalid local provider configuration.")?;
         let adapter = registry
@@ -175,22 +216,14 @@ pub(super) async fn register(
         context = metadata.context_window_tokens;
         quantization = metadata.quantization_level.or(quantization);
     }
-    config.providers[0].request_timeout_seconds = 45;
-    let model_id = previous
-        .filter(|old| {
-            old.model().identifier == model.provider_model_name && old.provider().id == id
-        })
-        .map_or_else(ModelId::new, |old| old.model().id);
+    let existing_model = inventory
+        .models
+        .iter()
+        .position(|entry| entry.identifier == model.provider_model_name && entry.provider_id == id);
+    let model_id = existing_model.map_or_else(ModelId::new, |index| inventory.models[index].id);
     let ram_bytes = u64::from(ram_mib) * MIB;
     let vram_bytes = u64::from(vram_mib) * MIB;
-    config.resources = ResourceBudget {
-        ram_bytes,
-        vram_bytes,
-        ..ResourceBudget::default()
-    };
-    config.scheduling.local_host_limits = true;
-    config.scheduling.keep_alive_seconds = native.then_some(60);
-    config.models.push(ModelDescriptor {
+    let descriptor = ModelDescriptor {
         id: model_id,
         provider_id: id,
         name: model.provider_model_name.clone(),
@@ -205,27 +238,67 @@ pub(super) async fn register(
         },
         availability: ModelAvailability::Available,
         responsibilities: Default::default(),
-    });
-    config.agents.push(AgentDefinition {
+    };
+    if let Some(existing) = existing_model {
+        let shared = inventory
+            .agents
+            .iter()
+            .enumerate()
+            .any(|(agent_index, agent)| {
+                agent_index != index
+                    && agent.model_policy == ModelSelectionPolicy::Fixed { model_id }
+            });
+        if shared && inventory.models[existing].resources != descriptor.resources {
+            return Err(
+                "Another agent uses this model. Enter the model's saved RAM and VRAM estimates.",
+            );
+        }
+        inventory.models[existing] = descriptor;
+    } else {
+        inventory.models.push(descriptor);
+    }
+    let definition = AgentDefinition {
         identity: AgentIdentity {
-            id: previous.map_or_else(AgentId::new, |old| old.agent().identity.id),
+            id: rebind.unwrap_or_else(AgentId::new),
             name: agent_name,
             description: String::new(),
-            role: "Desktop text assistant".into(),
+            role,
             personality: String::new(),
             goals: vec![],
         },
         model_policy: ModelSelectionPolicy::Fixed { model_id },
         permissions: Default::default(),
         status: AgentStatus::Idle,
+    };
+    if let Some(agent) = inventory.agents.get_mut(index) {
+        agent.identity.name = definition.identity.name;
+        agent.identity.role = definition.identity.role;
+        agent.model_policy = definition.model_policy;
+    } else {
+        inventory.agents.push(definition);
+    }
+    inventory.models.retain(|model| {
+        inventory
+            .agents
+            .iter()
+            .any(|agent| agent.model_policy == ModelSelectionPolicy::Fixed { model_id: model.id })
     });
-    config
+    inventory.providers.retain(|provider| {
+        inventory
+            .models
+            .iter()
+            .any(|model| model.provider_id == provider.id)
+    });
+    inventory
         .validate()
         .map_err(|_| "Invalid agent name, model, or resource declaration.")?;
-    save(dir, previous.map(|binding| binding.revision), config)
+    Ok((
+        save(dir, previous.map(|roster| roster.revision), inventory)?,
+        index,
+    ))
 }
 
-fn save(dir: &Path, expected: Option<i64>, config: AppConfig) -> Result<Binding, Failure> {
+fn save(dir: &Path, expected: Option<i64>, config: AppConfig) -> Result<Roster, Failure> {
     let payload = serde_json::to_vec(&config).map_err(|_| FORMAT)?;
     if payload.len() > MAX_CONFIG {
         return Err(FORMAT);
@@ -283,23 +356,40 @@ fn save(dir: &Path, expected: Option<i64>, config: AppConfig) -> Result<Binding,
         (revision, payload),
     ).map_err(|_| STORAGE)?;
     tx.commit().map_err(|_| STORAGE)?;
-    Ok(Binding { revision, config })
+    Ok(Roster { revision, config })
 }
 
 pub(super) async fn run(
     dir: &Path,
-    binding: Binding,
+    mut roster: Roster,
+    selected: usize,
     prompt: String,
     cancel: CancellationToken,
 ) -> Result<FinishedTask, String> {
     let store = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
         .map_err(|_| "Could not acquire the desktop task store.")?;
-    if load(dir)?.is_none_or(|current| current.revision != binding.revision) {
+    if load(dir)?.is_none_or(|current| current.revision != roster.revision) {
         return Err("The saved binding changed. Reopen the application.".into());
     }
-    let agent = binding.agent().identity.id;
-    let native = binding.provider().kind == ProviderKind::Ollama;
-    let runtime = VesperaRuntime::from_config_for_agent(&binding.config, agent)
+    let (agent, model, provider) = roster
+        .selection(selected)
+        .ok_or("No saved agent selected.")?;
+    let agent = agent.identity.id;
+    let native = provider.kind == ProviderKind::Ollama;
+    roster.config.resources = ResourceBudget {
+        ram_bytes: model
+            .resources
+            .ram_bytes
+            .ok_or("Unknown model RAM estimate.")?,
+        vram_bytes: model
+            .resources
+            .vram_bytes
+            .ok_or("Unknown model VRAM estimate.")?,
+        ..ResourceBudget::default()
+    };
+    roster.config.scheduling.local_host_limits = true;
+    roster.config.scheduling.keep_alive_seconds = native.then_some(60);
+    let runtime = VesperaRuntime::from_config_for_agent(&roster.config, agent)
         .await
         .map_err(|error| error.to_string())?;
     runtime
@@ -393,6 +483,8 @@ mod tests {
                 family: None,
             },
             agent_name: "Fixture".into(),
+            role: "Test role".into(),
+            rebind: None,
             ram_mib: 1024,
             vram_mib: 0,
         }
@@ -402,23 +494,37 @@ mod tests {
     async fn a_rebinding_preserves_identity_and_fences_an_old_window() {
         let dir = std::env::temp_dir().join(format!("vespera-desktop-agent-{}", TaskId::new()));
         assert!(load(&dir).unwrap().is_none());
-        let first = register(&dir, None, registration("first")).await.unwrap();
-        let second = register(&dir, Some(&first), registration("second"))
+        let (first, _) = register(&dir, None, registration("first")).await.unwrap();
+        let first_agent = first.selection(0).unwrap().0.identity.id;
+        let (two, index) = register(&dir, Some(&first), registration("first"))
             .await
             .unwrap();
+        assert_eq!(index, 1);
+        let second_agent = two.selection(1).unwrap().0.identity.id;
+        assert_ne!(first_agent, second_agent);
+        assert_eq!(
+            two.selection(0).unwrap().1.id,
+            two.selection(1).unwrap().1.id
+        );
+        let mut rebind = registration("second");
+        rebind.rebind = Some(first_agent);
+        let (changed, index) = register(&dir, Some(&two), rebind).await.unwrap();
+        assert_eq!(index, 0);
         assert!(
             register(&dir, Some(&first), registration("stale"))
                 .await
                 .is_err()
         );
         let reopened = load(&dir).unwrap().unwrap();
-        assert_eq!(reopened.revision, 1);
-        assert_eq!(reopened.model().id, second.model().id);
-        assert_ne!(reopened.model().id, first.model().id);
-        assert_eq!(reopened.provider().id, first.provider().id);
-        assert_eq!(reopened.agent().identity.id, first.agent().identity.id);
-        assert!(reopened.agent().permissions.is_empty());
-        assert_eq!(reopened.model().identifier, "second");
+        assert_eq!(reopened.revision, 2);
+        let (agent, model, provider) = reopened.selection(0).unwrap();
+        assert_eq!(agent.identity.id, first_agent);
+        assert_eq!(model.id, changed.selection(0).unwrap().1.id);
+        assert_eq!(provider.id, first.selection(0).unwrap().2.id);
+        assert!(agent.permissions.is_empty());
+        assert_eq!(model.identifier, "second");
+        assert_eq!(reopened.selection(1).unwrap().0.identity.id, second_agent);
+        assert_eq!(reopened.selection(1).unwrap().1.identifier, "first");
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
         fs::remove_dir(dir).unwrap();
     }
