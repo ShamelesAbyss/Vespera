@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use bevy::input::{ButtonState, keyboard::KeyboardInput};
 use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
+use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
 use vespera_app::runtime::{RuntimeError, configured_registry};
 use vespera_config::ProviderConfig;
@@ -118,6 +119,7 @@ struct Panel {
     selected: usize,
     rebind: bool,
     work: Option<Work>,
+    closing: bool,
     feedback: String,
     history: Option<History>,
 }
@@ -154,11 +156,13 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         selected: 0,
         rebind: false,
         work: None,
+        closing: false,
         feedback,
         history: None,
     })
     .add_systems(Startup, setup)
-    .add_systems(Update, (keyboard, receive_work, readout).chain());
+    .add_systems(Update, (keyboard, receive_work, readout).chain())
+    .add_systems(Last, close_after_provider_work.before(ExitSystems));
 }
 
 fn setup(mut commands: Commands) {
@@ -261,6 +265,9 @@ fn setup(mut commands: Commands) {
 }
 
 fn apply(action: Action, panel: &mut Panel) {
+    if panel.closing {
+        return;
+    }
     if matches!(action, Action::Cancel) {
         if let Some(
             Work::Discovery { cancel, .. }
@@ -481,7 +488,7 @@ fn keyboard(
     layers: Res<Layers>,
     mut panel: ResMut<Panel>,
 ) {
-    if layers.active != Layer::Providers {
+    if layers.active != Layer::Providers || panel.closing {
         if panel.draft.is_some() {
             panel.draft = None;
         }
@@ -947,6 +954,26 @@ fn receive_work(mut panel: ResMut<Panel>) {
     panel.work = None;
 }
 
+fn close_after_provider_work(
+    mut commands: Commands,
+    mut requests: MessageReader<WindowCloseRequested>,
+    mut primary: Single<(Entity, &mut Window), With<PrimaryWindow>>,
+    mut panel: ResMut<Panel>,
+) {
+    let requested = requests.read().any(|request| request.window == primary.0);
+    if requested && !panel.closing {
+        apply(Action::Cancel, &mut panel);
+        panel.closing = true;
+        panel.draft = None;
+        if panel.work.is_some() {
+            primary.1.title = "Vespera | Finishing local work…".into();
+        }
+    }
+    if panel.closing && panel.work.is_none() {
+        commands.entity(primary.0).despawn();
+    }
+}
+
 fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> String {
     use std::fmt::Write as _;
 
@@ -1231,6 +1258,55 @@ mod tests {
 
     async fn discover(declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
         super::discover(declaration, CancellationToken::new()).await
+    }
+
+    #[test]
+    fn closing_cancels_provider_work_and_waits_for_its_result() {
+        let mut app = App::new();
+        app.insert_resource(Layers::new(Layer::Providers))
+            .add_message::<WindowCloseRequested>();
+        install(&mut app, None);
+        let window = app
+            .world_mut()
+            .spawn((Window::default(), PrimaryWindow))
+            .id();
+        let (send, result) = mpsc::sync_channel(1);
+        let cancel = CancellationToken::new();
+        app.world_mut().resource_mut::<Panel>().work = Some(Work::Task {
+            result: Mutex::new(result),
+            cancel: cancel.clone(),
+        });
+
+        app.world_mut()
+            .write_message(WindowCloseRequested { window });
+        app.world_mut()
+            .run_system_once(close_after_provider_work)
+            .unwrap();
+        assert!(cancel.is_cancelled());
+        assert!(
+            app.world()
+                .get::<Window>(window)
+                .unwrap()
+                .title
+                .contains("Finishing local work")
+        );
+        app.world_mut().run_system_once(receive_work).unwrap();
+        app.world_mut()
+            .run_system_once(close_after_provider_work)
+            .unwrap();
+        assert!(app.world().get::<Window>(window).is_some());
+
+        send.send(Err("fixture task cancelled".into())).unwrap();
+        app.world_mut().run_system_once(receive_work).unwrap();
+        apply(
+            Action::Discover,
+            &mut app.world_mut().resource_mut::<Panel>(),
+        );
+        assert!(app.world().resource::<Panel>().work.is_none());
+        app.world_mut()
+            .run_system_once(close_after_provider_work)
+            .unwrap();
+        assert!(app.world().get::<Window>(window).is_none());
     }
 
     #[tokio::test]

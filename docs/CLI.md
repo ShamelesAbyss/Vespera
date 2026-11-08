@@ -628,6 +628,8 @@ From Home, select **Models & Providers** or press **F6**. Select **Ollama** for 
 
 Select **Test & discover** or press **Enter** to check health and fetch the model inventory. Press **Esc** or select **Cancel work** to stop the local request and return to the discovery controls. The panel shows the observed health, round-trip time, provider model IDs and adapter support for metadata, load, unload and residency. Use **Previous page** and **Next page** to browse results. **F5** returns Home.
 
+Closing the desktop window requests cancellation of active discovery, tasks, or workflows and waits for the provider panel's worker result. If work is still pending, the window title shows **Finishing local work**. Forced process termination still relies on durable restart recovery.
+
 The panel connects to loopback endpoints. For a server that requires authentication, set the secret in the desktop's launch environment, then choose **Credential reference** and enter its variable name. Desktop references start with `VESPERA_` and use uppercase ASCII letters, numbers and underscores. Enter the name alone. The adapter reads its value from the process environment. Changing the endpoint or adapter clears the discovery reference. To save a reference for tasks, register the discovered model or rebind the selected agent. The saved profile contains the variable name and requires the value again on later launches.
 
 In PowerShell 7.2 or later, launch the app from the same shell where you read the token.

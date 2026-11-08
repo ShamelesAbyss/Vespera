@@ -159,6 +159,7 @@ pub(super) fn desktop(title: &str, clear: Color, layer: Layer) -> App {
         .insert_resource(ClearColor(clear))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
+                close_when_requested: layer != Layer::Home,
                 primary_window: Some(Window {
                     title: title.into(),
                     resolution: (1200, 800).into(),
