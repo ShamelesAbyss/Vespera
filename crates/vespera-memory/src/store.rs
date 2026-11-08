@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
-use vespera_core::{AgentId, MemoryId, MemoryRecord, Permission};
+use vespera_core::{AgentId, EventEnvelope, EventKind, MemoryId, MemoryRecord, Permission};
 
 pub struct MemoryStore {
     connection: Mutex<Connection>,
@@ -122,6 +122,17 @@ impl MemoryStore {
         record: MemoryRecord,
         origin: MemoryOrigin,
     ) -> Result<StoredMemory, StorageError> {
+        self.insert_observed(actor, record, origin)
+            .map(|(record, _)| record)
+    }
+
+    /// Return the audit envelope committed with a new memory record.
+    pub fn insert_observed(
+        &self,
+        actor: AgentId,
+        record: MemoryRecord,
+        origin: MemoryOrigin,
+    ) -> Result<(StoredMemory, EventEnvelope), StorageError> {
         self.validate_record(actor, &record)?;
         if origin == MemoryOrigin::Derived {
             return Err(StorageError::Invalid("derived_requires_sources"));
@@ -140,6 +151,18 @@ impl MemoryStore {
         sources: &[MemoryId],
         method: &str,
     ) -> Result<StoredMemory, StorageError> {
+        self.consolidate_observed(actor, summary, sources, method)
+            .map(|(record, _)| record)
+    }
+
+    /// Return the audit envelope committed with the derived record and its source links.
+    pub fn consolidate_observed(
+        &self,
+        actor: AgentId,
+        summary: MemoryRecord,
+        sources: &[MemoryId],
+        method: &str,
+    ) -> Result<(StoredMemory, EventEnvelope), StorageError> {
         self.validate_record(actor, &summary)?;
         self.authorize(actor, summary.agent_id, Permission::MemoryRead)?;
         if sources.is_empty()
@@ -159,7 +182,7 @@ impl MemoryStore {
         origin: MemoryOrigin,
         method: Option<&str>,
         sources: &[MemoryId],
-    ) -> Result<StoredMemory, StorageError> {
+    ) -> Result<(StoredMemory, EventEnvelope), StorageError> {
         let mut connection = self.connection();
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -229,18 +252,29 @@ impl MemoryStore {
             )
             .map_err(db)?;
         }
-        tx.commit().map_err(db)?;
-        Ok(StoredMemory {
-            record,
-            sequence: unsigned(owner_sequence)?,
-            origin,
-            derivation_method: method.map(str::to_owned),
-            source_memories: {
-                let mut ids = sources.to_vec();
-                ids.sort();
-                ids
+        let event = crate::audit::append(
+            &tx,
+            EventKind::AgentMemoryUpdated {
+                agent_id: record.agent_id,
+                memory_id: record.id,
+                layer: record.layer,
             },
-        })
+        )?;
+        tx.commit().map_err(db)?;
+        Ok((
+            StoredMemory {
+                record,
+                sequence: unsigned(owner_sequence)?,
+                origin,
+                derivation_method: method.map(str::to_owned),
+                source_memories: {
+                    let mut ids = sources.to_vec();
+                    ids.sort();
+                    ids
+                },
+            },
+            event,
+        ))
     }
     pub fn get(
         &self,
@@ -366,6 +400,16 @@ impl MemoryStore {
     /// Explicit deletion requires both read and write. Referenced originals are protected.
     /// FTS removal and authoritative deletion commit or roll back together.
     pub fn delete(&self, actor: AgentId, owner: AgentId, id: MemoryId) -> Result<(), StorageError> {
+        self.delete_observed(actor, owner, id).map(|_| ())
+    }
+
+    /// Return a committed deletion event when a record actually existed.
+    pub fn delete_observed(
+        &self,
+        actor: AgentId,
+        owner: AgentId,
+        id: MemoryId,
+    ) -> Result<Option<EventEnvelope>, StorageError> {
         self.authorize(actor, owner, Permission::MemoryWrite)?;
         self.authorize(actor, owner, Permission::MemoryRead)?;
         if self.read_only {
@@ -385,7 +429,7 @@ impl MemoryStore {
             )
             .optional()
             .map_err(db)?;
-        if let Some((sequence, content)) = raw {
+        let event = if let Some((sequence, content)) = raw {
             let referenced: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM memory_sources WHERE source_id=?1)",
@@ -406,8 +450,18 @@ impl MemoryStore {
                 params![id.to_string(), owner.to_string()],
             )
             .map_err(db)?;
-        }
-        tx.commit().map_err(db)
+            Some(crate::audit::append(
+                &tx,
+                EventKind::AgentMemoryDeleted {
+                    agent_id: owner,
+                    memory_id: id,
+                },
+            )?)
+        } else {
+            None
+        };
+        tx.commit().map_err(db)?;
+        Ok(event)
     }
     fn materialize(
         &self,

@@ -40,6 +40,16 @@ enum EventCommand {
         #[arg(long)]
         revision: u64,
     },
+    /// Publish a bounded page of retained memory mutation events.
+    RecoverMemory {
+        #[arg(long)]
+        database: PathBuf,
+        /// Source cursor returned by a previous recovery.
+        #[arg(long)]
+        after: Option<vespera_memory::MemoryAuditCursor>,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=256))]
+        limit: u32,
+    },
     /// Read events after a cursor and print one JSON page.
     Replay {
         /// Cursor in journal-UUID:sequence form. Omit for the oldest retained event.
@@ -83,6 +93,25 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
             )?;
             let cursor = Journal::open_writer(&args.journal)?.append(&event)?;
             Ok(serde_json::json!({"cursor": cursor, "event_id": event.event_id}))
+        }
+        EventCommand::RecoverMemory {
+            database,
+            after,
+            limit,
+        } => {
+            let page = vespera_memory::read_memory_audit(&database, after, limit)?;
+            let cursor = if page.events.is_empty() {
+                None
+            } else {
+                Some(Journal::open_writer(&args.journal)?.append_batch(&page.events)?)
+            };
+            Ok(serde_json::json!({
+                "journal_cursor": cursor,
+                "next_source_cursor": page.next_cursor.map(|cursor| cursor.to_string()),
+                "discarded_through": page.discarded_through,
+                "has_more": page.has_more,
+                "submitted_events": page.events.len(),
+            }))
         }
         EventCommand::Replay { after, limit } => {
             let page = Journal::open_reader(&args.journal)?.replay(after, limit)?;

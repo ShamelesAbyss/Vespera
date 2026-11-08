@@ -358,6 +358,8 @@ enum AppError {
     MemoryInput(&'static str),
     #[error("memory operation worker did not complete")]
     MemoryWorker,
+    #[error("memory mutation committed but event publication failed: {0}")]
+    MemoryEventPublication(vespera_events::JournalError),
     #[error("memory record is absent from the authorized namespace")]
     MemoryNotFound,
     #[error("could not read bounded UTF-8 workflow file")]

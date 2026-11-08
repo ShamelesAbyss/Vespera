@@ -23,7 +23,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
-| `events` | Initialize, replay or follow a local journal and recover agent or world events | None. Local SQLite access. |
+| `events` | Initialize, replay or follow a local journal and recover agent, world or memory events | None. Local SQLite access. |
 
 Every command supports `--help`. The root supports `--version`. Provider,
 inventory and inference commands use `--config <PATH>` (default
@@ -316,6 +316,11 @@ Use the same owner UUID and private task database used for execution. The
 memory database must already exist. Use `memory get --id $memoryId` to verify
 the record after a conflict or interrupted command. Reusing the memory UUID
 leaves the prior record intact.
+
+Place `--event-journal <PATH>` before `add`, `remember-task`,
+`consolidate` or `delete` to publish the committed mutation to an existing
+local journal. A journal failure leaves the mutation committed and returns
+nonzero. See [memory event recovery](#recover-memory-mutation-events).
 
 | `list` / `search` filter | Bound/default |
 | --- | --- |
@@ -683,3 +688,25 @@ The envelope includes a stable simulation UUID, the logical tick and the
 commit timestamp. Recovery keeps the original event UUID. If the journal
 already retains the event, the command returns its existing cursor. Older
 world revisions written before event storage was added have no envelope.
+
+### Recover memory mutation events
+
+```powershell
+$journal = 'data/events.sqlite3'
+$page = .\target\release\vespera.exe events --journal $journal recover-memory --database data/vespera.sqlite3 --limit 100 | ConvertFrom-Json
+.\target\release\vespera.exe events --journal $journal recover-memory --database data/vespera.sqlite3 --after $page.next_source_cursor --limit 100
+```
+
+The first command starts with the oldest retained mutation. When
+`next_source_cursor` is present, save it after successful publication and
+pass it as `--after` to continue. Each call reads at most 256 events and
+reports `has_more` and `discarded_through`. A stale source cursor fails
+explicitly. A retry reuses event identities while the destination journal
+retains them. Choose a page size within the destination journal's retention.
+Journal ordering follows publication order. Recovery can add older
+occurrence timestamps after newer ones.
+
+This is a trusted filesystem operation across all namespaces. Envelopes
+carry agent and memory UUIDs, and record writes also carry the memory layer.
+They omit memory text, lineage and provider data. A deletion uses event schema
+version 5. Use a version 5 reader for journals containing these events.

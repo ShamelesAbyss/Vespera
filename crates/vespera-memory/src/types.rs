@@ -37,6 +37,14 @@ pub enum StorageError {
     SnapshotInvalid,
     #[error("memory copy could not be staged or published on this filesystem")]
     SnapshotIo,
+    #[error("memory audit cursor belongs to another database")]
+    AuditForeignCursor,
+    #[error("memory audit cursor is ahead of the database")]
+    AuditFutureCursor,
+    #[error(
+        "memory audit cursor expired after events were discarded through sequence {discarded_through}"
+    )]
+    AuditExpired { discarded_through: i64 },
     #[error("memory database operation failed; raw SQL and private values suppressed")]
     Database,
 }

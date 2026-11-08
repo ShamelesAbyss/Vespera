@@ -79,6 +79,19 @@ publication. A snapshot contains all memory namespaces but covers only this
 database, so preserve the separate task ledger when keeping source results.
 See [CLI examples](CLI.md#memory-backup-and-restore).
 
+## Mutation audit
+
+Inserts, consolidation and actual deletes commit a metadata-only event in the
+same transaction as the record, index and source links. The memory database
+keeps the latest 4,096 events across namespaces. A deletion keeps its audit
+metadata within this retention window. A no-op delete emits no event.
+Existing records remain readable and are not backfilled into the audit.
+
+A restore preserves the recorded event UUIDs and assigns a new audit cursor
+scope. Use [event recovery](CLI.md#recover-memory-mutation-events) to republish
+events after a journal outage. A backup file retains the original source scope
+and should serve as the input to restore.
+
 ## Verification
 
 ```powershell

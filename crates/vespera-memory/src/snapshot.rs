@@ -17,6 +17,15 @@ const SIDECARS: [&str; 3] = ["-journal", "-wal", "-shm"];
 /// includes every agent namespace and is for trusted operators with direct
 /// filesystem access. Application-level namespace grants do not apply.
 pub fn copy_memory_database(source: &Path, destination: &Path) -> Result<(), StorageError> {
+    copy(source, destination, false)
+}
+
+/// Restore a snapshot to a new path with independent audit cursor scope.
+pub fn restore_memory_database(source: &Path, destination: &Path) -> Result<(), StorageError> {
+    copy(source, destination, true)
+}
+
+fn copy(source: &Path, destination: &Path, restore: bool) -> Result<(), StorageError> {
     let source = std::path::absolute(source).map_err(|_| StorageError::Invalid("source"))?;
     let destination =
         std::path::absolute(destination).map_err(|_| StorageError::Invalid("destination"))?;
@@ -49,7 +58,7 @@ pub fn copy_memory_database(source: &Path, destination: &Path) -> Result<(), Sto
     input.execute("VACUUM INTO ?1", [path]).map_err(db)?;
     drop(input);
 
-    verify(&copy)?;
+    verify(&copy, restore)?;
     OpenOptions::new()
         .write(true)
         .open(&copy)
@@ -82,7 +91,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn verify(path: &Path) -> Result<(), StorageError> {
+fn verify(path: &Path, restore: bool) -> Result<(), StorageError> {
     let mut connection = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -128,7 +137,11 @@ fn verify(path: &Path) -> Result<(), StorageError> {
             [],
         )
         .map_err(|_| StorageError::SnapshotInvalid)?;
-    check.rollback().map_err(db)
+    check.rollback().map_err(db)?;
+    if restore {
+        crate::audit::renew_source(&connection)?;
+    }
+    Ok(())
 }
 
 struct StagingDirectory(PathBuf);

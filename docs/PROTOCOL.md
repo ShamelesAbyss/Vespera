@@ -118,6 +118,10 @@ A database write failure returns `503 storage_unavailable` and disables further 
 
 The CLI also supports a separate SQLite outcome journal with bounded replay and local streaming. Live workflow journals use event schema version 4 for `workflow_attempt_accepted` and `workflow_attempt_finished`. They carry task and agent IDs, root correlation and up to fifteen dependency references. The terminal attempt event carries a local terminal task state. Use a version 4 reader for journals containing these records. [Local journal CLI](CLI.md#local-task-outcome-journal)
 
+Local memory journals use version 5 for `agent_memory_deleted`, which
+contains only the owner and memory UUIDs. Memory insertion and consolidation
+use the existing `agent_memory_updated` envelope. [Memory recovery CLI](CLI.md#recover-memory-mutation-events)
+
 ## Rust SDK
 
 Use `vespera-sdk` as a Cargo path dependency from a checkout. It depends on shared domain types, independent of the broker and CLI crates. Run its async methods on a Tokio runtime with I/O and timers enabled. Construct either client with a numeric loopback `SocketAddr` and `SigningKey::from_hex`, or use `OperatorClient::new_tls(address, key, roots_pem)` or `WorkerClient::new_tls(address, worker_id, key, roots_pem)` for TLS. Worker clients take an approved `AgentId`.

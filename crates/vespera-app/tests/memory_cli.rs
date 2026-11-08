@@ -134,10 +134,139 @@ fn memory_admin_copies_and_restores_a_snapshot_without_replacing_files() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!admin(&restore_args).status.success());
+    let original_audit = vespera_memory::read_memory_audit(&fixture.database, None, 8).unwrap();
+    let restored_audit = vespera_memory::read_memory_audit(&restored, None, 8).unwrap();
+    assert_eq!(original_audit.events, restored_audit.events);
+    assert!(matches!(
+        vespera_memory::read_memory_audit(&restored, original_audit.next_cursor, 8),
+        Err(vespera_memory::StorageError::AuditForeignCursor)
+    ));
     fixture.database = restored;
     assert_eq!(
         fixture.ok(AGENT, &["get", "--id", ID])["record"]["record"]["content"],
         "retained backup observation"
+    );
+}
+
+#[test]
+fn memory_mutation_audit_recovers_journal_failure_and_rolls_back_with_memory() {
+    use vespera_core::EventKind;
+    use vespera_events::Journal;
+
+    let fixture = Fixture::new("\"memory_read\",\"memory_write\"");
+    fixture.ok(AGENT, &["init"]);
+    let path = fixture.dir.join("events.sqlite3");
+    let journal = path.to_str().unwrap();
+    drop(Journal::initialize(&path, 8).unwrap());
+    let failure = rusqlite::Connection::open(&path).unwrap();
+    failure
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_event BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let content = fixture.input("private.txt", b"private memory fixture");
+    let insert = |id| {
+        fixture.run(
+            AGENT,
+            &[
+                "--event-journal",
+                journal,
+                "add",
+                "--content-file",
+                content.to_str().unwrap(),
+                "--id",
+                id,
+            ],
+        )
+    };
+    let failed = insert(ID);
+    assert!(!failed.status.success());
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["record"]["record"]["id"], ID);
+    assert!(report["event_publication"]["error"].is_string());
+    failure
+        .execute_batch("DROP TRIGGER reject_fixture_event")
+        .unwrap();
+    let audit_failure = rusqlite::Connection::open(&fixture.database).unwrap();
+    audit_failure
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_memory_audit BEFORE INSERT ON memory_audit
+         BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END;",
+        )
+        .unwrap();
+    let other_id = MemoryId::new().to_string();
+    assert!(!insert(&other_id).status.success());
+    assert!(
+        !fixture
+            .run(AGENT, &["get", "--id", &other_id])
+            .status
+            .success()
+    );
+    audit_failure
+        .execute_batch("DROP TRIGGER reject_fixture_memory_audit")
+        .unwrap();
+
+    let recover = |after: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vespera"));
+        command
+            .args([
+                "events",
+                "--journal",
+                journal,
+                "recover-memory",
+                "--database",
+            ])
+            .arg(&fixture.database)
+            .args(["--limit", "1"]);
+        if let Some(cursor) = after {
+            command.args(["--after", cursor]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let first = recover(None);
+    assert_eq!(first["submitted_events"], 1);
+    assert_eq!(first, recover(None));
+    assert!(
+        fixture
+            .run(AGENT, &["--event-journal", journal, "delete", "--id", ID])
+            .status
+            .success()
+    );
+    assert!(
+        fixture
+            .run(AGENT, &["--event-journal", journal, "delete", "--id", ID])
+            .status
+            .success()
+    );
+    let second = recover(first["next_source_cursor"].as_str());
+    assert_eq!(second["submitted_events"], 1);
+    assert_eq!(
+        recover(second["next_source_cursor"].as_str())["submitted_events"],
+        0
+    );
+    let entries = Journal::open_reader(&path)
+        .unwrap()
+        .replay(None, 8)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 2);
+    assert!(
+        matches!(entries[0].event.kind, EventKind::AgentMemoryUpdated { memory_id, .. } if memory_id.to_string() == ID)
+    );
+    assert!(
+        matches!(entries[1].event.kind, EventKind::AgentMemoryDeleted { memory_id, .. } if memory_id.to_string() == ID)
+    );
+    assert!(
+        !serde_json::to_string(&entries)
+            .unwrap()
+            .contains("private memory fixture")
     );
 }
 

@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use vespera_app::memory::{authorize_remembered_task, configured_authorizer};
 use vespera_core::{AgentId, MemoryId, MemoryLayer, MemoryRecord, Permission, TaskId};
+use vespera_events::{Journal, JournalError};
 use vespera_memory::{MemoryOrigin, MemoryQuery, MemoryStore, StorageLimits};
 
 #[derive(Debug, Args)]
@@ -21,6 +22,9 @@ pub(crate) struct MemoryArgs {
     /// Configured owner/actor UUID; grants are checked before file/database access.
     #[arg(long)]
     agent: AgentId,
+    /// Publish an add, remember-task, consolidate or delete event to an existing journal.
+    #[arg(long)]
+    event_journal: Option<PathBuf>,
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -46,12 +50,13 @@ pub(crate) enum MemoryAdminAction {
 }
 
 pub(crate) async fn run_admin(action: MemoryAdminAction) -> Result<(), AppError> {
-    let (operation, source, destination) = match action {
-        MemoryAdminAction::Backup { database, output } => ("backup", database, output),
-        MemoryAdminAction::Restore { backup, database } => ("restore", backup, database),
-    };
-    tokio::task::spawn_blocking(move || {
-        vespera_memory::copy_memory_database(&source, &destination)
+    let operation = tokio::task::spawn_blocking(move || match action {
+        MemoryAdminAction::Backup { database, output } => {
+            vespera_memory::copy_memory_database(&database, &output).map(|()| "backup")
+        }
+        MemoryAdminAction::Restore { backup, database } => {
+            vespera_memory::restore_memory_database(&backup, &database).map(|()| "restore")
+        }
     })
     .await
     .map_err(|_| AppError::MemoryWorker)??;
@@ -190,6 +195,7 @@ struct Output {
     value: Value,
     text: String,
     missing: bool,
+    publication_error: Option<JournalError>,
 }
 pub(crate) async fn run(args: MemoryArgs) -> Result<(), AppError> {
     let json = args.json;
@@ -203,6 +209,9 @@ pub(crate) async fn run(args: MemoryArgs) -> Result<(), AppError> {
     }
     if output.missing {
         return Err(AppError::MemoryNotFound);
+    }
+    if let Some(error) = output.publication_error {
+        return Err(AppError::MemoryEventPublication(error));
     }
     Ok(())
 }
@@ -269,7 +278,24 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
     };
     let authorizer = configured_authorizer(&config, args.agent, &required)?;
     let actor = args.agent;
-    let value = match args.action {
+    let mut journal = if let Some(path) = &args.event_journal {
+        if !matches!(
+            &args.action,
+            MemoryCommand::Add { .. }
+                | MemoryCommand::RememberTask { .. }
+                | MemoryCommand::Consolidate { .. }
+                | MemoryCommand::Delete { .. }
+        ) {
+            return Err(
+                JournalError::Invalid("memory event journal requires a record mutation").into(),
+            );
+        }
+        Some(Journal::open_writer(path)?)
+    } else {
+        None
+    };
+    let mut event = None;
+    let mut value = match args.action {
         MemoryCommand::Init => {
             if let Some(parent) = args.database.parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent)
@@ -288,7 +314,9 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
             let record = record(actor, id, layer, &content_file, created_at_unix_ms)?;
             let store =
                 MemoryStore::open_existing(&args.database, StorageLimits::default(), authorizer)?;
-            json!({"agent_id":actor,"record":store.insert(actor,record,origin.into())?})
+            let (record, committed) = store.insert_observed(actor, record, origin.into())?;
+            event = Some(committed);
+            json!({"agent_id":actor,"record":record})
         }
         MemoryCommand::RememberTask {
             task_store,
@@ -306,7 +334,10 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
                 created_at_unix_ms: current_timestamp()?,
                 source_task_id: Some(task),
             };
-            json!({"agent_id":actor,"record":store.insert(actor,record,MemoryOrigin::Generated)?})
+            let (record, committed) =
+                store.insert_observed(actor, record, MemoryOrigin::Generated)?;
+            event = Some(committed);
+            json!({"agent_id":actor,"record":record})
         }
         MemoryCommand::Consolidate {
             content_file,
@@ -319,12 +350,15 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
             let record = record(actor, id, layer, &content_file, created_at_unix_ms)?;
             let store =
                 MemoryStore::open_existing(&args.database, StorageLimits::default(), authorizer)?;
-            json!({"agent_id":actor,"record":store.consolidate(actor,record,&sources,&method)?})
+            let (record, committed) =
+                store.consolidate_observed(actor, record, &sources, &method)?;
+            event = Some(committed);
+            json!({"agent_id":actor,"record":record})
         }
         MemoryCommand::Delete { id } => {
             let store =
                 MemoryStore::open_existing(&args.database, StorageLimits::default(), authorizer)?;
-            store.delete(actor, actor, id)?;
+            event = store.delete_observed(actor, actor, id)?;
             json!({"agent_id":actor,"memory_absent":id})
         }
         action => {
@@ -353,6 +387,16 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
             }
         }
     };
+    let mut publication_error = None;
+    if let (Some(journal), Some(event)) = (&mut journal, event) {
+        match journal.append(&event) {
+            Ok(cursor) => value["event_publication"] = json!({"cursor":cursor}),
+            Err(error) => {
+                value["event_publication"] = json!({"error":error.to_string()});
+                publication_error = Some(error);
+            }
+        }
+    }
     let missing = value.get("record").is_some_and(Value::is_null);
     let text = if let Some(record) = value.get("record").filter(|v| !v.is_null()) {
         format!(
@@ -370,5 +414,6 @@ fn execute(args: MemoryArgs) -> Result<Output, AppError> {
         value,
         text,
         missing,
+        publication_error,
     })
 }

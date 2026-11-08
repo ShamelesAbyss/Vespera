@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Latest supported event wire schema. Each kind emits its earliest compatible version.
-pub const EVENT_SCHEMA_VERSION: u32 = 4;
+pub const EVENT_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +120,10 @@ pub enum EventKind {
         memory_id: MemoryId,
         layer: MemoryLayer,
     },
+    AgentMemoryDeleted {
+        agent_id: AgentId,
+        memory_id: MemoryId,
+    },
     TaskDelegated {
         task_id: TaskId,
         from_agent_id: AgentId,
@@ -176,6 +180,7 @@ pub struct WorkflowDependency {
 impl EventKind {
     fn minimum_schema_version(&self) -> u32 {
         match self {
+            Self::AgentMemoryDeleted { .. } => 5,
             Self::WorkflowAttemptAccepted { .. } | Self::WorkflowAttemptFinished { .. } => 4,
             Self::ExternalTaskChanged { .. } => 3,
             Self::TaskFailed { .. } | Self::TaskCancelled { .. } => 2,

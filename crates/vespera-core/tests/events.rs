@@ -86,6 +86,27 @@ fn every_event_payload_has_typed_round_trip() {
 }
 
 #[test]
+fn memory_deletions_require_schema_five() {
+    let mut envelope = EventEnvelope::new(
+        "memory-store",
+        0,
+        EventKind::AgentMemoryDeleted {
+            agent_id: ID.parse().unwrap(),
+            memory_id: ID.parse().unwrap(),
+        },
+    )
+    .unwrap();
+    assert_eq!(envelope.schema_version, 5);
+    let encoded = serde_json::to_string(&envelope).unwrap();
+    assert_eq!(
+        serde_json::from_str::<EventEnvelope>(&encoded).unwrap(),
+        envelope
+    );
+    envelope.schema_version = 4;
+    assert!(envelope.validate().is_err());
+}
+
+#[test]
 fn simulation_ticks_are_not_wall_clock_timestamps() {
     let envelope: EventEnvelope = serde_json::from_value(event_json()).unwrap();
     assert_eq!(envelope.occurred_at_unix_ms, 1700000000000);
