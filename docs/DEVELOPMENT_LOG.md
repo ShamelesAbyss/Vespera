@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Desktop agent roster and task history
+
+Verified implementation checkpoint `7bb2ae720b74b4b5c13085c1c93b21c4262ad17b`, pushed to `main`. The desktop supports up to 16 persistent agents with separate identities and roles. It reuses provider and model registrations across agents, keeps task limits scoped to the selected model, and preserves the selected agent's identity when rebinding. The history browser queries the existing durable store by owner and pages newest accepted tasks first. Selecting a task reads its retained prompt and outcome.
+
+The Windows walkthrough opened the previous single-agent profile and displayed its retained completed and cancelled tasks. A second agent with a distinct role completed a live task via Ollama 0.40.13's OpenAI-compatible API and reported two completion tokens. Each agent's GUI history showed only its own checkpoints, and the CLI confirmed the second task's durable ownership. The compatible server retained the model after the task, consistent with the adapter's lack of explicit unload. This verified the compatible desktop task path against Ollama. The earlier Bionic evidence covers its adapter and CLI paths.
+
+Locked offline workspace and graphics tests, formatting, strict Clippy and the Windows build passed. Tests cover scoped history pagination, stable identity on rebinding, shared model registration, and stale write rejection. Graphical workflow execution, permissions, durable operator holds, and authenticated provider setup remain open.
+
 ## 2026-11-07 — Desktop model binding and bounded agent tasks
 
 Verified implementation checkpoint `6a022d19e21129159f769204525f53e688a378b7`, pushed to `main`. The provider screen now registers a discovered text model and saves a desktop agent binding using the existing configuration and registry types. The revisioned profile rejects stale writes, preserves the agent ID across model changes and grants no optional permissions. The execution path uses the existing agent runtime, scheduler and durable task store. Operator RAM and VRAM estimates are explicit, with available host RAM tightening the scheduler's RAM ceiling.
