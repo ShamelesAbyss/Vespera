@@ -361,6 +361,12 @@ fn print_local_host_limits(report: Option<LocalHostLimits>) {
             "Host-constrained admission budget: {} RAM bytes, {} concurrent inferences",
             report.effective_budget.ram_bytes, report.effective_budget.max_concurrent_inferences,
         );
+        if let Some(gpu) = report.nvidia_gpu {
+            println!(
+                "NVIDIA VRAM ceiling: {} bytes from {} free bytes at startup",
+                report.effective_budget.vram_bytes, gpu.free_vram_bytes,
+            );
+        }
     }
 }
 

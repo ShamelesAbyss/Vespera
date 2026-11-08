@@ -1,5 +1,5 @@
 //! Compose validated configuration into real providers, registry, scheduling and agents.
-pub use crate::host_limits::LocalHostLimits;
+pub use crate::host_limits::{LocalHostLimits, NvidiaGpuMemory};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -36,6 +36,12 @@ pub enum RuntimeError {
     /// Opt-in host limits require positive observed RAM and CPU capacity.
     #[error("local host limits could not establish positive RAM and CPU capacity")]
     LocalHostLimitsUnavailable,
+    /// The GPU declaration applies only to a single native loopback Ollama provider.
+    #[error("Ollama GPU limits require a single native Ollama provider in the runtime scope")]
+    OllamaGpuScopeRequired,
+    /// The declared device could not provide valid NVML evidence.
+    #[error("could not observe VRAM for the configured Ollama GPU")]
+    OllamaGpuLimitsUnavailable,
     /// The optional startup residency guard could not establish safe accounting.
     #[error("startup residency reconciliation failed: {0}")]
     StartupResidency(SchedulerError),
@@ -381,10 +387,20 @@ impl VesperaRuntime {
                     return Err(RuntimeError::LocalHostLimitsRequireLoopback);
                 }
             }
-            Some(
-                LocalHostLimits::collect(config.resources)
-                    .ok_or(RuntimeError::LocalHostLimitsUnavailable)?,
-            )
+            if settings.ollama_gpu_uuid.is_some()
+                && !matches!(config.providers.as_slice(), [provider] if provider.kind == ProviderKind::Ollama)
+            {
+                return Err(RuntimeError::OllamaGpuScopeRequired);
+            }
+            let limits = LocalHostLimits::collect(config.resources)
+                .ok_or(RuntimeError::LocalHostLimitsUnavailable)?;
+            Some(if let Some(uuid) = &settings.ollama_gpu_uuid {
+                NvidiaGpuMemory::collect(uuid)
+                    .and_then(|memory| limits.with_nvidia_gpu(memory))
+                    .ok_or(RuntimeError::OllamaGpuLimitsUnavailable)?
+            } else {
+                limits
+            })
         } else {
             None
         };

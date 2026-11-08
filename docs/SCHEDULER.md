@@ -183,9 +183,26 @@ effective budget. These are startup observations and can change while the
 runtime is active. A loopback proxy or a provider running in a different
 cgroup may have different limits. External provider reservations are still
 charged by residency reconciliation, which can conservatively reduce
-headroom already reflected in the host sample. The VRAM budget remains the
-operator declaration because the runtime cannot identify the provider's
-actual GPU capacity from the host sample.
+headroom already reflected in the host sample. VRAM uses the declared
+ceiling unless an Ollama GPU UUID is configured.
+
+### NVIDIA VRAM limit for local Ollama
+
+On Windows and Linux with an NVIDIA driver, set `ollama_gpu_uuid` under
+`[scheduling]` alongside `local_host_limits = true`. Use the full
+`GPU-…` identifier shown by `nvidia-smi -L`. The runtime scope must contain
+one native loopback Ollama provider. The declaration identifies the device
+that the operator assigned to Ollama. If several GPUs are present, configure
+the Ollama server's `CUDA_VISIBLE_DEVICES` with that same UUID before starting
+the server. [Ollama GPU selection](https://docs.ollama.com/gpu#gpu-selection)
+
+At startup Vespera reads NVML's total and free VRAM for that UUID. Admission
+uses the smaller of free VRAM and the declared VRAM budget. Zero free
+VRAM permits CPU-only work. Missing or invalid driver evidence fails startup.
+The CLI's `local_host_limits.nvidia_gpu` contains the byte counts. The
+mapping is operator-supplied because the Ollama residency response does
+not identify the physical device. The measurement can change after startup.
+[NVIDIA NVML device queries](https://docs.nvidia.com/deploy/nvml-api/latest/api/group__nvmlDeviceQueries.html)
 
 ### Observed latency preference
 

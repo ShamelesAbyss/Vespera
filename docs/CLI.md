@@ -75,6 +75,9 @@ A separate [`[scheduling]` table](SCHEDULER.md#bounded-queue-and-shutdown)
 controls admission queue bounds, model priorities, native keep-alive and
 pressure eviction. It can also opt into [host-constrained limits for loopback
 providers](SCHEDULER.md#local-host-limits).
+For a single native loopback Ollama provider, the
+[`ollama_gpu_uuid` setting](SCHEDULER.md#nvidia-vram-limit-for-local-ollama)
+can constrain VRAM to the observed free memory of an assigned NVIDIA device.
 Set `prefer_observed_latency = true` in the same table to use
 [recent provider call timings](SCHEDULER.md#observed-latency-preference)
 when a managed request can compare all eligible models.

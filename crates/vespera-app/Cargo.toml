@@ -30,6 +30,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+nvml-wrapper = { version = "=0.13.0", default-features = false }
+
 [dev-dependencies]
 vespera-sdk = { path = "../vespera-sdk" }
 reqwest.workspace = true

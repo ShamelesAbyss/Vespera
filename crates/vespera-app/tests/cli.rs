@@ -956,6 +956,36 @@ fn host_limits_tighten_local_admission_and_reject_remote_scope() {
 }
 
 #[test]
+fn gpu_limits_reject_unverified_device_and_unsupported_provider_before_io() {
+    let fixture = HttpFixture::new(false);
+    let scratch = ScratchDirectory::new();
+    let gpu_settings = r#"
+[scheduling]
+local_host_limits = true
+ollama_gpu_uuid = "GPU-00000000-0000-0000-0000-000000000001"
+"#;
+    for (compatible, error) in [
+        (
+            false,
+            "could not observe VRAM for the configured Ollama GPU",
+        ),
+        (
+            true,
+            "Ollama GPU limits require a single native Ollama provider",
+        ),
+    ] {
+        let config = format!(
+            "{}{gpu_settings}",
+            runtime_config(&fixture, compatible, true)
+        );
+        let result = run_fixture_agent(&scratch, &config, &["--resume"]);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains(error));
+    }
+    assert!(fixture.captured().is_empty());
+}
+
+#[test]
 fn startup_residency_fences_external_models_and_charges_memory() {
     let fixture = HttpFixture::new(false);
     let scratch = ScratchDirectory::new();

@@ -61,6 +61,7 @@ pub struct SchedulingConfig {
     pub evict_idle_on_pressure: bool,
     pub model_priorities: BTreeMap<ModelId, u8>,
     pub local_host_limits: bool,
+    pub ollama_gpu_uuid: Option<String>,
     pub prefer_observed_latency: bool,
 }
 
@@ -73,6 +74,7 @@ impl Default for SchedulingConfig {
             evict_idle_on_pressure: true,
             model_priorities: BTreeMap::new(),
             local_host_limits: false,
+            ollama_gpu_uuid: None,
             prefer_observed_latency: false,
         }
     }
@@ -189,6 +191,19 @@ impl AppConfig {
         self.resources
             .validate()
             .map_err(|_| ConfigError::InvalidField("resources"))?;
+        if let Some(gpu) = &self.scheduling.ollama_gpu_uuid {
+            if !self.scheduling.local_host_limits {
+                return Err(ConfigError::InvalidField(
+                    "scheduling.ollama_gpu_uuid requires local_host_limits",
+                ));
+            }
+            let valid_uuid = gpu.strip_prefix("GPU-").is_some_and(|id| {
+                id.len() == 36 && uuid::Uuid::try_parse(id).is_ok_and(|uuid| !uuid.is_nil())
+            });
+            if !valid_uuid {
+                return Err(ConfigError::InvalidField("scheduling.ollama_gpu_uuid"));
+            }
+        }
         if self.scheduling.queue_capacity > 4096 {
             return Err(ConfigError::InvalidField("scheduling.queue_capacity"));
         }

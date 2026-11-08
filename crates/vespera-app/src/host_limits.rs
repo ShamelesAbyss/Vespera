@@ -8,7 +8,16 @@ pub struct LocalHostLimits {
     pub available_ram_bytes: u64,
     pub process_cgroup_ram_headroom_bytes: Option<u64>,
     pub available_parallelism: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nvidia_gpu: Option<NvidiaGpuMemory>,
     pub effective_budget: ResourceBudget,
+}
+
+/// Observed memory on the NVIDIA device selected by the operator.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct NvidiaGpuMemory {
+    pub total_vram_bytes: u64,
+    pub free_vram_bytes: u64,
 }
 
 impl LocalHostLimits {
@@ -51,11 +60,52 @@ impl LocalHostLimits {
             available_ram_bytes,
             process_cgroup_ram_headroom_bytes,
             available_parallelism,
+            nvidia_gpu: None,
             effective_budget,
         })
     }
+
+    pub(crate) fn with_nvidia_gpu(mut self, memory: NvidiaGpuMemory) -> Option<Self> {
+        if memory.total_vram_bytes == 0 || memory.free_vram_bytes > memory.total_vram_bytes {
+            return None;
+        }
+        self.effective_budget.vram_bytes =
+            self.effective_budget.vram_bytes.min(memory.free_vram_bytes);
+        self.nvidia_gpu = Some(memory);
+        Some(self)
+    }
 }
 
+impl NvidiaGpuMemory {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub(crate) fn collect(uuid: &str) -> Option<Self> {
+        #[cfg(target_os = "windows")]
+        let library = {
+            let root = std::path::PathBuf::from(std::env::var_os("SystemRoot")?);
+            if !root.is_absolute() {
+                return None;
+            }
+            root.join("System32").join("nvml.dll")
+        };
+        #[cfg(target_os = "linux")]
+        let library = std::path::Path::new("libnvidia-ml.so.1");
+        let nvml = nvml_wrapper::Nvml::builder()
+            .lib_path(library.as_os_str())
+            .init()
+            .ok()?;
+        let device = nvml.device_by_uuid(uuid).ok()?;
+        let memory = device.memory_info().ok()?;
+        Some(Self {
+            total_vram_bytes: memory.total,
+            free_vram_bytes: memory.free,
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    pub(crate) fn collect(_uuid: &str) -> Option<Self> {
+        None
+    }
+}
 #[cfg(target_os = "linux")]
 fn process_cgroup_headroom(host: &mut System) -> Option<u64> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
@@ -99,5 +149,37 @@ mod tests {
         assert!(LocalHostLimits::from_observations(declared, 0, None, 4).is_none());
         assert!(LocalHostLimits::from_observations(declared, 2048, Some(0), 4).is_none());
         assert!(LocalHostLimits::from_observations(declared, 2048, None, 0).is_none());
+    }
+
+    #[test]
+    fn nvidia_memory_tightens_vram_and_preserves_cpu_only_admission() {
+        let declared = ResourceBudget {
+            vram_bytes: 8192,
+            ..ResourceBudget::default()
+        };
+        let host =
+            LocalHostLimits::from_observations(declared, declared.ram_bytes, None, 4).unwrap();
+        for (free, expected) in [(0, 0), (4096, 4096), (16384, 8192)] {
+            let constrained = host
+                .with_nvidia_gpu(NvidiaGpuMemory {
+                    total_vram_bytes: 16384,
+                    free_vram_bytes: free,
+                })
+                .unwrap();
+            assert_eq!(
+                constrained.effective_budget,
+                ResourceBudget {
+                    vram_bytes: expected,
+                    ..declared
+                }
+            );
+        }
+        assert!(
+            host.with_nvidia_gpu(NvidiaGpuMemory {
+                total_vram_bytes: 1024,
+                free_vram_bytes: 2048,
+            })
+            .is_none()
+        );
     }
 }
