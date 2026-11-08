@@ -76,6 +76,10 @@ enum Edit {
 }
 
 enum Work {
+    Discovery {
+        result: Mutex<Receiver<ProbeResult>>,
+        cancel: CancellationToken,
+    },
     SaveRoster(Mutex<Receiver<RegistrationResult>>, &'static str),
     Hold(
         Mutex<Receiver<Result<(), AgentTaskStoreError>>>,
@@ -107,7 +111,6 @@ struct Panel {
     endpoint: String,
     credential: Option<String>,
     draft: Option<Edit>,
-    pending: Option<Mutex<Receiver<ProbeResult>>>,
     outcome: Option<ProbeResult>,
     page: usize,
     dir: Option<PathBuf>,
@@ -144,7 +147,6 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         endpoint,
         credential,
         draft: None,
-        pending: None,
         outcome: None,
         page: 0,
         dir,
@@ -156,7 +158,7 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         history: None,
     })
     .add_systems(Startup, setup)
-    .add_systems(Update, (keyboard, receive, receive_work, readout).chain());
+    .add_systems(Update, (keyboard, receive_work, readout).chain());
 }
 
 fn setup(mut commands: Commands) {
@@ -188,7 +190,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  F5  Home"),
+                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  Esc  Cancel  |  F5  Home"),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -260,13 +262,18 @@ fn setup(mut commands: Commands) {
 
 fn apply(action: Action, panel: &mut Panel) {
     if matches!(action, Action::Cancel) {
-        if let Some(Work::Task { cancel, .. } | Work::Workflow { cancel, .. }) = &panel.work {
+        if let Some(
+            Work::Discovery { cancel, .. }
+            | Work::Task { cancel, .. }
+            | Work::Workflow { cancel, .. },
+        ) = &panel.work
+        {
             cancel.cancel();
             panel.feedback = "Cancellation requested. Waiting for local cleanup.".into();
         }
         return;
     }
-    if panel.pending.is_some() || panel.draft.is_some() || panel.work.is_some() {
+    if panel.draft.is_some() || panel.work.is_some() {
         return;
     }
     if panel.history.is_some()
@@ -395,29 +402,27 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Discover => {
-            let (sender, receiver) = mpsc::sync_channel(1);
             let declaration = panel_provider(panel);
-            std::thread::spawn(move || {
-                let outcome = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|_| "Could not start the provider request.")
-                    .and_then(|runtime| {
-                        runtime.block_on(discover(declaration)).map_err(|error| match error {
-                            RuntimeError::Config(_) => "Endpoint rejected. Enter a loopback HTTP or HTTPS URL.",
-                            RuntimeError::Provider(ProviderError::SecretResolutionFailed { .. }) =>
-                                "Credential reference unavailable. Check the variable in the launch environment.",
-                            RuntimeError::Provider(ProviderError::AuthenticationFailed { .. }) =>
-                                "Provider authentication failed. Check the configured credential reference.",
-                            _ => "Could not verify provider health. Check the endpoint and server.",
-                        })
-                    });
-                let _ = sender.send(outcome);
+            let cancel = CancellationToken::new();
+            let probe_cancel = cancel.clone();
+            let result = background(move |runtime| {
+                let discovery = runtime.block_on(discover(declaration, probe_cancel));
+                discovery.map_err(|error| match error {
+                    RuntimeError::Config(_) =>
+                        "Endpoint rejected. Enter a loopback HTTP or HTTPS URL.",
+                    RuntimeError::Cancelled | RuntimeError::Provider(ProviderError::Cancelled { .. }) =>
+                        "Provider discovery cancelled.",
+                    RuntimeError::Provider(ProviderError::SecretResolutionFailed { .. }) =>
+                        "Credential reference unavailable. Check the variable in the launch environment.",
+                    RuntimeError::Provider(ProviderError::AuthenticationFailed { .. }) =>
+                        "Provider authentication failed. Check the configured credential reference.",
+                    _ => "Could not verify provider health. Check the endpoint and server.",
+                })
             });
-            panel.pending = Some(Mutex::new(receiver));
+            panel.work = Some(Work::Discovery { result, cancel });
             panel.outcome = None;
             panel.page = 0;
-            panel.feedback.clear();
+            panel.feedback = "Checking health and discovering models...".into();
         }
         Action::Previous => {
             if let Some(history) = &panel.history {
@@ -449,16 +454,21 @@ fn panel_provider(panel: &Panel) -> ProviderConfig {
     provider
 }
 
-async fn discover(mut declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
+async fn discover(
+    mut declaration: ProviderConfig,
+    cancel: CancellationToken,
+) -> Result<Discovery, RuntimeError> {
     declaration.request_timeout_seconds = 5;
     let id = declaration.id;
     let config = desktop_agent::config(declaration);
     let registry = configured_registry(&config).await?;
     let provider = registry.get_provider(id).await?;
-    let cancel = CancellationToken::new();
     let health = provider.health_check(cancel.clone()).await?;
     let support = provider.lifecycle_support();
-    let models = provider.enumerate_models(cancel).await;
+    let models = provider.enumerate_models(cancel.clone()).await;
+    if cancel.is_cancelled() {
+        return Err(RuntimeError::Cancelled);
+    }
     Ok(Discovery {
         health,
         support,
@@ -484,7 +494,9 @@ fn keyboard(
     {
         if panel.draft.is_none() {
             if !event.repeat {
-                if event.key_code == KeyCode::Enter {
+                if event.key_code == KeyCode::Escape {
+                    apply(Action::Cancel, &mut panel);
+                } else if event.key_code == KeyCode::Enter {
                     apply(Action::Discover, &mut panel);
                 } else if event.key_code == KeyCode::KeyP {
                     apply(Action::Prompt, &mut panel);
@@ -579,7 +591,7 @@ fn inspect_history(panel: &mut Panel, index: usize) {
 }
 
 fn select_model(panel: &mut Panel, index: usize) {
-    if panel.work.is_some() || panel.pending.is_some() {
+    if panel.work.is_some() {
         return;
     }
     if panel.dir.is_none() {
@@ -842,6 +854,14 @@ fn poll<T>(receiver: &Mutex<Receiver<T>>) -> Result<T, TryRecvError> {
 
 fn receive_work(mut panel: ResMut<Panel>) {
     match &panel.work {
+        Some(Work::Discovery { result, .. }) => {
+            panel.outcome = Some(match poll(result) {
+                Ok(result) => result,
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => Err("The provider request stopped early."),
+            });
+            panel.feedback.clear();
+        }
         Some(Work::SaveRoster(result, message)) => match poll(result) {
             Ok(Ok((roster, selected))) => {
                 panel.feedback = (*message).into();
@@ -995,22 +1015,6 @@ pub(super) fn preview(value: &str, limit: usize) -> String {
         .into()
 }
 
-fn receive(mut panel: ResMut<Panel>) {
-    let Some(receiver) = &panel.pending else {
-        return;
-    };
-    let result = receiver
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .try_recv();
-    panel.outcome = Some(match result {
-        Ok(result) => result,
-        Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => Err("The provider request stopped early."),
-    });
-    panel.pending = None;
-}
-
 fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, With<Readout>>) {
     use std::fmt::Write as _;
 
@@ -1156,8 +1160,6 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                 }
             );
         }
-    } else if panel.pending.is_some() {
-        content.push_str("\nChecking health and discovering models...");
     } else if panel.work.is_none()
         && !panel.feedback.starts_with("Task ")
         && !panel.feedback.starts_with("Workflow ")
@@ -1221,9 +1223,83 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::input::keyboard::Key;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
     use vespera_providers::{LifecycleCapabilityState, ProviderHealthStatus};
+
+    async fn discover(declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
+        super::discover(declaration, CancellationToken::new()).await
+    }
+
+    #[tokio::test]
+    async fn cancel_discovery_releases_the_panel_and_closes_the_pending_request() {
+        for complete_health in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+            let (started, request) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                for index in 0..=usize::from(complete_health) {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut stream = BufReader::new(stream);
+                    let mut line = String::new();
+                    stream.read_line(&mut line).await.unwrap();
+                    assert_eq!(line.trim_end(), "GET /v1/models HTTP/1.1");
+                    while !line.trim_end().is_empty() {
+                        line.clear();
+                        assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                    }
+                    if complete_health && index == 0 {
+                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}").await.unwrap();
+                    } else {
+                        started.send(()).unwrap();
+                        let mut byte = [0];
+                        assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
+                        break;
+                    }
+                }
+            });
+            let mut app = App::new();
+            app.insert_resource(Layers::new(Layer::Providers))
+                .add_message::<KeyboardInput>();
+            install(&mut app, None);
+            {
+                let mut panel = app.world_mut().resource_mut::<Panel>();
+                panel.kind = ProviderKind::OpenAiCompatible;
+                panel.endpoint = endpoint;
+                apply(Action::Discover, &mut panel);
+            }
+            let bound = std::time::Duration::from_secs(3);
+            tokio::time::timeout(bound, request).await.unwrap().unwrap();
+            if complete_health {
+                app.world_mut().write_message(KeyboardInput {
+                    key_code: KeyCode::Escape,
+                    logical_key: Key::Escape,
+                    state: ButtonState::Pressed,
+                    text: None,
+                    repeat: false,
+                    window: Entity::PLACEHOLDER,
+                });
+                app.world_mut().run_system_once(keyboard).unwrap();
+            } else {
+                apply(Action::Cancel, &mut app.world_mut().resource_mut::<Panel>());
+            }
+            tokio::time::timeout(bound, async {
+                while app.world().resource::<Panel>().work.is_some() {
+                    app.world_mut().run_system_once(receive_work).unwrap();
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                server.await.unwrap();
+            })
+            .await
+            .unwrap();
+            assert!(matches!(
+                app.world().resource::<Panel>().outcome,
+                Some(Err("Provider discovery cancelled."))
+            ));
+        }
+    }
 
     #[tokio::test]
     async fn compatible_discovery_reports_server_models_and_explicit_lifecycle_limits() {
