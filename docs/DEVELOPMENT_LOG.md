@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Linux graphical startup and replay
+
+Checkpoint `268b5dc7514d16cc3c1047b10edb7bb9ee615b35` adds a Linux X11 preflight. On Ubuntu 24.04 WSL2, the graphics build exited with status 1 and an actionable error both without `DISPLAY` and without the X11 keyboard library. Both paths exited before Winit initialization. Strict graphics Clippy passed and the graphics test suite passed 28 tests with one hardware-specific test ignored.
+
+The updated executable created a 1200×800 Living World window under WSLg on Mesa llvmpipe Vulkan with the keyboard libraries loaded from a scratch directory. The preceding walkthrough on the same environment committed revision 98 in a copy of the Windows fixture and replayed revision 97. The documented Linux requirements now reflect the observed startup dependencies. Hardware-accelerated Linux and other desktop environments still require validation. [Linux validation](RELEASE.md#linux-desktop-validation)
+
 ## 2026-11-08 — Verified internal Windows x64 candidate
 
 The optimized `0.1.1` package records source checkpoint `3d232672abacbfac1f0467cbbc5c64e58157702d`. Its 41 archive files passed SHA-256 and size verification after extraction. Windows Installer extracted all ten MSI payloads with the staged hashes, and WiX built the corresponding Setup bundle. The archive, MSI and Setup checksums are recorded in the release guide. [Windows candidate](RELEASE.md#validated-windows-x64-candidate)
