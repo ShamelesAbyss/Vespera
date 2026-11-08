@@ -305,11 +305,13 @@ impl AgentRuntime {
                         execution.memory_context_records = Some(memory_context_ids.len());
                     }
                 }
+                let inference_started = Instant::now();
                 let response = active
                     .inference
                     .provider
                     .infer(request, owned_cancel.clone())
                     .await?;
+                let inference_elapsed = inference_started.elapsed();
                 if response.provider_id != active.inference.provider_id
                     || response.model_name != active.inference.model_name()
                 {
@@ -335,12 +337,19 @@ impl AgentRuntime {
                         reason: "result requires an unsupported execution action",
                     });
                 }
-                Ok(response)
+                Ok((response, inference_elapsed))
             }
             .await;
             match outcome {
-                Ok(response) => {
+                Ok((response, inference_elapsed)) => {
                     let task = guard.finish(TaskState::Completed)?;
+                    if !response.content.trim().is_empty() {
+                        self.scheduler.record_inference_latency(
+                            &active.inference,
+                            options.max_output_tokens,
+                            inference_elapsed,
+                        );
+                    }
                     Ok(TaskExecutionResult {
                         task,
                         agent_id,

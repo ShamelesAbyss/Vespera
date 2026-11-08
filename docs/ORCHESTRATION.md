@@ -10,6 +10,11 @@ The coordinator must be a registered idle agent with `Permission::Delegate`. Eac
 
 The root task's required capabilities must be covered by the step requirements. This is structural validation, not automatic natural-language requirement inference. Dependencies must refer to earlier steps, preventing cycles and ambiguous execution order. Each step receives JSON containing the operator request, step instructions and explicitly labeled untrusted dependency outputs with task/agent/model provenance. That text cannot edit the authored plan, grants, identity or routing policy. No tools execute.
 
+An optional [scheduler latency preference](SCHEDULER.md#observed-latency-preference)
+can rank eligible models for a capability-based worker using completed calls
+in the same runtime. The workflow still chooses agents from the authored
+candidate order and records both the candidate and the actual result model.
+
 ## Bounds and failure semantics
 
 | Boundary | Implemented limit |

@@ -4,6 +4,7 @@
 //! Uncertain lifecycle outcomes retain their memory reservation until acknowledged unload.
 
 mod journal;
+mod latency;
 mod queue;
 pub use journal::ResidencyJournalError;
 use journal::{Intent, Journal};
@@ -127,6 +128,7 @@ pub struct SchedulingPolicy {
 pub struct SchedulingPreferences {
     pub model_priorities: BTreeMap<ModelId, u8>,
     pub inference_keep_alive_seconds: Option<u64>,
+    pub prefer_observed_latency: bool,
 }
 
 /// Accounted model reservation (not physical telemetry).
@@ -393,6 +395,7 @@ pub struct ResourceScheduler {
     policy: SchedulingPolicy,
     overhead: InferenceOverhead,
     preferences: Arc<SchedulingPreferences>,
+    latency: Arc<Mutex<latency::LatencyHistory>>,
     state: Arc<Mutex<SchedulerState>>,
     gates: Arc<Mutex<BTreeMap<ModelId, Weak<AsyncMutex<()>>>>>,
     residency_gate: Arc<AsyncMutex<()>>,
@@ -435,6 +438,7 @@ impl ResourceScheduler {
             policy,
             overhead,
             preferences: Arc::new(preferences),
+            latency: Arc::new(Mutex::new(latency::LatencyHistory::default())),
             state: Arc::new(Mutex::new(SchedulerState::default())),
             gates: Arc::new(Mutex::new(BTreeMap::new())),
             residency_gate: Arc::new(AsyncMutex::new(())),

@@ -61,6 +61,7 @@ pub struct SchedulingConfig {
     pub evict_idle_on_pressure: bool,
     pub model_priorities: BTreeMap<ModelId, u8>,
     pub local_host_limits: bool,
+    pub prefer_observed_latency: bool,
 }
 
 impl Default for SchedulingConfig {
@@ -72,6 +73,7 @@ impl Default for SchedulingConfig {
             evict_idle_on_pressure: true,
             model_priorities: BTreeMap::new(),
             local_host_limits: false,
+            prefer_observed_latency: false,
         }
     }
 }

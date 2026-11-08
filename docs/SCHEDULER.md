@@ -187,6 +187,24 @@ headroom already reflected in the host sample. The VRAM budget remains the
 operator declaration because the runtime cannot identify the provider's
 actual GPU capacity from the host sample.
 
+### Observed latency preference
+
+Set `prefer_observed_latency = true` in `[scheduling]` to rank models for
+managed capability-based execution. Fixed model assignments and workflow
+agent ordering still apply. The scheduler times successful provider calls
+locally, excluding Vespera's queue and explicit preload. It keeps up to 128
+observations per runtime. For each eligible model, it compares the median
+of up to three observations from the last 15 minutes at the same context
+ceiling and requested output limit.
+
+Ranking requires evidence for every candidate in the comparison, the same
+provider adapter binding, and sufficient declared resources for each
+candidate to fit by itself. Otherwise the runtime uses stable model-ID
+ordering. Matching bounds allow a comparison, while prompt complexity,
+actual output length and backend load can still affect timings. The
+preference offers no deadline guarantee. A workflow can collect evidence
+from its existing fixed-model workers before a capability-based step.
+
 Cancelled or dropped waiting futures remove their tickets synchronously. Queue
 permits follow inference lease lifetime, so preparation errors and handle drop
 return capacity. Waiting on a per-model lifecycle gate also consumes a granted

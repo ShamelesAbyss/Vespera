@@ -2033,6 +2033,109 @@ fn workflow_cli_executes_dependencies_and_reports_provenance_and_cleanup() {
 }
 
 #[test]
+fn workflow_prefers_observed_latency_only_for_matching_request_bounds() {
+    let slow = HttpFixture::new(false);
+    slow.inference_delay_ms.store(400, Ordering::SeqCst);
+    let fast = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = format!(
+        r#"{}
+[[providers]]
+id = "44444444-4444-4444-8444-444444444444"
+name = "Fast fixture"
+kind = "ollama"
+endpoint = "{}"
+
+[[models]]
+id = "55555555-5555-4555-8555-555555555555"
+provider_id = "44444444-4444-4444-8444-444444444444"
+name = "Fast model"
+identifier = "fast-model"
+capabilities = ["text-generation"]
+availability = "available"
+context_window_tokens = 512
+[models.resources]
+ram_bytes = 100
+vram_bytes = 0
+
+[[agents]]
+status = "suspended"
+[agents.identity]
+id = "66666666-6666-4666-8666-666666666666"
+name = "Fast specialist"
+role = "Fixture"
+[agents.model_policy]
+kind = "fixed"
+model_id = "55555555-5555-4555-8555-555555555555"
+
+[[agents]]
+status = "suspended"
+[agents.identity]
+id = "88888888-8888-4888-8888-888888888888"
+name = "Capability worker"
+role = "Fixture"
+[agents.model_policy]
+kind = "capability"
+required = ["text-generation"]
+
+[scheduling]
+prefer_observed_latency = true
+"#,
+        runtime_config(&slow, false, true)
+            .replace("permissions = []", "permissions = [\"delegate\"]"),
+        fast.endpoint,
+    );
+    let mut workflow = workflow_value();
+    let base = workflow["steps"][0].clone();
+    let steps: Vec<_> = [
+        ("cold", "88888888-8888-4888-8888-888888888888", 8),
+        ("sample", "66666666-6666-4666-8666-666666666666", 8),
+        ("ranked", "88888888-8888-4888-8888-888888888888", 8),
+        (
+            "different-bound",
+            "88888888-8888-4888-8888-888888888888",
+            16,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, agent, output)| {
+        let mut step = base.clone();
+        step["name"] = name.into();
+        step["candidates"] = serde_json::json!([agent]);
+        step["max_output_tokens"] = output.into();
+        step
+    })
+    .collect();
+    workflow["steps"] = steps.into();
+    workflow["max_total_attempts"] = 4.into();
+    workflow["max_total_output_tokens"] = 40.into();
+    workflow["output"]["step"] = "different-bound".into();
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow.to_string(),
+        &["--resume", "--unload-after"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let attempts = report["workflow"]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 4);
+    for (attempt, model) in attempts.iter().zip([
+        "22222222-2222-4222-8222-222222222222",
+        "55555555-5555-4555-8555-555555555555",
+        "55555555-5555-4555-8555-555555555555",
+        "22222222-2222-4222-8222-222222222222",
+    ]) {
+        assert_eq!(attempt["candidate_model_id"], model, "{attempt}");
+        assert_eq!(attempt["result"]["model_id"], model, "{attempt}");
+    }
+}
+
+#[test]
 fn workflow_rechecks_external_pressure_without_double_charging_local_residency() {
     use std::time::{Duration, Instant};
 

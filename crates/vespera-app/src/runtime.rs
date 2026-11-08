@@ -406,6 +406,7 @@ impl VesperaRuntime {
             SchedulingPreferences {
                 model_priorities: settings.model_priorities.clone(),
                 inference_keep_alive_seconds: keep_alive,
+                prefer_observed_latency: settings.prefer_observed_latency,
             },
         ));
         let agents = AgentRuntime::new(registry.clone(), scheduler.clone());

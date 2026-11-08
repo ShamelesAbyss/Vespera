@@ -75,6 +75,9 @@ A separate [`[scheduling]` table](SCHEDULER.md#bounded-queue-and-shutdown)
 controls admission queue bounds, model priorities, native keep-alive and
 pressure eviction. It can also opt into [host-constrained limits for loopback
 providers](SCHEDULER.md#local-host-limits).
+Set `prefer_observed_latency = true` in the same table to use
+[recent provider call timings](SCHEDULER.md#observed-latency-preference)
+when a managed request can compare all eligible models.
 A zero
 VRAM estimate means an explicit CPU-only estimate; it does not force a provider
 onto the CPU. Provider setup must match the estimate. Do not infer RAM residency

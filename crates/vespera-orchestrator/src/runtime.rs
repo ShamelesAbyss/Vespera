@@ -324,6 +324,8 @@ impl Orchestrator {
                 if cancel.is_cancelled() {
                     return Err(Failure::Cancelled);
                 }
+                let mut options = step.options();
+                options.max_response_bytes = 1024 * 1024 - output_bytes;
                 let mut chosen = None;
                 for agent_id in &step.candidates {
                     if self
@@ -333,7 +335,11 @@ impl Orchestrator {
                         .is_ok_and(|a| a.status == AgentStatus::Idle)
                         && let Ok(model) = self
                             .agents
-                            .resolve_model_for_agent(*agent_id, &step.required_capabilities)
+                            .resolve_model_for_execution(
+                                *agent_id,
+                                &step.required_capabilities,
+                                &options,
+                            )
                             .await
                     {
                         chosen = Some((*agent_id, model.model_id));
@@ -412,8 +418,6 @@ impl Orchestrator {
                         );
                     }
                 }
-                let mut options = step.options();
-                options.max_response_bytes = 1024 * 1024 - output_bytes;
                 let result = self
                     .agents
                     .execute_task(agent_id, task, options, cancel.clone())

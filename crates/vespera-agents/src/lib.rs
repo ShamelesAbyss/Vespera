@@ -793,6 +793,26 @@ impl AgentRuntime {
         agent_id: AgentId,
         task_capabilities: &BTreeSet<Capability>,
     ) -> Result<ModelRegistration, AgentRuntimeError> {
+        self.resolve_model(agent_id, task_capabilities, None).await
+    }
+
+    /// Resolve an eligible model using the request's bounds for any configured latency preference.
+    pub async fn resolve_model_for_execution(
+        &self,
+        agent_id: AgentId,
+        task_capabilities: &BTreeSet<Capability>,
+        options: &ExecutionOptions,
+    ) -> Result<ModelRegistration, AgentRuntimeError> {
+        self.resolve_model(agent_id, task_capabilities, Some(options))
+            .await
+    }
+
+    async fn resolve_model(
+        &self,
+        agent_id: AgentId,
+        task_capabilities: &BTreeSet<Capability>,
+        options: Option<&ExecutionOptions>,
+    ) -> Result<ModelRegistration, AgentRuntimeError> {
         let agent = self.get_agent(agent_id).await?;
 
         match &agent.model_policy {
@@ -808,6 +828,21 @@ impl AgentRuntime {
                     required.union(task_capabilities).cloned().collect();
                 let mut candidates = self.registry.find_by_capability(&combined).await;
                 candidates.sort_by_key(|m| m.model_id);
+                if let Some(options) = options
+                    && let Some(preferred) = self
+                        .scheduler
+                        .prefer_lower_latency(
+                            &candidates,
+                            options.context_tokens,
+                            options.max_output_tokens,
+                        )
+                        .await
+                    && let Some(index) = candidates
+                        .iter()
+                        .position(|candidate| candidate.model_id == preferred)
+                {
+                    return Ok(candidates.swap_remove(index));
+                }
                 candidates
                     .into_iter()
                     .next()
@@ -894,7 +929,11 @@ impl AgentRuntime {
         };
 
         let resolved_model = match self
-            .resolve_model_for_agent(agent_id, &task.required_capabilities)
+            .resolve_model(
+                agent_id,
+                &task.required_capabilities,
+                managed.as_ref().map(|(_, options, _)| *options),
+            )
             .await
         {
             Ok(model) => model,
