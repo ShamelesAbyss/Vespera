@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Recoverable agent inbox events
+
+Verified implementation checkpoint `d9269f87ca2e7b45837e9ee77aba037c482d4e69`, pushed to `main`.
+
+Durable inbox acceptance commits a metadata-only envelope with the message. CLI sends can publish it immediately, and scoped recovery pages can retry the original events. Fixtures injected a journal failure, reopened the accepted message, verified redaction, rejected a foreign cursor and preserved legacy inbox contents through migration. Four concurrent journal writers retried 128 unique events with no duplicate retained entries, then a slow reader detected retention loss. Windows formatting, strict Clippy and offline workspace tests passed. The workflow audit checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42435997113).
+
+A live Ollama task was used as the correlation for a separately authorized local inbox send. Recovery left one journal entry and the message text stayed in the inbox. Acknowledged unload left zero residents. Provider observation coverage remains open in Milestone 9.
+
 ## 2026-11-07 — Recoverable workflow audit
 
 Verified implementation checkpoint `6e12ccfcbb0992049c41e7486cb18ca90639f59b`, pushed to `main`.
