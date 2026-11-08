@@ -32,13 +32,29 @@ same task database for the control command and later `run-agent` or
 A held coordinator or decomposition roster member prevents execution.
 Authored workflows can select another eligible worker when a candidate is held.
 
-The store supports up to 256 holds. Opening a version 1 task database for
-execution or suspension adds hold storage while preserving task history.
+The store supports up to 256 holds. Opening a legacy task database for
+execution or suspension adds missing tables while preserving task history.
 Releasing a hold restores the configured status. The database is exclusive
 while an invocation uses it, so issue operator state commands between runs.
 Configuration remains the authority for agent definitions, grants and model
-policy. Inbox records and transient runtime status still live in memory.
+policy. Transient runtime status still lives in memory.
 See the [CLI reference](CLI.md#operator-suspension).
+
+## Durable inbox
+
+With a task store attached, `AgentRuntime::send_message` commits a message
+before returning. `inbox_messages` reopens the recipient's messages in logical
+tick order. The sender and reader each need a current `communicate` grant.
+The recipient must exist in the current configuration. A held sender cannot
+send. A message may reference a stored task when either participant owns it.
+Rebinding a model policy preserves messages under the same agent UUID.
+
+The store keeps up to 256 messages per recipient, 4,096 messages total,
+64 KiB per message and 64 MiB of message text across the database. Lower runtime
+limits also apply to new writes. At capacity, sends fail and retained messages
+stay available. Inboxes are local, append-only and private. The offline CLI
+treats the operator as trusted and uses the supplied configuration to authorize
+the claimed agent UUID. See [CLI inbox operations](CLI.md#agent-inbox).
 
 ## Actual task inference
 
@@ -126,8 +142,8 @@ is operator configuration, not authority conferred by model text.
 
 ## Memory and communication limits
 
-Memory and inbox records live in per-agent in-process maps. They do not survive
-restart and do not implement full-text search/consolidation. `RuntimeLimits`
+Without a durable store, memory and inbox records live in per-agent in-process
+maps for the lifetime of the runtime. `RuntimeLimits`
 defaults to 64 agents, 1,024 accepted task records (including terminal history),
 256 memories per agent, 256 messages per inbox, 64 KiB of text per record and
 64 MiB of aggregate retained textual content. `with_limits` accepts positive

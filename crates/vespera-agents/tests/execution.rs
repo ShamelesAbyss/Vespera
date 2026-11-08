@@ -553,8 +553,10 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
     drop(AgentTaskStore::open(&path).unwrap());
     {
         let db = rusqlite::Connection::open(&path).unwrap();
-        db.execute_batch("DROP TABLE agent_suspensions; PRAGMA user_version=1;")
-            .unwrap();
+        db.execute_batch(
+            "DROP TABLE agent_messages; DROP TABLE agent_suspensions; PRAGMA user_version=1;",
+        )
+        .unwrap();
         db.execute(
             "INSERT INTO agent_tasks (id, owner, state, task) VALUES (?1, ?2, 'queued', ?3)",
             (
@@ -568,6 +570,13 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
     assert!(!AgentTaskStore::inspect_suspension(&path, agent).unwrap());
     let store = AgentTaskStore::open(&path).unwrap();
     store.set_suspended(agent, true).unwrap();
+    drop(store);
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("DROP TABLE agent_messages; PRAGMA user_version=2;")
+            .unwrap();
+    }
+    let store = AgentTaskStore::open_existing(&path).unwrap();
     runtime.attach_task_store(store).unwrap();
     assert_eq!(
         runtime.get_agent(agent).await.unwrap().status,

@@ -11,8 +11,10 @@ use vespera_core::{AgentId, Task, TaskId, TaskState};
 
 use crate::TaskExecutionResult;
 
+mod inbox;
+
 const APPLICATION_ID: i64 = 0x56535041;
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 const MAX_TASKS: i64 = 256;
 const MAX_SUSPENSIONS: i64 = 256;
 const MAX_BYTES: i64 = 128 * 1024 * 1024;
@@ -59,10 +61,15 @@ pub struct AgentTaskStore(Mutex<Connection>);
 impl AgentTaskStore {
     /// Open or initialize a private agent task database.
     pub fn open(path: &Path) -> Result<Self, AgentTaskStoreError> {
-        Self::connect(path, true)
+        Self::connect(path, true, true)
     }
 
-    fn connect(path: &Path, create: bool) -> Result<Self, AgentTaskStoreError> {
+    /// Open and migrate a private agent task database that already exists.
+    pub fn open_existing(path: &Path) -> Result<Self, AgentTaskStoreError> {
+        Self::connect(path, false, true)
+    }
+
+    fn connect(path: &Path, create: bool, migrate: bool) -> Result<Self, AgentTaskStoreError> {
         if path.as_os_str().is_empty() {
             return Err(AgentTaskStoreError::WrongDatabase);
         }
@@ -73,6 +80,9 @@ impl AgentTaskStore {
         }
         let mut connection = Connection::open_with_flags(path, flags).map_err(db)?;
         connection.busy_timeout(Duration::ZERO).map_err(db)?;
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .map_err(db)?;
         connection
             .pragma_update(None, "locking_mode", "EXCLUSIVE")
             .map_err(db)?;
@@ -111,14 +121,17 @@ impl AgentTaskStore {
             ).map_err(db)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)
                 .map_err(db)?;
-        } else if id != APPLICATION_ID || !matches!(version, 1 | VERSION) {
+        } else if id != APPLICATION_ID || !(1..=VERSION).contains(&version) {
             return Err(AgentTaskStoreError::WrongDatabase);
         }
-        if create && version < VERSION {
+        if migrate && version < 2 {
             tx.execute_batch(
                 "CREATE TABLE agent_suspensions (id TEXT PRIMARY KEY NOT NULL) STRICT;",
             )
             .map_err(db)?;
+        }
+        if migrate && version < VERSION {
+            inbox::migrate(&tx)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
         }
@@ -128,12 +141,12 @@ impl AgentTaskStore {
 
     /// Read an operator hold from an existing database without migrating it.
     pub fn inspect_suspension(path: &Path, agent: AgentId) -> Result<bool, AgentTaskStoreError> {
-        Self::connect(path, false)?.is_suspended(agent)
+        Self::connect(path, false, false)?.is_suspended(agent)
     }
 
     /// Clear a hold in an existing database. Version 1 has no holds to clear.
     pub fn release_suspension(path: &Path, agent: AgentId) -> Result<(), AgentTaskStoreError> {
-        let store = Self::connect(path, false)?;
+        let store = Self::connect(path, false, false)?;
         if store.is_suspended(agent)? {
             store.set_suspended(agent, false)?;
         }
@@ -226,6 +239,26 @@ impl AgentTaskStore {
             .map_err(db)
     }
 
+    pub(crate) fn task_owner(&self, task: TaskId) -> Result<Option<AgentId>, AgentTaskStoreError> {
+        let owner: Option<String> = self
+            .0
+            .lock()
+            .map_err(|_| AgentTaskStoreError::Database)?
+            .query_row(
+                "SELECT owner FROM agent_tasks WHERE id=?1",
+                [task.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db)?;
+        owner
+            .map(|id| {
+                id.parse()
+                    .map_err(|_| AgentTaskStoreError::InvalidCheckpoint)
+            })
+            .transpose()
+    }
+
     pub(crate) fn insert(
         &self,
         task: &Task,
@@ -270,7 +303,7 @@ impl AgentTaskStore {
 
     /// Inspect the retained owner and outcome after acquiring the exclusive connection.
     pub fn inspect(path: &Path, task_id: TaskId) -> Result<StoredAgentTask, AgentTaskStoreError> {
-        let store = Self::connect(path, false)?;
+        let store = Self::connect(path, false, false)?;
         let connection = store.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
         let (owner, delegated_by, state, bytes, result) = connection
             .query_row(

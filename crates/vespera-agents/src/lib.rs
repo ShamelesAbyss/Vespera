@@ -298,13 +298,18 @@ impl fmt::Debug for AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Attach durable ownership and apply operator holds before accepting any tasks.
+    /// Attach durable ownership and inboxes before accepting tasks or messages.
+    /// Existing operator holds are applied to registered agents.
     pub fn attach_task_store(&self, store: AgentTaskStore) -> Result<(), AgentRuntimeError> {
         let mut state = lock_state(&self.state);
-        if state.task_store.is_some() || !state.tasks.is_empty() {
+        if state.task_store.is_some()
+            || !state.tasks.is_empty()
+            || state.inbox.values().any(|inbox| !inbox.is_empty())
+        {
             return Err(AgentTaskStoreError::Busy.into());
         }
         let suspended = store.suspensions()?;
+        state.logical_tick = state.logical_tick.max(store.last_message_tick()?);
         for id in &suspended {
             if let Some(agent) = state.agents.get_mut(id) {
                 agent.status = AgentStatus::Suspended;
@@ -674,13 +679,32 @@ impl AgentRuntime {
             });
         }
 
-        if let Some(task_id) = task_id
-            && !state
-                .task_assignments
-                .get(&task_id)
-                .is_some_and(|owner| *owner == from_agent_id || *owner == to_agent_id)
-        {
-            return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
+        if let Some(task_id) = task_id {
+            let owner = match &state.task_store {
+                Some(store) => store.task_owner(task_id)?,
+                None => state.task_assignments.get(&task_id).copied(),
+            };
+            if !owner.is_some_and(|owner| owner == from_agent_id || owner == to_agent_id) {
+                return Err(AgentRuntimeError::TaskReferenceDenied { task_id });
+            }
+        }
+        if let Some(store) = &state.task_store {
+            if state.durably_suspended.contains(&from_agent_id) {
+                return Err(AgentRuntimeError::DurablySuspended {
+                    agent_id: from_agent_id,
+                });
+            }
+            self.limits.check_record(content.len())?;
+            let message = AgentMessage {
+                from_agent_id,
+                to_agent_id,
+                content,
+                task_id,
+                logical_tick: state.logical_tick.saturating_add(1),
+            };
+            store.insert_message(&message, self.limits)?;
+            state.logical_tick = message.logical_tick;
+            return Ok(message);
         }
         if state
             .inbox
@@ -723,6 +747,9 @@ impl AgentRuntime {
                 agent_id,
                 permission: Permission::Communicate,
             });
+        }
+        if let Some(store) = &state.task_store {
+            return Ok(store.inbox(agent_id)?);
         }
         Ok(state.inbox.get(&agent_id).cloned().unwrap_or_default())
     }

@@ -360,6 +360,59 @@ async fn enforces_permissions_for_memory_messaging_delegation_and_simulation() {
 }
 
 #[tokio::test]
+async fn durable_inbox_keeps_its_capacity_and_identity_across_model_rebind_and_restart() {
+    use vespera_agents::{AgentTaskStore, AgentTaskStoreError, RuntimeLimits};
+
+    let agent = AgentId::new();
+    let path = std::env::temp_dir().join(format!("vespera-agent-inbox-{agent}.sqlite3"));
+    let definition = sample_agent(
+        agent,
+        "fixture",
+        ModelId::new(),
+        BTreeSet::from([Permission::Communicate]),
+        AgentStatus::Idle,
+    );
+    let limits = RuntimeLimits {
+        max_messages_per_agent: 1,
+        ..Default::default()
+    };
+    let runtime = build_runtime_with_limits(limits);
+    runtime.register_agent(definition.clone()).await.unwrap();
+    runtime
+        .attach_task_store(AgentTaskStore::open(&path).unwrap())
+        .unwrap();
+    let first = runtime
+        .send_message(agent, agent, "first".into(), None)
+        .await
+        .unwrap();
+    drop(runtime);
+
+    let runtime = build_runtime_with_limits(limits);
+    runtime
+        .attach_task_store(AgentTaskStore::open_existing(&path).unwrap())
+        .unwrap();
+    runtime.register_agent(definition).await.unwrap();
+    runtime
+        .rebind_model_policy(
+            agent,
+            ModelSelectionPolicy::Fixed {
+                model_id: ModelId::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtime
+            .send_message(agent, agent, "over capacity".into(), None)
+            .await,
+        Err(AgentRuntimeError::TaskStore(AgentTaskStoreError::Capacity))
+    ));
+    assert_eq!(runtime.inbox_messages(agent).await.unwrap(), vec![first]);
+    drop(runtime);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn record_count_and_size_caps_reject_without_partial_mutation() {
     use vespera_agents::RuntimeLimits;
     let runtime = build_runtime_with_limits(RuntimeLimits {

@@ -89,6 +89,19 @@ enum Command {
         #[command(subcommand)]
         action: AgentStateAction,
     },
+    /// Send or inspect permission-gated durable messages offline.
+    AgentInbox {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long, default_value = "config/local.toml")]
+        config: PathBuf,
+        #[arg(long)]
+        model_catalog: Option<PathBuf>,
+        #[arg(long)]
+        agent: AgentId,
+        #[command(subcommand)]
+        action: AgentInboxAction,
+    },
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
     /// Inspect a private workflow checkpoint without contacting providers.
@@ -152,6 +165,21 @@ enum AgentStateAction {
     Suspend,
     /// Clear the operator hold and return control to the configured status.
     Release,
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentInboxAction {
+    /// List messages addressed to the specified agent.
+    List,
+    /// Send a message as the specified configured agent.
+    Send {
+        #[arg(long)]
+        to: AgentId,
+        #[arg(long)]
+        message_file: PathBuf,
+        #[arg(long)]
+        task: Option<vespera_core::TaskId>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -434,6 +462,16 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         } => {
             let config = catalog_commands::load(&config, model_catalog.as_deref())?;
             commands::agent_state(&config, &database, agent, action)?;
+        }
+        Command::AgentInbox {
+            database,
+            config,
+            model_catalog,
+            agent,
+            action,
+        } => {
+            let config = catalog_commands::load(&config, model_catalog.as_deref())?;
+            commands::agent_inbox(config, &database, agent, action).await?;
         }
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
         Command::WorkflowHistory { database, task } => {

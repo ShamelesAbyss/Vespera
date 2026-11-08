@@ -152,6 +152,22 @@ Pass the same file to execution with `--task-store`. An operator hold takes
 precedence over `--resume`. Releasing it clears the hold, so a configured
 suspension still requires `--resume` for execution.
 
+## Agent inbox
+
+```powershell
+.\target\release\vespera.exe agent-inbox --config config/local.private.toml --database data/agent-tasks.sqlite3 --agent $sender send --to $recipient --message-file data/message.txt
+.\target\release\vespera.exe agent-inbox --config config/local.private.toml --database data/agent-tasks.sqlite3 --agent $recipient list
+```
+
+Set `$sender` and `$recipient` to configured agent UUIDs with the
+`communicate` grant. `--config` defaults to `config/local.toml`.
+Use `--model-catalog <PATH>` when the configuration relies on catalog entries.
+`send` accepts nonblank UTF-8 text and creates the database if needed.
+Optional `send --task <UUID>` links a task owned by one of the participants in
+the same database. `list` requires an existing database and can migrate older
+schema versions. Both commands return JSON and work offline. Use a private
+local path and issue the commands between invocations using that database.
+
 ## Cleanup and provider sharing
 
 `run-agent` and `run-workflow` accept `--reconcile-residency`. The probes share

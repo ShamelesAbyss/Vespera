@@ -1,6 +1,8 @@
 //! CLI operation handlers; service behavior lives in the application runtime.
 use crate::scheduler_telemetry::Publisher;
-use crate::{AgentStateAction, AppError, RunAgentArgs, RunWorkflowArgs, event_commands};
+use crate::{
+    AgentInboxAction, AgentStateAction, AppError, RunAgentArgs, RunWorkflowArgs, event_commands,
+};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -107,6 +109,72 @@ pub(crate) fn agent_state(
             },
         })?
     );
+    Ok(())
+}
+
+pub(crate) async fn agent_inbox(
+    mut config: AppConfig,
+    database: &Path,
+    actor: AgentId,
+    action: AgentInboxAction,
+) -> Result<(), AppError> {
+    let recipient = match &action {
+        AgentInboxAction::List => actor,
+        AgentInboxAction::Send { to, .. } => *to,
+    };
+    // Compose an empty runtime and register only the offline command's participants.
+    let agents = std::mem::take(&mut config.agents);
+    config.providers.clear();
+    config.models.clear();
+    config.scheduling = Default::default();
+    let runtime = VesperaRuntime::from_config(&config).await?;
+    let runtime = runtime.agents();
+    for agent_id in BTreeSet::from([actor, recipient]) {
+        let definition = agents
+            .iter()
+            .find(|definition| definition.identity.id == agent_id)
+            .ok_or_else(|| RuntimeError::from(AgentRuntimeError::AgentNotFound { agent_id }))?;
+        runtime
+            .register_agent(definition.clone())
+            .await
+            .map_err(RuntimeError::from)?;
+    }
+    let definition = runtime.get_agent(actor).await.map_err(RuntimeError::from)?;
+    if !definition.permissions.contains(&Permission::Communicate) {
+        return Err(RuntimeError::from(AgentRuntimeError::PermissionDenied {
+            agent_id: actor,
+            permission: Permission::Communicate,
+        })
+        .into());
+    }
+    match action {
+        AgentInboxAction::List => {
+            runtime
+                .attach_task_store(AgentTaskStore::open_existing(database)?)
+                .map_err(RuntimeError::from)?;
+            let messages = runtime
+                .inbox_messages(actor)
+                .await
+                .map_err(RuntimeError::from)?;
+            println!("{}", serde_json::to_string_pretty(&messages)?);
+        }
+        AgentInboxAction::Send {
+            to,
+            message_file,
+            task,
+        } => {
+            let content =
+                crate::memory_commands::read_text(&message_file, 64 * 1024, "message_file")?;
+            runtime
+                .attach_task_store(AgentTaskStore::open(database)?)
+                .map_err(RuntimeError::from)?;
+            let message = runtime
+                .send_message(actor, to, content, task)
+                .await
+                .map_err(RuntimeError::from)?;
+            println!("{}", serde_json::to_string_pretty(&message)?);
+        }
+    }
     Ok(())
 }
 

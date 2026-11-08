@@ -1200,6 +1200,133 @@ fn residency_journal_fences_an_interrupted_load_across_cli_processes() {
 }
 
 #[test]
+fn agent_inbox_reopens_ordered_messages_with_current_grants_and_task_ownership() {
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let receiver = "88888888-8888-4888-8888-888888888888";
+    let config = format!(
+        r#"{}
+[[agents]]
+permissions = ["communicate"]
+status = "idle"
+[agents.identity]
+id = "{receiver}"
+name = "Message receiver"
+role = "Fixture"
+[agents.model_policy]
+kind = "capability"
+required = ["text-generation"]
+"#,
+        runtime_config(&fixture, false, true)
+            .replace("permissions = []", "permissions = [\"communicate\"]"),
+    );
+    let database = directory.0.join("agent-tasks.sqlite3");
+    let db = database.to_str().unwrap();
+    let task = "77777777-7777-4777-8777-777777777777";
+    let run = run_fixture_agent(
+        &directory,
+        &config,
+        &[
+            "--task-store",
+            db,
+            "--task-id",
+            task,
+            "--resume",
+            "--unload-after",
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let calls = fixture.captured().len();
+    let config_path = directory.write_config(&config);
+    let path = config_path.to_str().unwrap();
+    let content = directory.0.join("message.txt");
+    let inbox = |actor, action: &[&str]| {
+        let mut args = vec![
+            "agent-inbox",
+            "--config",
+            path,
+            "--database",
+            db,
+            "--agent",
+            actor,
+        ];
+        args.extend_from_slice(action);
+        execute(&args)
+    };
+    let send = |actor, to, task| {
+        inbox(
+            actor,
+            &[
+                "send",
+                "--to",
+                to,
+                "--message-file",
+                content.to_str().unwrap(),
+                "--task",
+                task,
+            ],
+        )
+    };
+    fs::write(&content, "first message").unwrap();
+    let denied = send(receiver, receiver, task);
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("not an authorized source reference"));
+    let first = send(AGENT, receiver, task);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    fs::write(&content, "second message").unwrap();
+    assert!(send(AGENT, receiver, task).status.success());
+    let output = inbox(receiver, &["list"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["from_agent_id"], AGENT);
+    assert_eq!(records[0]["task_id"], task);
+    assert_eq!(records[0]["content"], "first message");
+    assert_eq!(records[1]["content"], "second message");
+    assert!(
+        records[0]["logical_tick"].as_u64().unwrap() < records[1]["logical_tick"].as_u64().unwrap()
+    );
+    let own_inbox: Vec<serde_json::Value> =
+        serde_json::from_slice(&inbox(AGENT, &["list"]).stdout).unwrap();
+    assert!(own_inbox.is_empty());
+    assert!(
+        execute(&[
+            "agent-state",
+            "--config",
+            path,
+            "--database",
+            db,
+            "--agent",
+            AGENT,
+            "suspend"
+        ])
+        .status
+        .success()
+    );
+    let held = send(AGENT, receiver, task);
+    assert!(!held.status.success());
+    assert!(String::from_utf8_lossy(&held.stderr).contains("durable operator suspension"));
+    directory.write_config(&config.replace("permissions = [\"communicate\"]", "permissions = []"));
+    let revoked = inbox(receiver, &["list"]);
+    assert!(!revoked.status.success());
+    assert!(revoked.stdout.is_empty());
+    assert!(!send(AGENT, receiver, task).status.success());
+    assert_eq!(fixture.captured().len(), calls);
+}
+
+#[test]
 fn operator_suspension_survives_restart_and_resume_preserves_alternates() {
     let fixture = HttpFixture::new(false);
     let directory = ScratchDirectory::new();
