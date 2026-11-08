@@ -22,6 +22,7 @@ const DOCUMENTS: &[&str] = &[
     "assets/branding/vespera.png",
     "assets/branding/vespera.ico",
     "assets/branding/vespera.icns",
+    "assets/screenshots/atlas-network.jpg",
     "assets/screenshots/desktop-workflow.jpg",
     "assets/screenshots/living-world.jpg",
     "assets/screenshots/living-world-resident.jpg",

@@ -47,6 +47,15 @@ An agent keeps its identity when you change its model. The registry records whic
 </details>
 
 <details>
+<summary>Inspect broker activity in the Intelligence Network</summary>
+
+![Intelligence Network showing separated task nodes, two workers, and recent broker observations](assets/screenshots/atlas-network.jpg)
+
+*Captured in the Windows `0.1.1` candidate against the stabilization broker. The header reports 47 completed tasks and one cancellation from persisted test activity. The inspector shows recent observations and reports unavailable resource measurements explicitly.* [Atlas controls](docs/CLI.md#switch-layers-in-atlas)
+
+</details>
+
+<details>
 <summary>See a completed two-agent desktop workflow</summary>
 
 ![A completed draft and delegated review in the Vespera desktop](assets/screenshots/desktop-workflow.jpg)
