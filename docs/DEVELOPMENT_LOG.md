@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-08 — Native provider discovery cancellation
+
+Checkpoint `1ef379229fbaad8e8f31f6a2aa8f4adb944cbbcc` connects provider discovery to **Cancel work** and adds **Esc** for in-progress discovery, tasks and workflows. A loopback HTTP fixture stalled the health check and then model enumeration in separate runs. The test drove the cancellation action and the Bevy keyboard handler, observed the client disconnect, and verified that the panel released the operation with a cancellation result. Formatting, strict graphics Clippy and the graphics suite passed on Windows and Ubuntu WSL2 with 29 passed and one NVML hardware test ignored on each. The [desktop controls](CLI.md#open-the-native-desktop) and [milestone ledger](MILESTONE_LEDGER.md) record the change. The prior Windows release artifacts retain their original source revision.
+
 ## 2026-11-08 — Linux graphics CI and candidate gallery
 
 Checkpoint `330c770aa471d4adeef2294f71f683067e53eb00` added an Ubuntu graphics job. The hosted job passed strict graphics Clippy, desktop tests, both graphics executable builds and a check for exit status 1 with the exact diagnostic when `DISPLAY` is absent. The positive WSLg walkthrough remains separate runtime evidence. [Linux CI job](https://github.com/ShamelesAbyss/Vespera/actions/runs/42527628229/job/128874647373)
