@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Runtime registration and agent status evidence
+
+Verified implementation checkpoint `4ef3aa2996bdd41ccbf7c273bf53c0ae8ff7c5f3`, pushed to `main`.
+
+Lifecycle journals now include the accepted scoped model inventory and effective agent registrations. Runtime status transitions include previous and new status and the task UUID when applicable. Schema 7 validates actual status changes. Windows formatting, strict Clippy and offline workspace tests passed. The scheduler lifecycle checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42437410255).
+
+Live Ollama `hermes3:8b` completed a two-step workflow with ten lifecycle entries and five durable workflow events in the same journal. The lifecycle entries captured registration, both Running/Idle cycles and acknowledged unload. Final residency was empty. These are runtime-scoped observations. Next is verifying their graphical subscription and historical projection.
+
 ## 2026-11-07 — Scheduler lifecycle journal
 
 Verified implementation checkpoint `d0349c0f10a812173ed81b3b752ac2e860815a84`, pushed to `main`.
