@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Resume from a committed workflow step
+
+Verified implementation checkpoint `1dea00ddb0a6e6e48be84ceaf6485314f3e4f9df` was pushed to `main`. Durable workflow lineage passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42429802294).
+
+`--resume-workflow` continues an interrupted workflow only with its original validated plan, an intact completed step prefix, and time remaining on its original deadline. The subprocess fixture killed the first invocation after its first commit. The second invocation reused that dependency and its task ID and issued only the pending inference. Another killed-process fixture rejected resume with an unresolved attempt. The tests also covered a changed plan, expired and rolled-back deadlines, and version 1 history inspection without resume eligibility.
+
+The Windows offline workspace suite, strict Clippy and formatting passed. A live Ollama 0.40.13 workflow completed and rejected a terminal resume, with empty final residency. The execution policy rejected the proposed live proxy interruption harness, so successful interruption recovery is verified by the subprocess fixture. Automatic decomposition is the next Milestone 6 gate.
+
 ## 2026-11-07 — Durable workflow lineage
 
 Verified implementation checkpoint `7ba48173d74725d657977f7b56079de3e34be8c5` was pushed to `main`. The NVIDIA admission checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42429199750).
