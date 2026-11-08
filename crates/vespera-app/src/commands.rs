@@ -10,7 +10,7 @@ use std::time::Duration;
 use vespera_agents::{ExecutionOptions, MemoryContext, TaskExecutionResult};
 use vespera_app::memory::configured_authorizer;
 use vespera_app::runtime::{
-    CleanupReport, ProviderCheck, RuntimeError, VesperaRuntime, check_providers,
+    CleanupReport, LocalHostLimits, ProviderCheck, RuntimeError, VesperaRuntime, check_providers,
     configured_registry, observed_provider_checks,
 };
 use vespera_config::AppConfig;
@@ -29,6 +29,8 @@ struct WorkflowRunReport {
     workflow: Option<WorkflowReport>,
     error: Option<String>,
     cleanup: CleanupReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_host_limits: Option<LocalHostLimits>,
     #[serde(skip_serializing_if = "Option::is_none")]
     startup_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +132,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .as_ref()
         .is_some_and(event_commands::Publication::failed);
     let startup_residency = runtime.scheduler().startup_residency();
+    let local_host_limits = runtime.local_host_limits();
     let admission_residency = runtime.scheduler().admission_residency();
     let recovered_reservations = runtime.scheduler().recovered_residency_count();
     if args.json {
@@ -140,6 +143,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 workflow,
                 error: error.as_ref().map(ToString::to_string),
                 cleanup,
+                local_host_limits,
                 startup_residency,
                 admission_residency,
                 recovered_reservations,
@@ -147,6 +151,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             })?
         );
     } else {
+        print_local_host_limits(local_host_limits);
         print_residency("startup", startup_residency);
         print_residency("latest admission", admission_residency);
         print_recovered_reservations(recovered_reservations);
@@ -326,6 +331,8 @@ struct RunReport {
     error: Option<String>,
     cleanup: CleanupReport,
     #[serde(skip_serializing_if = "Option::is_none")]
+    local_host_limits: Option<LocalHostLimits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     startup_residency: Option<StartupResidencyReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     admission_residency: Option<StartupResidencyReport>,
@@ -344,6 +351,15 @@ fn print_residency(phase: &str, report: Option<StartupResidencyReport>) {
         println!(
             "External {phase} residency: {} models across {} providers, {} RAM bytes, {} VRAM bytes",
             report.external_models, report.providers_observed, report.ram_bytes, report.vram_bytes,
+        );
+    }
+}
+
+fn print_local_host_limits(report: Option<LocalHostLimits>) {
+    if let Some(report) = report {
+        println!(
+            "Host-constrained admission budget: {} RAM bytes, {} concurrent inferences",
+            report.effective_budget.ram_bytes, report.effective_budget.max_concurrent_inferences,
         );
     }
 }
@@ -503,6 +519,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         Err(error) => (None, Some(error)),
     };
     let startup_residency = runtime.scheduler().startup_residency();
+    let local_host_limits = runtime.local_host_limits();
     let admission_residency = runtime.scheduler().admission_residency();
     let recovered_reservations = runtime.scheduler().recovered_residency_count();
     if args.json {
@@ -512,6 +529,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             error: error.as_ref().map(ToString::to_string),
             execution,
             cleanup,
+            local_host_limits,
             startup_residency,
             admission_residency,
             recovered_reservations,
@@ -521,6 +539,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        print_local_host_limits(local_host_limits);
         print_residency("startup", startup_residency);
         print_residency("latest admission", admission_residency);
         print_recovered_reservations(recovered_reservations);

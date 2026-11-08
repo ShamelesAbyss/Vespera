@@ -73,7 +73,8 @@ Configure temporary per-request memory in the optional
 [`[inference_overhead]` table](SCHEDULER.md#per-inference-memory-allowance).
 A separate [`[scheduling]` table](SCHEDULER.md#bounded-queue-and-shutdown)
 controls admission queue bounds, model priorities, native keep-alive and
-pressure eviction.
+pressure eviction. It can also opt into [host-constrained limits for loopback
+providers](SCHEDULER.md#local-host-limits).
 A zero
 VRAM estimate means an explicit CPU-only estimate; it does not force a provider
 onto the CPU. Provider setup must match the estimate. Do not infer RAM residency

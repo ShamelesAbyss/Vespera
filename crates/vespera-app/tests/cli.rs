@@ -897,6 +897,65 @@ fn model_catalog_reopens_and_supplies_a_real_runtime_registration() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn host_limits_tighten_local_admission_and_reject_remote_scope() {
+    let fixture = HttpFixture::new(false);
+    let scratch = ScratchDirectory::new();
+    let config = format!(
+        "{}\n[scheduling]\nlocal_host_limits = true\n",
+        runtime_config(&fixture, false, true)
+            .replace("ram_bytes = 4294967296", "ram_bytes = 9007199254740992")
+            .replace(
+                "max_concurrent_inferences = 1",
+                "max_concurrent_inferences = 65535"
+            )
+            .replace("ram_bytes = 100", "ram_bytes = 4503599627370496")
+    );
+    let output = run_fixture_agent(&scratch, &config, &["--resume"]);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("RAM bytes request/usage"),
+        "{report}"
+    );
+    let limits = &report["local_host_limits"];
+    let budget = &limits["effective_budget"];
+    let available = limits["available_ram_bytes"].as_u64().unwrap();
+    let cgroup = limits["process_cgroup_ram_headroom_bytes"]
+        .as_u64()
+        .unwrap_or(u64::MAX);
+    assert_eq!(
+        budget["ram_bytes"],
+        available.min(cgroup).min(9007199254740992)
+    );
+    assert_eq!(
+        budget["max_concurrent_inferences"],
+        limits["available_parallelism"].as_u64().unwrap().min(65535)
+    );
+    assert_eq!(budget["vram_bytes"], 0);
+    assert_eq!(budget["max_context_tokens"], 4096);
+    assert!(
+        fixture
+            .captured()
+            .iter()
+            .all(|request| request.path == "/api/version")
+    );
+
+    let remote = config
+        .replace(&fixture.endpoint, "https://provider.invalid")
+        .replace("allow_remote = false", "allow_remote = true");
+    let output = run_fixture_agent(&scratch, &remote, &["--resume"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("local host limits require loopback providers")
+    );
+}
+
+#[test]
 fn startup_residency_fences_external_models_and_charges_memory() {
     let fixture = HttpFixture::new(false);
     let scratch = ScratchDirectory::new();

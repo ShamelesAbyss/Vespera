@@ -1,4 +1,5 @@
 //! Compose validated configuration into real providers, registry, scheduling and agents.
+pub use crate::host_limits::LocalHostLimits;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use vespera_agents::{
     AgentRuntime, AgentRuntimeError, ExecutionError, ExecutionOptions, MemoryContext,
     TaskExecutionResult,
 };
-use vespera_config::{AppConfig, ConfigError};
+use vespera_config::{AppConfig, ConfigError, ProviderConfig};
 use vespera_core::{
     AgentId, AgentStatus, ModelAvailability, ModelId, ModelSelectionPolicy, Permission, ProviderId,
     ProviderKind, Task,
@@ -29,6 +30,12 @@ use vespera_scheduler::{
 /// Application errors deliberately exclude configuration endpoints/credential values.
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    /// Process host measurements cannot represent a remote provider's machine.
+    #[error("local host limits require loopback providers")]
+    LocalHostLimitsRequireLoopback,
+    /// Opt-in host limits require positive observed RAM and CPU capacity.
+    #[error("local host limits could not establish positive RAM and CPU capacity")]
+    LocalHostLimitsUnavailable,
     /// The optional startup residency guard could not establish safe accounting.
     #[error("startup residency reconciliation failed: {0}")]
     StartupResidency(SchedulerError),
@@ -121,14 +128,7 @@ pub async fn configured_registry(config: &AppConfig) -> Result<Arc<ModelRegistry
     config.validate()?;
     let registry = Arc::new(ModelRegistry::new());
     for declared in &config.providers {
-        let endpoint = ValidatedEndpoint::parse(
-            declared.id,
-            &declared.endpoint,
-            EndpointPolicy {
-                allow_remote_https: config.network.allow_remote,
-                allow_insecure_remote_http: config.network.allow_insecure_http,
-            },
-        )?;
+        let endpoint = configured_endpoint(config, declared)?;
         let auth_secret_ref = declared
             .credential_env
             .as_ref()
@@ -193,6 +193,7 @@ pub struct VesperaRuntime {
     scheduler: Arc<ResourceScheduler>,
     agents: AgentRuntime,
     orchestrator: Orchestrator,
+    local_host_limits: Option<LocalHostLimits>,
 }
 /// A charged model reservation, separate from measured provider residency.
 #[derive(Debug, Serialize)]
@@ -232,6 +233,20 @@ fn scope_inventory(config: &mut AppConfig) {
         .scheduling
         .model_priorities
         .retain(|model, _| models.contains(model));
+}
+
+fn configured_endpoint(
+    config: &AppConfig,
+    provider: &ProviderConfig,
+) -> Result<ValidatedEndpoint, ProviderError> {
+    ValidatedEndpoint::parse(
+        provider.id,
+        &provider.endpoint,
+        EndpointPolicy {
+            allow_remote_https: config.network.allow_remote,
+            allow_insecure_remote_http: config.network.allow_insecure_http,
+        },
+    )
 }
 
 impl VesperaRuntime {
@@ -358,8 +373,22 @@ impl VesperaRuntime {
     }
     /// Construct without network requests or model activation.
     pub async fn from_config(config: &AppConfig) -> Result<Self, RuntimeError> {
-        let registry = configured_registry(config).await?;
         let settings = &config.scheduling;
+        let local_host_limits = if settings.local_host_limits {
+            config.validate()?;
+            for provider in &config.providers {
+                if !configured_endpoint(config, provider)?.is_loopback() {
+                    return Err(RuntimeError::LocalHostLimitsRequireLoopback);
+                }
+            }
+            Some(
+                LocalHostLimits::collect(config.resources)
+                    .ok_or(RuntimeError::LocalHostLimitsUnavailable)?,
+            )
+        } else {
+            None
+        };
+        let registry = configured_registry(config).await?;
         let keep_alive = settings.keep_alive_seconds.map(u64::from);
         let scheduler = Arc::new(ResourceScheduler::new_configured(
             registry.clone(),
@@ -368,7 +397,8 @@ impl VesperaRuntime {
                     capacity: settings.queue_capacity,
                     max_priority_bypasses: settings.max_priority_bypasses,
                 },
-                budget: config.resources,
+                budget: local_host_limits
+                    .map_or(config.resources, |limits| limits.effective_budget),
                 default_keep_alive: Duration::from_secs(keep_alive.unwrap_or(300)),
                 evict_idle_on_pressure: settings.evict_idle_on_pressure,
             },
@@ -388,11 +418,17 @@ impl VesperaRuntime {
             scheduler,
             agents,
             orchestrator,
+            local_host_limits,
         })
     }
     /// Access the trusted agent control plane.
     pub fn agents(&self) -> &AgentRuntime {
         &self.agents
+    }
+
+    /// Returns the optional startup evidence used to tighten the scheduler budget.
+    pub fn local_host_limits(&self) -> Option<LocalHostLimits> {
+        self.local_host_limits
     }
     pub fn orchestrator(&self) -> &Orchestrator {
         &self.orchestrator

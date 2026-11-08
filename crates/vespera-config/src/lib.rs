@@ -60,6 +60,7 @@ pub struct SchedulingConfig {
     pub keep_alive_seconds: Option<u32>,
     pub evict_idle_on_pressure: bool,
     pub model_priorities: BTreeMap<ModelId, u8>,
+    pub local_host_limits: bool,
 }
 
 impl Default for SchedulingConfig {
@@ -70,6 +71,7 @@ impl Default for SchedulingConfig {
             keep_alive_seconds: None,
             evict_idle_on_pressure: true,
             model_priorities: BTreeMap::new(),
+            local_host_limits: false,
         }
     }
 }

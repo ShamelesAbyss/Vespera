@@ -168,6 +168,25 @@ preload and inference. With the setting omitted, preload requests 300 seconds
 and inference uses the provider default. Compatible APIs lack a portable
 retention hint. An explicit cleanup unload overrides the requested retention.
 
+### Local host limits
+
+Set `local_host_limits = true` in `[scheduling]` to tighten the declared
+budget at runtime startup. This opt-in requires loopback providers in the
+runtime's selected scope. It caps RAM by available physical memory and, on
+Linux when observed, this process's cgroup headroom. It caps inference slots
+by the process's available parallelism. Startup fails when positive RAM and
+CPU capacity cannot be established.
+
+`run-agent --json` and `run-workflow --json` include the observations and
+effective ceilings in `local_host_limits`. Scheduler telemetry publishes the
+effective budget. These are startup observations and can change while the
+runtime is active. A loopback proxy or a provider running in a different
+cgroup may have different limits. External provider reservations are still
+charged by residency reconciliation, which can conservatively reduce
+headroom already reflected in the host sample. The VRAM budget remains the
+operator declaration because the runtime cannot identify the provider's
+actual GPU capacity from the host sample.
+
 Cancelled or dropped waiting futures remove their tickets synchronously. Queue
 permits follow inference lease lifetime, so preparation errors and handle drop
 return capacity. Waiting on a per-model lifecycle gate also consumes a granted
