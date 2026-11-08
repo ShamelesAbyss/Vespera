@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-08 — Sequential desktop workflow authoring
+
+Checkpoint `7be1c1c5ad48af733fc0ef53c2643487defb7051` adds **Build workflow** to Models & Providers. The editor reviews two to six sequential assignments before submission. The selected coordinator owns the first step and explicitly grants delegation. Each later step consumes the preceding result as untrusted input. The runner preserves the same-provider, suspension, resource estimate, and roster revision checks and uses the existing durable workflow store. Branching plans and clipboard paste in the desktop editor remain open.
+
+In the native Windows walkthrough, `atlas` → `scribe` → `atlas` completed through Ollama with `hermes3:8b` in 22,047 ms. F7 reopened three completed attempts and focused Swarm on the run's two agents and five observed links. The previous packaged CLI reopened the same checkpoint and verified both dependency edges and the selected third step. The copied roster remained byte-identical, and Ollama reported zero resident models after cleanup. The walkthrough exposed an unsupported punctuation glyph and cramped controls. The final source uses an ASCII label and gives the review screen an extra row. Strict graphics Clippy and the graphics suite passed on Windows and Ubuntu WSL2 with 30 passed and one NVML test ignored on each. [Workflow builder](CLI.md#author-a-sequential-desktop-workflow)
+
+The hosted Windows lifecycle job for `ac71d30` passed per-user install, upgrade, downgrade rejection and restore, including the new installed notice hash checks. [Installer evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42528957993/job/128878659581)
+
 ## 2026-11-08 — Provisional freeware license and notice packaging
 
 Checkpoint `ac71d30cf12c3011ee23cf45ffeb3c9eccebe5cd` installs the provisional Proprietary Freeware License v1.0, records Christopher Dodd as the proposed rights holder for original material he owns, and keeps public distribution subject to owner and legal approval. The Windows x64 inventory lists 422 resolved third-party package versions. The embedded Fira Mono notice was taken from Bevy 0.20.1's source revision, and the existing art notices remain intact. Formatting and the packager test passed. The local WiX rehearsal extracted six license and notice files with matching staged hashes. The hosted MSI lifecycle now checks the installed notice hashes after upgrade. An optimized headless staging run from `259c2120e7dccd7ccc1bec2c52bc92ae7c337ac2` verified the provisional license and all three new notice files against its manifest. The [notice index](../THIRD_PARTY_NOTICES.md) tracks outstanding artifact-specific obligations. Signing and ownership approval remain open.
