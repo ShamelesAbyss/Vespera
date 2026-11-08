@@ -145,7 +145,7 @@ Keep read-only operation as the default, require explicit authorization for cont
 
 Record reproducible bounded experiments, not model opinions presented as research results.
 
-The [world policy runner](CLI.md#compare-two-world-policies) compares two roster policies with paired seed rotations. It exports reproducible redacted configuration, observed outcome denominators, execution measurements and replayable event references. Live-provider model and orchestration comparisons remain open.
+The [world policy runner](CLI.md#compare-two-world-policies) compares roster policies with paired seed rotations and durable replay. The [live model runner](CLI.md#compare-two-live-model-bindings) compares two fixed local Ollama models on identical private cases, with measured execution and reported version provenance. Live orchestration and memory policy comparisons remain open.
 
 - Export configuration, seed, model/provider versions, event references, measured latency/resources, and known unknowns.
 - Reproduce a deterministic fixture's metrics; mark live-provider nondeterminism and missing measurements.

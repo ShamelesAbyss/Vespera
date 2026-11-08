@@ -6,6 +6,7 @@ mod doctor;
 mod event_commands;
 mod experiment;
 mod memory_commands;
+mod model_experiment;
 mod scheduler_telemetry;
 mod world_commands;
 
@@ -130,6 +131,8 @@ enum Command {
     World(world_commands::WorldArgs),
     /// Compare two resident roster policies with paired deterministic seeds.
     ExperimentWorld(experiment::Args),
+    /// Compare two fixed local Ollama model bindings on the same private workload.
+    ExperimentModels(model_experiment::Args),
     /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {
         /// Strict JSON access policy with environment variable references.
@@ -359,6 +362,12 @@ enum AppError {
     World(#[from] vespera_world::WorldError),
     #[error("cannot create a fresh experiment evidence directory: {0}")]
     ExperimentDirectory(std::io::Error),
+    #[error("invalid model experiment: {0}")]
+    ModelExperimentInput(&'static str),
+    #[error(
+        "model experiment timed out, was interrupted, or could not confirm cleanup; inspect its report"
+    )]
+    ModelExperimentStopped,
     #[error("world revision {revision} committed but event publication failed: {source}")]
     WorldEventPublication {
         revision: u64,
@@ -528,6 +537,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::Events(args) => event_commands::run(args).await?,
         Command::World(args) => world_commands::run(args).await?,
         Command::ExperimentWorld(args) => experiment::run(args)?,
+        Command::ExperimentModels(args) => model_experiment::run(args).await?,
         Command::Serve {
             access_file,
             listen,

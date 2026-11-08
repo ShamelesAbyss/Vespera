@@ -489,6 +489,147 @@ fn runtime_config(fixture: &HttpFixture, openai: bool, known_costs: bool) -> Str
         sample
     }
 }
+
+#[test]
+fn live_model_experiment_pairs_the_workload_and_redacts_report_and_events() {
+    let baseline = HttpFixture::with_ollama_answer(false, "private first answer");
+    let candidate = HttpFixture::with_ollama_answer(false, "private second answer");
+    let directory = ScratchDirectory::new();
+    let second_model = "55555555-5555-4555-8555-555555555555";
+    let config = format!(
+        r#"{}
+[[providers]]
+id = "44444444-4444-4444-8444-444444444444"
+name = "Private provider"
+kind = "ollama"
+endpoint = "{}"
+
+[[models]]
+id = "{second_model}"
+provider_id = "44444444-4444-4444-8444-444444444444"
+name = "Private candidate"
+identifier = "fixture-model"
+capabilities = ["text-generation"]
+availability = "available"
+context_window_tokens = 512
+[models.resources]
+ram_bytes = 100
+vram_bytes = 0
+"#,
+        runtime_config(&baseline, false, true),
+        candidate.endpoint
+    );
+    let config = directory.write_config(&config);
+    let workload = directory.0.join("private-workload.json");
+    fs::write(
+        &workload,
+        r#"[
+        {"prompt":"private first question","expected":"private first answer"},
+        {"prompt":"private second question","expected":"private second answer"}
+    ]"#,
+    )
+    .unwrap();
+    let evidence = directory.0.join("evidence");
+    let flags = [
+        "experiment-models",
+        "--config",
+        config.to_str().unwrap(),
+        "--agent",
+        AGENT,
+        "--baseline-model",
+        "22222222-2222-4222-8222-222222222222",
+        "--candidate-model",
+        second_model,
+        "--workload",
+        workload.to_str().unwrap(),
+        "--evidence-dir",
+        evidence.to_str().unwrap(),
+        "--resume",
+    ];
+    let output = execute(&flags);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["nondeterministic"], true);
+    for arm in ["baseline", "candidate"] {
+        assert_eq!(report["summary"][arm]["attempted"], 2);
+        assert_eq!(report["summary"][arm]["matches"], 1);
+        assert_eq!(report["summary"][arm]["mismatches"], 1);
+    }
+    let trials = report["trials"].as_array().unwrap();
+    let page = vespera_events::Journal::open_reader(&evidence.join("events.sqlite3"))
+        .unwrap()
+        .replay(None, 32)
+        .unwrap();
+    assert_eq!(page.entries.len(), 4);
+    for ((trial, entry), expected_arm) in
+        trials
+            .iter()
+            .zip(&page.entries)
+            .zip(["baseline", "candidate", "candidate", "baseline"])
+    {
+        assert_eq!(trial["arm"], expected_arm);
+        assert_eq!(trial["cleanup_confirmed"], true);
+        assert_eq!(trial["inference"]["completion_tokens"], 3);
+        assert!(trial["provider"]["resident_vram_bytes"].is_null());
+        assert_eq!(
+            trial["task_id"],
+            entry.event.correlation_task_id.unwrap().to_string()
+        );
+        assert_eq!(
+            trial["event_cursor"],
+            serde_json::to_value(entry.cursor).unwrap()
+        );
+        assert!(matches!(
+            entry.event.kind,
+            vespera_core::EventKind::InferenceCompleted { .. }
+        ));
+    }
+    let public = String::from_utf8(output.stdout).unwrap() + &serde_json::to_string(&page).unwrap();
+    for private in [
+        "private first",
+        "private second",
+        "fixture-model",
+        &baseline.endpoint,
+        &candidate.endpoint,
+    ] {
+        assert!(!public.contains(private));
+    }
+    for fixture in [&baseline, &candidate] {
+        let requests = fixture.captured();
+        let prompts = requests
+            .iter()
+            .filter(|request| request.path == "/api/chat")
+            .map(|request| &request.body)
+            .collect::<Vec<_>>();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[0].contains("private first question"));
+        assert!(prompts[1].contains("private second question"));
+    }
+    assert!(!execute(&flags).status.success());
+
+    let candidate_requests = candidate.captured().len();
+    baseline.inference_delay_ms.store(1300, Ordering::SeqCst);
+    let timeout_dir = directory.0.join("timeout");
+    let mut timeout_flags = flags.to_vec();
+    let evidence_index = timeout_flags
+        .iter()
+        .position(|flag| *flag == "--evidence-dir")
+        .unwrap();
+    timeout_flags[evidence_index + 1] = timeout_dir.to_str().unwrap();
+    timeout_flags.extend(["--timeout-seconds", "1"]);
+    let timed = execute(&timeout_flags);
+    assert!(!timed.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&timed.stdout).unwrap();
+    assert_eq!(report["stopped_early"], true);
+    assert_eq!(report["summary"]["baseline"]["deadlines"], 1);
+    assert_eq!(report["summary"]["candidate"]["attempted"], 0);
+    assert_eq!(candidate.captured().len(), candidate_requests);
+}
+
 #[test]
 fn world_model_choices_are_authorized_bounded_and_revision_fenced() {
     use std::time::{Duration, Instant};

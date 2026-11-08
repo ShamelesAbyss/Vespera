@@ -471,6 +471,26 @@ The command writes JSON to stdout and creates a new evidence directory containin
 
 Export `configuration.world` as JSON and supply the recorded parameters with a fresh evidence directory to repeat the deterministic metrics. Execution timings, process memory readings and event UUIDs vary between runs. Timing includes the policy and tick commits, with the initial database creation outside the measurement. Process memory is a single end-of-run reading. The report records no inference latency or GPU measurements for this offline experiment. The seed range describes the configured simulation, and it does not support a population-level statistical claim. If a trial encounters a storage error, the command exits unsuccessfully and completed evidence databases remain available.
 
+### Compare two live model bindings
+
+Register two models on native loopback Ollama and select one configured agent. Save a private UTF-8 JSON workload with 1–16 cases. Each case has exactly two string fields.
+
+```json
+[
+  { "prompt": "What is 3 plus 4? Reply with the number only.", "expected": "7" }
+]
+```
+
+```powershell
+cargo run --locked -p vespera-app -- experiment-models --config config/local.private.toml --agent $agent --baseline-model $baseline --candidate-model $candidate --workload data/model-cases.json --evidence-dir target/model-comparison --resume > target/model-comparison.json
+```
+
+The workload is limited to 128 KiB. A prompt can be up to 16 KiB and expected text up to 4 KiB. Each case runs once per arm in a fresh runtime with the same agent profile, with the order alternating by case. The runner fixes the model binding for that trial, checks provider residency before admission, and requests unload of locally owned reservations after execution. Existing evidence directories are refused. Use `--model-catalog <PATH>` to load registrations from a catalog. The defaults are 512 context tokens, 32 output tokens and 30 seconds per trial. `--context-tokens` accepts 64–32,768, `--max-output-tokens` accepts 1–1,024 and `--timeout-seconds` accepts 1–120. `--resume` activates a suspended or failed agent within each trial.
+
+Scoring is case-sensitive exact text comparison after trimming outer whitespace. The report keeps separate counts for planned trials, attempts, matches, mismatches, failures, deadlines and interruptions. A timeout, interruption or unconfirmed cleanup stops the comparison and returns a nonzero exit code with the observed report. End-to-end timing includes startup residency checks, admission and inference. Provider execution counters and post-task model residency are reported separately when available. Reported model digests and provider versions are observed around each trial. They do not pin the backend or make inference deterministic. An unavailable measurement is null.
+
+Keep the workload and configuration to rerun the comparison. The JSON and the journal omit prompts, expected answers, model output, provider-native names, endpoints and credentials. The journal retains terminal observations with task IDs and cursors, and a trial that never reached a terminal task can have a null cursor. Use `events --journal target/model-comparison/events.sqlite3 replay` to inspect the observed events. Compare results within the stated cases and resource bounds.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.
