@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — NVIDIA VRAM admission limit
+
+Verified implementation checkpoint `69ddd91f1ec9279fdb30756c7d367a00fb236d0c` was pushed to `main`. Observed-latency routing passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42428793122).
+
+Opt-in `[scheduling].ollama_gpu_uuid` uses NVML free VRAM to tighten the startup ceiling for a single native loopback Ollama provider. A fixture verified that an unobservable device and an incompatible provider scope fail before provider traffic. Unit tests covered a fully occupied device, a smaller measured ceiling and preservation of a smaller declared ceiling. Windows formatting, strict workspace Clippy and offline workspace tests passed.
+
+On the Windows RTX 4070 Laptop GPU, NVML reported 8,585,740,288 total bytes and 6,756,495,360 free bytes. Ollama 0.40.13 rejected an 8 GiB scheduler estimate before loading `hermes3:8b`. With a 5 GiB estimate the same task completed and acknowledged unload. Residency was empty afterward. The operator supplies device attribution, and the measurements describe startup headroom. The Milestone 5 gates are verified in the documented native scope. Milestone 6 proceeds with durable workflow lineage and interruption recovery.
+
 ## 2026-11-07 — Observed-latency model routing
 
 Verified implementation checkpoint `78dacbd8703addc0c132d630ed64175076fa57c2` was pushed to `main`. Local host admission limits passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42428151048).
