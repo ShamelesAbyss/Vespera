@@ -29,9 +29,22 @@ Inspired by NVIDIA Omniverse's idea of a shared workspace, Vespera brings AI mod
 
 An agent keeps its identity when you change its model. The registry records which models are available, the scheduler decides whether a task fits its configured budgets, and the runtime records who performed the work. The Intelligence Atlas visualizes the evidence those systems produce. Living World uses a separate simulation engine and labels simulated state explicitly.
 
-![Living World in the Windows desktop with a committed starter world and its inspector](assets/screenshots/living-world.jpg)
+![The Living World starter island in the native Windows app, with branching paths, resource drills, and the simulation inspector](assets/screenshots/living-world.jpg)
 
-*Living World at revision 0 in the native Windows app. The inspector reports committed simulation state.*
+*The starter island at revision 0. Its residents, depot, and resource drills are visible as soon as the scene loads.*
+
+<details>
+<summary>Explore the settlement and resident inspector</summary>
+
+![Ten habitat modules around the depot in Living World](assets/screenshots/living-world-settlement.jpg)
+
+*The example world at revision 95, with ten committed shelters.*
+
+![A selected builder beside the depot, with a cyan selection ring and the resident inspector](assets/screenshots/living-world-resident.jpg)
+
+*Camera focus on a builder. The inspector shows the resident's current goal, grid position, inventory, and recorded relationships.* [Controls, measurements, and art credits](docs/WORLD_VISUALS.md)
+
+</details>
 
 <details>
 <summary>See a completed two-agent desktop workflow</summary>
@@ -52,10 +65,10 @@ An agent keeps its identity when you change its model. The registry records whic
 | **Persistent memory and events** | Private SQLite memory namespaces, bounded phrase retrieval, consolidation with lineage, backup and restore, and opt-in memory context. A separate event journal retains sanitized observations with cursors and checkpoint recovery. [Memory](docs/MEMORY.md) · [Events](docs/CLI.md#local-task-outcome-journal) |
 | **External workers** | An authenticated broker and Rust SDK with signed HTTP actions, fenced leases, cancellation, scoped replay and live WebSockets. Broker SQLite recovery and opt-in TLS are available. [Implemented protocol](docs/PROTOCOL.md#implemented-loopback-worker-api) |
 | **Intelligence Atlas** | Machine shows host and opted-in scheduler evidence. Intelligence Network shows signed broker tasks and workers. Swarm follows committed desktop workflow observations, or reads delegation, dependencies and messages from configured sources. Select, inspect, navigate and replay retained evidence. [Atlas controls](docs/CLI.md#switch-layers-in-atlas) |
-| **Living World** | Persistent seeded worlds with foragers, builders, resources, a depot, shelters and encounters. Advance or inspect committed revisions, or authorize bounded model-assisted resident decisions. [Simulation](docs/CLI.md#persistent-world-simulation) |
+| **Living World** | Explore a seeded 3D coastal settlement with textured buildings and articulated residents. Select foragers, builders, the depot, or resource drills. Committed state drives movement, stock, and shelters. Step, play, replay retained revisions, or authorize bounded model-assisted decisions. [Native viewer](docs/WORLD_VISUALS.md) · [Simulation commands](docs/CLI.md#persistent-world-simulation) |
 | **Experiments** | Compare deterministic world policies or paired local Ollama models, retrieval policies and authored workflows. Reports separate observed timings, outcomes and missing measurements. [Experiment commands](docs/CLI.md#compare-two-world-policies) |
 
-The OpenAI-compatible adapter leaves explicit load, unload and residency to the provider. Its logical context budget does not establish the actual backend allocation. The desktop provider panel currently handles unauthenticated loopback endpoints. [Context and lifecycle evidence](docs/PROVIDERS.md#resource-observations-and-lifecycle)
+The OpenAI-compatible adapter leaves explicit load, unload and residency to the provider. Vespera uses its logical context budget for admission. The desktop provider panel connects to loopback endpoints and can use credentials supplied through environment-variable references. An authenticated OpenAI-compatible fixture verified discovery and execution from a saved desktop binding. [Context and lifecycle evidence](docs/PROVIDERS.md#resource-observations-and-lifecycle)
 
 ## Getting started
 
@@ -109,7 +122,11 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view
 3. Choose **New agent** and press the number next to an exposed model. Enter the agent name, role, and credible RAM and VRAM estimates in MiB.
 4. Choose **Run agent task**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
 
+For a loopback server that requires authentication, set the token in the desktop launch environment and choose **Credential reference** before discovery. Enter the environment variable name. [PowerShell and Bash setup](docs/CLI.md#discover-local-models-in-the-desktop)
+
 Home also opens Hardware and a starter world before any provider is configured. **F5** returns Home. **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review**. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
+
+To explore the island, choose **Create or resume world** on Home. Right-drag to orbit, scroll to zoom, and use **WASD** to pan. Click an entity to inspect it. **F** focuses the camera and **R** returns to the overview. **Space** commits one tick and **P** toggles playback. [Living World controls and replay](docs/WORLD_VISUALS.md)
 
 ## Commands and examples
 
@@ -313,11 +330,13 @@ The offline suites use local fixtures. Opt-in live tests require their named dae
 
 ## Roadmap and project status
 
-Vespera is under active development. The Windows desktop has verified Home, hardware inspection, persistent world controls, native and compatible inference, durable agent history, branded installation and a live two-agent workflow. Headless tests run in Ubuntu CI. The milestone ledger distinguishes those checks from work that still needs broader evidence.
+Vespera is under active development. The Windows desktop has verified Home, hardware inspection, persistent world controls, native and compatible inference, durable agent history, branded installation and a live two-agent workflow. Headless tests run in Ubuntu CI.
+
+The rebuilt Living World was exercised from Home and Atlas on Windows. At 1200×800 on an RTX 4070 Laptop GPU, the development build recorded p95 update intervals of 11.63 ms for the example settlement and 12.66 ms for a 64×64 fixture. The samples cover steady views on that adapter. [Fixture details and measurement scope](docs/WORLD_VISUALS.md#windows-validation)
 
 | Next area | Work underway or still open |
 | --- | --- |
-| **Desktop and Atlas** | Broader workflow authoring, authenticated provider management, and persistent settings |
+| **Desktop and Atlas** | Broader workflow authoring, OS-backed credential management, and persistent settings |
 | **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
 | **Release** | Signing, a supported production installer toolchain, macOS packaging and the owner's license decision |
 
