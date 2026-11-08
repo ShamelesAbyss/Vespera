@@ -1364,6 +1364,9 @@ required = ["text-generation"]
     let config_path = directory.write_config(&config);
     let path = config_path.to_str().unwrap();
     let content = directory.0.join("message.txt");
+    let journal = directory.0.join("inbox-events.sqlite3");
+    let event_path = journal.to_str().unwrap();
+    drop(vespera_events::Journal::initialize(&journal, 16).unwrap());
     let inbox = |actor, action: &[&str]| {
         let mut args = vec![
             "agent-inbox",
@@ -1388,6 +1391,8 @@ required = ["text-generation"]
                 content.to_str().unwrap(),
                 "--task",
                 task,
+                "--event-journal",
+                event_path,
             ],
         )
     };
@@ -1395,14 +1400,64 @@ required = ["text-generation"]
     let denied = send(receiver, receiver, task);
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("not an authorized source reference"));
+    let injector = rusqlite::Connection::open(&journal).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_message_event BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
     let first = send(AGENT, receiver, task);
+    assert!(!first.status.success());
+    assert!(String::from_utf8_lossy(&first.stderr).contains("message at logical tick 1 committed"));
+    injector
+        .execute_batch("DROP TRIGGER reject_fixture_message_event")
+        .unwrap();
+    let recover = |after: Option<&str>| {
+        let mut args = vec![
+            "events",
+            "--journal",
+            event_path,
+            "recover-agent-messages",
+            "--task-store",
+            db,
+            "--limit",
+            "1",
+        ];
+        if let Some(cursor) = after {
+            args.extend(["--after", cursor]);
+        }
+        execute(&args)
+    };
+    let recovered = recover(None);
     assert!(
-        first.status.success(),
+        recovered.status.success(),
         "{}",
-        String::from_utf8_lossy(&first.stderr)
+        String::from_utf8_lossy(&recovered.stderr)
     );
+    let recovered: serde_json::Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(recovered["submitted_events"], 1);
+    let cursor = recovered["next_source_cursor"].as_str().unwrap();
     fs::write(&content, "second message").unwrap();
     assert!(send(AGENT, receiver, task).status.success());
+    let second = recover(Some(cursor));
+    assert!(second.status.success());
+    let second: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second["submitted_events"], 1);
+    let other_store = directory.0.join("other-task-store.sqlite3");
+    drop(vespera_agents::AgentTaskStore::open(&other_store).unwrap());
+    let foreign = execute(&[
+        "events",
+        "--journal",
+        event_path,
+        "recover-agent-messages",
+        "--task-store",
+        other_store.to_str().unwrap(),
+        "--after",
+        cursor,
+    ]);
+    assert!(!foreign.status.success());
+    assert!(String::from_utf8_lossy(&foreign.stderr).contains("foreign agent inbox audit cursor"));
     let output = inbox(receiver, &["list"]);
     assert!(
         output.status.success(),
@@ -1444,6 +1499,22 @@ required = ["text-generation"]
     assert!(revoked.stdout.is_empty());
     assert!(!send(AGENT, receiver, task).status.success());
     assert_eq!(fixture.captured().len(), calls);
+    let entries = vespera_events::Journal::open_reader(&journal)
+        .unwrap()
+        .replay(None, 16)
+        .unwrap()
+        .entries;
+    assert_eq!(entries.len(), 2);
+    for entry in &entries {
+        assert_eq!(entry.event.correlation_task_id.unwrap().to_string(), task);
+        assert!(
+            matches!(entry.event.kind, vespera_core::EventKind::AgentMessageSent { from_agent_id, to_agent_id }
+            if from_agent_id.to_string() == AGENT && to_agent_id.to_string() == receiver)
+        );
+    }
+    let encoded = serde_json::to_string(&entries).unwrap();
+    assert!(!encoded.contains("first message"));
+    assert!(!encoded.contains("second message"));
 }
 
 #[test]

@@ -161,17 +161,28 @@ pub(crate) async fn agent_inbox(
             to,
             message_file,
             task,
+            event_journal,
         } => {
             let content =
                 crate::memory_commands::read_text(&message_file, 64 * 1024, "message_file")?;
+            let mut journal = event_commands::prepare(event_journal).await?;
             runtime
                 .attach_task_store(AgentTaskStore::open(database)?)
                 .map_err(RuntimeError::from)?;
-            let message = runtime
-                .send_message(actor, to, content, task)
+            let (message, event) = runtime
+                .send_message_observed(actor, to, content, task)
                 .await
                 .map_err(RuntimeError::from)?;
             println!("{}", serde_json::to_string_pretty(&message)?);
+            if let Some(journal) = &mut journal {
+                event
+                    .ok_or(vespera_events::JournalError::Invalid("missing inbox event"))
+                    .and_then(|event| journal.append(&event))
+                    .map_err(|source| AppError::InboxEventPublication {
+                        tick: message.logical_tick,
+                        source,
+                    })?;
+            }
         }
     }
     Ok(())

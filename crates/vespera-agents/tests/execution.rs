@@ -555,7 +555,8 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
         let db = rusqlite::Connection::open(&path).unwrap();
         db.execute_batch(
             "ALTER TABLE agent_tasks DROP COLUMN terminal_event;
-             DROP TABLE agent_messages; DROP TABLE agent_suspensions; PRAGMA user_version=1;",
+             DROP TABLE agent_inbox_source; DROP TABLE agent_messages;
+             DROP TABLE agent_suspensions; PRAGMA user_version=1;",
         )
         .unwrap();
         db.execute(
@@ -576,7 +577,7 @@ async fn operator_suspension_migrates_legacy_history_and_fences_runtime_activati
         let db = rusqlite::Connection::open(&path).unwrap();
         db.execute_batch(
             "ALTER TABLE agent_tasks DROP COLUMN terminal_event;
-                          DROP TABLE agent_messages; PRAGMA user_version=2;",
+                          DROP TABLE agent_inbox_source; DROP TABLE agent_messages; PRAGMA user_version=2;",
         )
         .unwrap();
     }

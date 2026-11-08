@@ -33,6 +33,15 @@ enum EventCommand {
         #[arg(long)]
         task: TaskId,
     },
+    /// Publish a bounded page of sanitized durable inbox events.
+    RecoverAgentMessages {
+        #[arg(long)]
+        task_store: PathBuf,
+        #[arg(long)]
+        after: Option<vespera_agents::InboxAuditCursor>,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=256))]
+        limit: u32,
+    },
     /// Publish the retained tick-advance event for a committed world revision.
     RecoverWorldAdvance {
         #[arg(long)]
@@ -93,6 +102,25 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
                 .ok_or(JournalError::Invalid("durable terminal event unavailable"))?;
             let cursor = Journal::open_writer(&args.journal)?.append(&event)?;
             Ok(serde_json::json!({"cursor": cursor, "event_id": event.event_id}))
+        }
+        EventCommand::RecoverAgentMessages {
+            task_store,
+            after,
+            limit,
+        } => {
+            let page =
+                vespera_agents::AgentTaskStore::inspect_inbox_audit(&task_store, after, limit)?;
+            let cursor = if page.events.is_empty() {
+                None
+            } else {
+                Some(Journal::open_writer(&args.journal)?.append_batch(&page.events)?)
+            };
+            Ok(serde_json::json!({
+                "journal_cursor": cursor,
+                "next_source_cursor": page.next_cursor.map(|cursor| cursor.to_string()),
+                "has_more": page.has_more,
+                "submitted_events": page.events.len(),
+            }))
         }
         EventCommand::RecoverWorldAdvance { database, revision } => {
             let event = vespera_world::WorldStore::advance_event(&database, revision)?.ok_or(

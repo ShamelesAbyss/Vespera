@@ -28,7 +28,9 @@ pub use execution::{ExecutionError, ExecutionOptions, MemoryContext, TaskExecuti
 mod limits;
 mod task_store;
 pub use limits::{RuntimeLimits, RuntimeUsage};
-pub use task_store::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask};
+pub use task_store::{
+    AgentTaskStore, AgentTaskStoreError, InboxAuditCursor, InboxAuditPage, StoredAgentTask,
+};
 
 /// Current agent grants/accepted assignments, shared with durable storage without
 /// making model/provider identity an owner. Caller identity remains a trusted boundary.
@@ -663,6 +665,19 @@ impl AgentRuntime {
         content: String,
         task_id: Option<TaskId>,
     ) -> Result<AgentMessage, AgentRuntimeError> {
+        self.send_message_observed(from_agent_id, to_agent_id, content, task_id)
+            .await
+            .map(|(message, _)| message)
+    }
+
+    /// Return the audit envelope when the message committed to durable storage.
+    pub async fn send_message_observed(
+        &self,
+        from_agent_id: AgentId,
+        to_agent_id: AgentId,
+        content: String,
+        task_id: Option<TaskId>,
+    ) -> Result<(AgentMessage, Option<EventEnvelope>), AgentRuntimeError> {
         if content.trim().is_empty() {
             return Err(AgentRuntimeError::Domain(DomainError::EmptyField {
                 field: "message.content",
@@ -713,9 +728,9 @@ impl AgentRuntime {
                 task_id,
                 logical_tick: state.logical_tick.saturating_add(1),
             };
-            store.insert_message(&message, self.limits)?;
+            let event = store.insert_message(&message, self.limits)?;
             state.logical_tick = message.logical_tick;
-            return Ok(message);
+            return Ok((message, Some(event)));
         }
         if state
             .inbox
@@ -740,7 +755,7 @@ impl AgentRuntime {
             .entry(to_agent_id)
             .or_default()
             .push(message.clone());
-        Ok(message)
+        Ok((message, None))
     }
 
     /// Lists all messages delivered to an agent's inbox.

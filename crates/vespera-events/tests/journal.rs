@@ -25,6 +25,58 @@ fn event() -> EventEnvelope {
 }
 
 #[test]
+fn concurrent_recovery_reuses_ids_and_slow_readers_report_retention_loss() {
+    const WRITERS: usize = 4;
+    const PER_WRITER: usize = 32;
+    let file = File::new();
+    let mut journal = Journal::initialize(&file.0, 128).unwrap();
+    let start = journal.replay(None, 1).unwrap().next_cursor;
+    let batches: Vec<Vec<_>> = (0..WRITERS)
+        .map(|_| (0..PER_WRITER).map(|_| event()).collect())
+        .collect();
+    let barrier = std::sync::Barrier::new(WRITERS);
+    std::thread::scope(|scope| {
+        for batch in &batches {
+            let path = &file.0;
+            let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                let mut writer = Journal::open_writer(path).unwrap();
+                let cursor = writer.append_batch(batch).unwrap();
+                assert_eq!(writer.append_batch(batch).unwrap(), cursor);
+            });
+        }
+    });
+    let mut reader = Journal::open_reader(&file.0).unwrap();
+    let recovered = reader.replay(Some(start), 128).unwrap();
+    assert_eq!(recovered.entries.len(), WRITERS * PER_WRITER);
+    let ids: std::collections::BTreeSet<_> = recovered
+        .entries
+        .iter()
+        .map(|entry| entry.event.event_id)
+        .collect();
+    assert_eq!(ids.len(), WRITERS * PER_WRITER);
+    for batch in &batches {
+        assert!(batch.iter().all(|event| ids.contains(&event.event_id)));
+    }
+    let next: Vec<_> = (0..PER_WRITER).map(|_| event()).collect();
+    journal.append_batch(&next).unwrap();
+    assert!(matches!(
+        reader.replay(Some(start), 128),
+        Err(JournalError::Expired {
+            discarded_through: 32
+        })
+    ));
+    let page = reader.replay(Some(recovered.next_cursor), 128).unwrap();
+    assert!(
+        page.entries
+            .iter()
+            .map(|entry| &entry.event)
+            .eq(next.iter())
+    );
+}
+
+#[test]
 fn restart_replays_in_append_order_and_retention_reports_expired_cursors() {
     let file = File::new();
     let mut writer = Journal::initialize(&file.0, 2).unwrap();

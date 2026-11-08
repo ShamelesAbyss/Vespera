@@ -168,6 +168,10 @@ the same database. `list` requires an existing database and can migrate older
 schema versions. Both commands return JSON and work offline. Use a private
 local path and issue the commands between invocations using that database.
 
+Add `send --event-journal <PATH>` to publish sanitized message metadata to an
+existing journal. If publication fails, the message remains committed and
+the command returns its logical tick. See [inbox event recovery](#recover-agent-inbox-events).
+
 ## Cleanup and provider sharing
 
 `run-agent` and `run-workflow` accept `--reconcile-residency`. The probes share
@@ -693,6 +697,23 @@ The envelope includes a stable simulation UUID, the logical tick and the
 commit timestamp. Recovery keeps the original event UUID. If the journal
 already retains the event, the command returns its existing cursor. Older
 world revisions written before event storage was added have no envelope.
+
+### Recover agent inbox events
+
+```powershell
+$journal = 'data/events.sqlite3'
+$tasks = 'data/agent-tasks.sqlite3'
+$page = .\target\release\vespera.exe events --journal $journal recover-agent-messages --task-store $tasks --limit 100 | ConvertFrom-Json
+.\target\release\vespera.exe events --journal $journal recover-agent-messages --task-store $tasks --after $page.next_source_cursor --limit 100
+```
+
+Save `next_source_cursor` when present and continue while `has_more` is
+true. Each page has at most 256 envelopes. The cursor is scoped to the task
+database. A retry keeps the original event IDs and reuses their journal
+cursors while retained. The envelopes contain sender and recipient UUIDs
+and an optional task correlation. The message text stays in the private inbox.
+Recovery requires trusted filesystem access and runs after the task store
+writer exits. Older messages remain readable in the inbox.
 
 ### Recover workflow events
 

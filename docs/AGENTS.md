@@ -53,6 +53,8 @@ tick order. The sender and reader each need a current `communicate` grant.
 The recipient must exist in the current configuration. A held sender cannot
 send. A message may reference a stored task when either participant owns it.
 Rebinding a model policy preserves messages under the same agent UUID.
+New durable messages commit a sanitized envelope with the message. The event
+records inbox acceptance and can be [recovered after a journal outage](CLI.md#recover-agent-inbox-events).
 
 The store keeps up to 256 messages per recipient, 4,096 messages total,
 64 KiB per message and 64 MiB of message text across the database. Lower runtime

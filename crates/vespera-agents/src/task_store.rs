@@ -12,9 +12,10 @@ use vespera_core::{AgentId, EventEnvelope, EventKind, Task, TaskId, TaskState};
 use crate::TaskExecutionResult;
 
 mod inbox;
+pub use inbox::{InboxAuditCursor, InboxAuditPage};
 
 const APPLICATION_ID: i64 = 0x56535041;
-const VERSION: i64 = 4;
+const VERSION: i64 = 5;
 const MAX_TASKS: i64 = 256;
 const MAX_SUSPENSIONS: i64 = 256;
 const MAX_BYTES: i64 = 128 * 1024 * 1024;
@@ -22,6 +23,8 @@ const MAX_EVENT_BYTES: i64 = 4096;
 
 #[derive(Debug, Error)]
 pub enum AgentTaskStoreError {
+    #[error("invalid or foreign agent inbox audit cursor")]
+    InvalidInboxCursor,
     #[error("file is not a supported Vespera agent task database")]
     WrongDatabase,
     #[error("agent task database is in use")]
@@ -134,7 +137,7 @@ impl AgentTaskStore {
         if migrate && version < 3 {
             inbox::migrate(&tx)?;
         }
-        if migrate && version < VERSION {
+        if migrate && version < 4 {
             tx.execute(
                 "ALTER TABLE agent_tasks ADD COLUMN terminal_event BLOB
                  CHECK (terminal_event IS NULL OR (
@@ -143,6 +146,9 @@ impl AgentTaskStore {
                 [],
             )
             .map_err(db)?;
+        }
+        if migrate && version < VERSION {
+            inbox::migrate_audit(&tx)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
         }

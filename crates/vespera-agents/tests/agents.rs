@@ -391,7 +391,7 @@ async fn durable_inbox_keeps_its_capacity_and_identity_across_model_rebind_and_r
     runtime
         .attach_task_store(AgentTaskStore::open_existing(&path).unwrap())
         .unwrap();
-    runtime.register_agent(definition).await.unwrap();
+    runtime.register_agent(definition.clone()).await.unwrap();
     runtime
         .rebind_model_policy(
             agent,
@@ -407,8 +407,47 @@ async fn durable_inbox_keeps_its_capacity_and_identity_across_model_rebind_and_r
             .await,
         Err(AgentRuntimeError::TaskStore(AgentTaskStoreError::Capacity))
     ));
-    assert_eq!(runtime.inbox_messages(agent).await.unwrap(), vec![first]);
+    assert_eq!(
+        runtime.inbox_messages(agent).await.unwrap(),
+        vec![first.clone()]
+    );
     drop(runtime);
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "DROP TABLE agent_inbox_source;
+             ALTER TABLE agent_messages DROP COLUMN event;
+             PRAGMA user_version=4;",
+        )
+        .unwrap();
+    }
+    assert!(
+        AgentTaskStore::inspect_inbox_audit(&path, None, 16)
+            .unwrap()
+            .events
+            .is_empty()
+    );
+    let runtime = build_runtime();
+    runtime
+        .attach_task_store(AgentTaskStore::open_existing(&path).unwrap())
+        .unwrap();
+    runtime.register_agent(definition).await.unwrap();
+    let (second, event) = runtime
+        .send_message_observed(agent, agent, "second".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(second.logical_tick, first.logical_tick + 1);
+    assert_eq!(
+        runtime.inbox_messages(agent).await.unwrap(),
+        vec![first, second]
+    );
+    drop(runtime);
+    assert_eq!(
+        AgentTaskStore::inspect_inbox_audit(&path, None, 16)
+            .unwrap()
+            .events,
+        vec![event.unwrap()]
+    );
     std::fs::remove_file(path).unwrap();
 }
 

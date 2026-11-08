@@ -184,6 +184,9 @@ enum AgentInboxAction {
         message_file: PathBuf,
         #[arg(long)]
         task: Option<vespera_core::TaskId>,
+        /// Publish the committed message metadata to an existing local journal.
+        #[arg(long)]
+        event_journal: Option<PathBuf>,
     },
 }
 
@@ -327,6 +330,11 @@ struct ConfigReport {
 enum AppError {
     #[error(transparent)]
     AgentTaskStore(#[from] vespera_agents::AgentTaskStoreError),
+    #[error("message at logical tick {tick} committed but event publication failed: {source}")]
+    InboxEventPublication {
+        tick: u64,
+        source: vespera_events::JournalError,
+    },
     #[error(transparent)]
     Catalog(#[from] vespera_model_registry::CatalogError),
     #[error("model descriptor must be valid strict JSON and fit within 64 KiB")]
