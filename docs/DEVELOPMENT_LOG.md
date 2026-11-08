@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Live paired memory experiments
+
+Verified implementation checkpoint `dcff7bb27f7778f2685c1099fffe659c10cfc2d9`, pushed to `main`.
+
+`experiment-models --memory-database` holds model and agent fixed and compares no retrieval with authorized literal phrase retrieval. Preflight loads candidate snapshots read-only before contacting a provider. Reports carry retrieval duration and the count of records included in successful requests. Formatting, strict Clippy and offline workspace tests passed. The signed-off fixture verified permission denial before provider I/O, isolation from a second owner, a zero-match request, redaction and unchanged database bytes.
+
+Live Ollama with `hermes3:8b` completed all four trials. With one owned observation, the retrieval arm matched the synthetic code case and the baseline missed it. Both arms matched the arithmetic case, for which retrieval found no record. The comparison reported 1/2 and 2/2 exact matches, four terminal journal observations and confirmed cleanup. A separate residency check returned zero models and the memory database hash matched before and after. These scores describe two cases. Live orchestration policy comparisons remain open.
+
 ## 2026-11-07 — Live paired model experiments
 
 Verified implementation checkpoint `aaf324b8310efd510b52b7242deef8abad52b1c3`, pushed to `main`. The offline world experiment checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42441280150).
