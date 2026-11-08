@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Observed-latency model routing
+
+Verified implementation checkpoint `78dacbd8703addc0c132d630ed64175076fa57c2` was pushed to `main`. Local host admission limits passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42428151048).
+
+Opt-in `[scheduling].prefer_observed_latency` ranks eligible capability-based models from recent successful provider call timings. The workflow fixture verified stable cold ordering, preference after both models had observations, and fallback when output bounds changed. Fixed assignments and the authored agent order retain their existing behavior. Windows formatting, strict workspace Clippy and offline workspace tests passed.
+
+On Ollama 0.40.13, a workflow sampled `codestral:22b-v0.1-q2_K` at 12,039 ms and `hermes3:8b` at 116 ms of client-observed provider call time. The third step selected Hermes and completed in a 76 ms provider call. Final residency was empty. A prior Gemma sample exhausted 128 output tokens before visible text and was excluded. The timings describe these calls under their observed conditions. Provider GPU capacity and device attribution remain open.
+
 ## 2026-11-07 — Local host admission limits
 
 Verified implementation checkpoint `005cff016a2e6ea19f5f27640451c8328e652592` was pushed to `main`. The configurable scheduler policy passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42427577547).
