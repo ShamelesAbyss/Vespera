@@ -7,12 +7,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use thiserror::Error;
-use vespera_core::{TaskId, TaskState};
+use tokio::sync::mpsc::UnboundedSender;
+use vespera_core::{EventEnvelope, TaskId, TaskState};
 
 use crate::{Workflow, WorkflowReport};
 
 const APPLICATION_ID: i64 = 0x56535057;
-const VERSION: i64 = 2;
+mod audit;
+
+const VERSION: i64 = 3;
 const MAX_WORKFLOWS: i64 = 16;
 const MAX_PLAN_BYTES: usize = 1024 * 1024;
 const MAX_REPORT_BYTES: usize = 32 * 1024 * 1024;
@@ -60,6 +63,7 @@ pub struct StoredWorkflow {
 pub struct WorkflowStore {
     connection: Mutex<Connection>,
     claimed: Mutex<BTreeSet<TaskId>>,
+    observer: Mutex<Option<(TaskId, UnboundedSender<EventEnvelope>)>>,
 }
 
 impl WorkflowStore {
@@ -123,25 +127,27 @@ impl WorkflowStore {
             .map_err(db)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)
                 .map_err(db)?;
+        } else if id != APPLICATION_ID || !(1..=VERSION).contains(&version) {
+            return Err(WorkflowStoreError::WrongDatabase);
+        }
+        if migrate && version == 1 {
+            tx.execute_batch(
+                "ALTER TABLE workflows ADD COLUMN started_unix_ms INTEGER;
+                     ALTER TABLE workflows ADD COLUMN observed_unix_ms INTEGER;",
+            )
+            .map_err(db)?;
+        }
+        if migrate && version < VERSION {
+            tx.execute_batch("ALTER TABLE workflows ADD COLUMN audit BLOB;")
+                .map_err(db)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
-        } else if (id, version) == (APPLICATION_ID, 1) {
-            if migrate {
-                tx.execute_batch(
-                    "ALTER TABLE workflows ADD COLUMN started_unix_ms INTEGER;
-                     ALTER TABLE workflows ADD COLUMN observed_unix_ms INTEGER;",
-                )
-                .map_err(db)?;
-                tx.pragma_update(None, "user_version", VERSION)
-                    .map_err(db)?;
-            }
-        } else if (id, version) != (APPLICATION_ID, VERSION) {
-            return Err(WorkflowStoreError::WrongDatabase);
         }
         tx.commit().map_err(db)?;
         Ok(Self {
             connection: Mutex::new(connection),
             claimed: Mutex::new(BTreeSet::new()),
+            observer: Mutex::new(None),
         })
     }
 
@@ -200,8 +206,9 @@ impl WorkflowStore {
             return Err(WorkflowStoreError::Duplicate);
         }
         let written = connection.execute(
-            "INSERT INTO workflows SELECT ?1, ?2, ?3, 0, ?4, ?4 WHERE (SELECT count(*) FROM workflows) < ?5",
-            params![id, plan, snapshot, now, MAX_WORKFLOWS],
+            "INSERT INTO workflows(task_id,plan,report,terminal,started_unix_ms,observed_unix_ms,audit)
+             SELECT ?1, ?2, ?3, 0, ?4, ?4, ?5 WHERE (SELECT count(*) FROM workflows) < ?6",
+            params![id, plan, snapshot, now, b"[]", MAX_WORKFLOWS],
         ).map_err(db)?;
         if written != 1 {
             return Err(WorkflowStoreError::Capacity);
@@ -210,21 +217,75 @@ impl WorkflowStore {
         Ok(())
     }
 
-    pub(crate) fn checkpoint(&self, report: &WorkflowReport) -> Result<(), WorkflowStoreError> {
-        let snapshot = encode(report, MAX_REPORT_BYTES)?;
-        let terminal = report.task.state != TaskState::Running;
-        let written = self
+    /// Subscribe to newly committed audit envelopes for one workflow. Drop the
+    /// sender with `None` after the run so the subscriber can finish draining.
+    pub fn observe_events(&self, observer: Option<(TaskId, UnboundedSender<EventEnvelope>)>) {
+        *self
+            .observer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = observer;
+    }
+
+    /// Read a retained workflow audit without reading the plan, prompts or responses.
+    pub fn inspect_events(
+        path: &Path,
+        task: TaskId,
+    ) -> Result<Option<Vec<EventEnvelope>>, WorkflowStoreError> {
+        Self::connect(path, false, false)?.events(task)
+    }
+
+    pub fn events(&self, task: TaskId) -> Result<Option<Vec<EventEnvelope>>, WorkflowStoreError> {
+        let connection = self
             .connection
             .lock()
-            .map_err(|_| WorkflowStoreError::Database)?
-            .execute(
-                "UPDATE workflows SET report=?2, terminal=?3, observed_unix_ms=max(observed_unix_ms,?4)
+            .map_err(|_| WorkflowStoreError::Database)?;
+        audit::read(&connection, task)
+    }
+
+    pub(crate) fn checkpoint(
+        &self,
+        workflow: &Workflow,
+        report: &WorkflowReport,
+    ) -> Result<(), WorkflowStoreError> {
+        let snapshot = encode(report, MAX_REPORT_BYTES)?;
+        let terminal = report.task.state != TaskState::Running;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
+        let mut events = audit::read(&tx, report.task.id)?;
+        let prior = events.as_ref().map_or(0, Vec::len);
+        let now = unix_ms()?;
+        if let Some(events) = &mut events {
+            audit::extend(events, workflow, report, now as u64)?;
+        }
+        let encoded = events
+            .as_ref()
+            .map(|events| encode(events, audit::MAX_BYTES))
+            .transpose()?;
+        let written = tx.execute(
+                "UPDATE workflows SET report=?2, terminal=?3, observed_unix_ms=max(observed_unix_ms,?4), audit=?5
                  WHERE task_id=?1 AND terminal=0",
-                params![report.task.id.to_string(), snapshot, terminal, unix_ms()?],
+                params![report.task.id.to_string(), snapshot, terminal, now, encoded],
             )
             .map_err(db)?;
         if written != 1 {
             return Err(WorkflowStoreError::InvalidCheckpoint);
+        }
+        tx.commit().map_err(db)?;
+        if let Some(events) = events
+            && let Some((task, observer)) = &*self
+                .observer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            && *task == report.task.id
+        {
+            for event in events.into_iter().skip(prior) {
+                let _ = observer.send(event);
+            }
         }
         Ok(())
     }
@@ -247,7 +308,7 @@ impl WorkflowStore {
         }
         let (report, elapsed) = self.resumable_report(workflow)?;
         let completed = crate::runtime::committed_steps(workflow, &report)?;
-        self.checkpoint(&report)?;
+        self.checkpoint(workflow, &report)?;
         claimed.insert(workflow.task.id);
         Ok((report, elapsed, completed))
     }
@@ -408,7 +469,8 @@ mod tests {
             .lock()
             .unwrap()
             .execute_batch(
-                "ALTER TABLE workflows DROP COLUMN observed_unix_ms;
+                "ALTER TABLE workflows DROP COLUMN audit;
+             ALTER TABLE workflows DROP COLUMN observed_unix_ms;
              ALTER TABLE workflows DROP COLUMN started_unix_ms;
              PRAGMA user_version=1;",
             )

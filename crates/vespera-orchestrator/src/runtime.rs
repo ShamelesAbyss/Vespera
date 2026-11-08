@@ -127,6 +127,7 @@ pub struct Orchestrator {
     history: Arc<Mutex<BTreeMap<TaskId, Arc<Mutex<WorkflowReport>>>>>,
 }
 struct RunGuard<'a> {
+    workflow: &'a Workflow,
     report: Arc<Mutex<WorkflowReport>>,
     cancel: CancellationToken,
     started: Instant,
@@ -164,7 +165,7 @@ impl Drop for RunGuard<'_> {
         if lock(&self.report).task.state == TaskState::Running {
             let report = self.finish(Some(Failure::Cancelled));
             if let Some(store) = self.store {
-                let _ = store.checkpoint(&report);
+                let _ = store.checkpoint(self.workflow, &report);
             }
         }
     }
@@ -361,6 +362,7 @@ impl Orchestrator {
         }
         let owned_cancel = CancellationToken::new();
         let guard = RunGuard {
+            workflow: &workflow,
             report: report.clone(),
             cancel: owned_cancel.clone(),
             started,
@@ -386,7 +388,7 @@ impl Orchestrator {
         };
         let terminal = guard.finish(failure);
         if let Some(store) = store {
-            store.checkpoint(&terminal)?;
+            store.checkpoint(&workflow, &terminal)?;
         }
         Ok(terminal)
     }
@@ -491,7 +493,7 @@ impl Orchestrator {
                     });
                     index
                 };
-                checkpoint(store, report)?;
+                checkpoint(store, workflow, report)?;
                 let mut guard = AttemptGuard {
                     agents: self.agents.clone(),
                     report: report.clone(),
@@ -512,7 +514,7 @@ impl Orchestrator {
                     return Err(Failure::DelegationDenied);
                 }
                 lock(report).attempts[index].delegated = true;
-                checkpoint(store, report)?;
+                checkpoint(store, workflow, report)?;
                 if let Some(observer) = observer {
                     let record = lock(report);
                     let dependencies = step
@@ -559,7 +561,7 @@ impl Orchestrator {
                                 record.attempts[index].failure = Some(Failure::RejectedOutput);
                             }
                         }
-                        checkpoint(store, report)?;
+                        checkpoint(store, workflow, report)?;
                         if rejected {
                             return Err(Failure::RejectedOutput);
                         }
@@ -587,7 +589,7 @@ impl Orchestrator {
                             record.attempts[index].task_state = state;
                             record.attempts[index].failure = Some(failure);
                         }
-                        checkpoint(store, report)?;
+                        checkpoint(store, workflow, report)?;
                         if failure != Failure::TransientRejection || number == step.max_attempts {
                             return Err(failure);
                         }
@@ -717,11 +719,12 @@ pub(crate) fn committed_steps(
 
 fn checkpoint(
     store: Option<&WorkflowStore>,
+    workflow: &Workflow,
     report: &Mutex<WorkflowReport>,
 ) -> Result<(), Failure> {
     if let Some(store) = store {
         store
-            .checkpoint(&lock(report))
+            .checkpoint(workflow, &lock(report))
             .map_err(|_| Failure::Storage)?;
     }
     Ok(())

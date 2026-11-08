@@ -239,6 +239,11 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         .transpose()?
         .unwrap_or_default();
     let mut journal = event_commands::prepare(args.event_journal).await?;
+    let has_workflow_audit = match &workflow_store {
+        Some(store) if args.resume_workflow => store.events(task_id)?.is_some(),
+        Some(_) => true,
+        None => false,
+    };
     let runtime = match &input {
         WorkflowInput::Authored(workflow) => {
             VesperaRuntime::from_config_for_workflow_with_suspensions(
@@ -268,7 +273,18 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             .map_err(RuntimeError::from)?;
     }
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
-    let live = if args.observe_workflow {
+    let durable_live = if args.observe_workflow && has_workflow_audit {
+        journal.take().map(|journal| {
+            let live = event_commands::WorkflowJournal::start_durable(journal);
+            if let Some(store) = &workflow_store {
+                store.observe_events(Some((task_id, live.sender.clone())));
+            }
+            live
+        })
+    } else {
+        None
+    };
+    let live = if args.observe_workflow && !has_workflow_audit {
         journal
             .take()
             .map(|journal| event_commands::WorkflowJournal::start(journal, task_id))
@@ -359,8 +375,26 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let terminal = workflow
         .as_ref()
         .and_then(|report| event_commands::terminal_event(task_id, report.task.state));
-    let event_publication = if let Some(live) = live {
+    let event_publication = if let Some(live) = durable_live {
+        if let Some(store) = &workflow_store {
+            store.observe_events(None);
+        }
+        live.finish(None).await
+    } else if let Some(live) = live {
         live.finish(terminal).await
+    } else if has_workflow_audit
+        && journal.is_some()
+        && let Some(store) = &workflow_store
+    {
+        let journal = journal.take().expect("existing workflow journal");
+        let committed = store.events(task_id);
+        event_commands::record_workflow_audit_summary(
+            journal,
+            task_id,
+            committed,
+            args.record_delegations,
+        )
+        .await
     } else if let (Some(journal), Some(report)) = (journal, &workflow) {
         let mut events = Vec::new();
         if args.record_delegations {

@@ -23,7 +23,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `run-workflow` | Execute an authored or automatically decomposed workflow through authorized agents | Selected health, bounded inference and optional cleanup |
 | `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
-| `events` | Initialize, replay or follow a local journal and recover agent, world or memory events | None. Local SQLite access. |
+| `events` | Initialize, replay or follow a local journal and recover agent, workflow, world or memory events | None. Local SQLite access. |
 
 Every command supports `--help`. The root supports `--version`. Provider,
 inventory and inference commands use `--config <PATH>` (default
@@ -623,7 +623,12 @@ cargo run --locked -p vespera-view --features graphics -- --swarm data/events.sq
 
 The workflow publishes only delegations that the runtime accepted. Each record carries the attempt and agent IDs and the root workflow correlation. The delegation records and root terminal event commit in one batch after execution and cleanup. Choose retention large enough to retain the whole batch if you need all its records. The journal stores no workflow prompts or generated outputs in this batch.
 
-For live evidence, append `--observe-workflow --event-journal data/events.sqlite3` to the workflow command. Use one of `--observe-workflow` and `--record-delegations`. Live mode records acceptance and known terminal task state separately, then records the root outcome after cleanup. Accepted attempts carry the IDs of predecessor results included in their input. These records establish prompt assembly and delegation, while the attempt outcome describes local task execution. Select the Dependencies filter to isolate green arrows. Interrupted publication can leave an accepted attempt without terminal evidence. Use a unique root task ID for each run.
+For live evidence, append `--observe-workflow --event-journal data/events.sqlite3` to the workflow command. Use one of `--observe-workflow` and `--record-delegations`. Live mode records acceptance and known terminal task state separately. Without a workflow store, it records the root outcome after cleanup. Accepted attempts carry the IDs of predecessor results included in their input. These records establish prompt assembly and delegation, while the attempt outcome describes local task execution. Select the Dependencies filter to isolate green arrows. Interrupted publication can leave an accepted attempt without terminal evidence. Use a unique root task ID for each run.
+
+Add `--workflow-store <PATH>` to commit the original audit envelopes with
+the workflow state. Live mode then publishes the committed envelopes as
+they become available, including the root outcome once it commits. If
+publication stops, use [workflow event recovery](#recover-workflow-events).
 
 Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
 
@@ -688,6 +693,22 @@ The envelope includes a stable simulation UUID, the logical tick and the
 commit timestamp. Recovery keeps the original event UUID. If the journal
 already retains the event, the command returns its existing cursor. Older
 world revisions written before event storage was added have no envelope.
+
+### Recover workflow events
+
+```powershell
+.\target\release\vespera.exe events --journal data/events.sqlite3 recover-workflow --workflow-store data/workflows.sqlite3 --task $workflowId
+```
+
+Use the workflow root UUID after the writer exits. The command publishes the
+retained attempt acceptance, known terminal attempt and root outcome events
+in their original checkpoint order. It returns the journal cursor and the
+number submitted. Retries reuse event IDs while the journal retains them.
+An interrupted workflow can have a partial audit. Resuming it preserves the
+recorded events and appends new evidence. Journals populated with
+`--record-delegations` can also contain their separate summary delegation
+events. Workflow rows created before audit support remain readable and have
+no recoverable audit.
 
 ### Recover memory mutation events
 

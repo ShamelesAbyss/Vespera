@@ -72,6 +72,11 @@ Caller cancellation, whole-workflow expiry, per-step expiry and dropped/aborted 
 
 ## Durable workflow history
 
+New workflows also commit their sanitized audit envelopes with each
+checkpoint. The audit covers accepted delegations with dependency IDs, known
+terminal attempt states and the root outcome. It keeps the original event
+IDs across resume. [Recover workflow events](CLI.md#recover-workflow-events)
+
 Pass `--workflow-store <PATH>` to commit checkpoints in a private local SQLite
 file. The workflow commits its authorized plan and root identity, records
 the intended attempt before delegation, records acceptance before inference,

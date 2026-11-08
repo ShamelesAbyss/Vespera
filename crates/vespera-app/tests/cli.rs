@@ -2524,6 +2524,13 @@ fn workflow_resume_reuses_a_committed_dependency_after_process_exit() {
     assert_eq!(saved["report"]["attempts"].as_array().unwrap().len(), 1);
     let committed = &saved["report"]["attempts"][0];
     assert_eq!(committed["task_state"], "completed");
+    let prefix = vespera_orchestrator::WorkflowStore::inspect_events(
+        &database,
+        workflow["task"]["id"].as_str().unwrap().parse().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(prefix.len(), 2);
 
     let flags = [
         "--resume",
@@ -2550,6 +2557,14 @@ fn workflow_resume_reuses_a_committed_dependency_after_process_exit() {
     let attempts = report["workflow"]["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 2);
     assert_eq!(&attempts[0], committed);
+    let complete_audit = vespera_orchestrator::WorkflowStore::inspect_events(
+        &database,
+        workflow["task"]["id"].as_str().unwrap().parse().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(complete_audit.len(), 5);
+    assert!(complete_audit.starts_with(&prefix));
     assert_eq!(report["workflow"]["reserved_output_tokens"], 16);
     let calls: Vec<_> = fixture
         .captured()
@@ -2636,6 +2651,131 @@ fn workflow_publishes_only_observed_delegations_with_root_correlation() {
 }
 
 #[test]
+fn workflow_audit_recovers_after_live_journal_failure() {
+    use vespera_events::Journal;
+    use vespera_orchestrator::WorkflowStore;
+
+    let fixture = HttpFixture::new(false);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let workflow = workflow_value();
+    let root = workflow["task"]["id"].as_str().unwrap();
+    let store = directory.0.join("workflows.sqlite3");
+    let journal = directory.0.join("events.sqlite3");
+    let event_path = journal.to_str().unwrap();
+    drop(Journal::initialize(&journal, 16).unwrap());
+    let injector = rusqlite::Connection::open(&journal).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_event BEFORE INSERT ON journal_events
+         BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END;",
+        )
+        .unwrap();
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow.to_string(),
+        &[
+            "--resume",
+            "--workflow-store",
+            store.to_str().unwrap(),
+            "--event-journal",
+            event_path,
+            "--observe-workflow",
+            "--unload-after",
+        ],
+    );
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["workflow"]["task"]["state"], "completed");
+    assert!(report["event_publication"]["error"].is_string());
+    let mut reader = Journal::open_reader(&journal).unwrap();
+    assert!(reader.replay(None, 16).unwrap().entries.is_empty());
+    injector
+        .execute_batch("DROP TRIGGER reject_fixture_event")
+        .unwrap();
+
+    let calls = fixture.captured().len();
+    let recover = || {
+        let output = execute(&[
+            "events",
+            "--journal",
+            event_path,
+            "recover-workflow",
+            "--workflow-store",
+            store.to_str().unwrap(),
+            "--task",
+            root,
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let first = recover();
+    assert_eq!(first["submitted_events"], 5);
+    assert_eq!(first, recover());
+    assert_eq!(fixture.captured().len(), calls);
+    let original = WorkflowStore::inspect_events(&store, root.parse().unwrap())
+        .unwrap()
+        .unwrap();
+    let page = reader.replay(None, 16).unwrap();
+    assert!(
+        page.entries
+            .iter()
+            .map(|entry| &entry.event)
+            .eq(original.iter())
+    );
+    let encoded = serde_json::to_string(&original).unwrap();
+    assert!(!encoded.contains("Produce one short contribution"));
+    assert!(!encoded.contains("fixture integrated answer"));
+
+    let second_root = vespera_core::TaskId::new();
+    let mut second_workflow = workflow.clone();
+    second_workflow["task"]["id"] = second_root.to_string().into();
+    let source_injector = rusqlite::Connection::open(&store).unwrap();
+    source_injector
+        .execute_batch(
+            "CREATE TRIGGER reject_fixture_root BEFORE UPDATE ON workflows
+         WHEN NEW.terminal=1
+         BEGIN SELECT RAISE(ABORT, 'fixture workflow commit failure'); END;",
+        )
+        .unwrap();
+    let output = run_fixture_workflow(
+        &directory,
+        &config,
+        &second_workflow.to_string(),
+        &[
+            "--resume",
+            "--workflow-store",
+            store.to_str().unwrap(),
+            "--event-journal",
+            event_path,
+            "--observe-workflow",
+            "--unload-after",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        WorkflowStore::inspect(&store, second_root)
+            .unwrap()
+            .interrupted
+    );
+    let committed = WorkflowStore::inspect_events(&store, second_root)
+        .unwrap()
+        .unwrap();
+    assert_eq!(committed.len(), 4);
+    assert!(committed.iter().all(|event| matches!(
+        event.kind,
+        vespera_core::EventKind::WorkflowAttemptAccepted { .. }
+            | vespera_core::EventKind::WorkflowAttemptFinished { .. }
+    )));
+}
+
+#[test]
 fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs() {
     use std::time::{Duration, Instant};
     use vespera_core::{EventKind, TaskState, WorkflowDependency};
@@ -2648,6 +2788,7 @@ fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs
         .replace("permissions = []", "permissions = [\"delegate\"]");
     let workflow = workflow_value().to_string();
     let path = directory.0.join("live.sqlite3");
+    let store = directory.0.join("workflows.sqlite3");
     Journal::initialize(&path, 16).unwrap();
     let output = std::thread::scope(|scope| {
         let run = scope.spawn(|| {
@@ -2660,6 +2801,8 @@ fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs
                     "--event-journal",
                     path.to_str().unwrap(),
                     "--observe-workflow",
+                    "--workflow-store",
+                    store.to_str().unwrap(),
                 ],
             )
         });
@@ -2697,6 +2840,20 @@ fn live_workflow_evidence_arrives_before_completion_and_tracks_dependency_inputs
         .unwrap()
         .entries;
     assert_eq!(entries.len(), 5);
+    let root = workflow_value()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let committed = vespera_orchestrator::WorkflowStore::inspect_events(&store, root)
+        .unwrap()
+        .unwrap();
+    assert!(
+        entries
+            .iter()
+            .map(|entry| &entry.event)
+            .eq(committed.iter())
+    );
     let EventKind::WorkflowAttemptAccepted {
         task_id: upstream,
         to_agent_id,

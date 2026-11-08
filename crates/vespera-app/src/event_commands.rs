@@ -50,6 +50,13 @@ enum EventCommand {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=256))]
         limit: u32,
     },
+    /// Publish the original retained audit envelopes for a workflow.
+    RecoverWorkflow {
+        #[arg(long)]
+        workflow_store: PathBuf,
+        #[arg(long)]
+        task: TaskId,
+    },
     /// Read events after a cursor and print one JSON page.
     Replay {
         /// Cursor in journal-UUID:sequence form. Omit for the oldest retained event.
@@ -112,6 +119,17 @@ pub(crate) async fn run(args: EventArgs) -> Result<(), AppError> {
                 "has_more": page.has_more,
                 "submitted_events": page.events.len(),
             }))
+        }
+        EventCommand::RecoverWorkflow {
+            workflow_store,
+            task,
+        } => {
+            let events =
+                vespera_orchestrator::WorkflowStore::inspect_events(&workflow_store, task)?
+                    .filter(|events| !events.is_empty())
+                    .ok_or(JournalError::Invalid("durable workflow audit unavailable"))?;
+            let cursor = Journal::open_writer(&args.journal)?.append_batch(&events)?;
+            Ok(serde_json::json!({"cursor": cursor, "submitted_events": events.len()}))
         }
         EventCommand::Replay { after, limit } => {
             let page = Journal::open_reader(&args.journal)?.replay(after, limit)?;
@@ -254,14 +272,61 @@ pub(crate) async fn record(
 }
 
 pub(crate) async fn record_batch(
-    mut journal: Journal,
+    journal: Journal,
     source: &'static str,
     task: TaskId,
     kinds: Vec<EventKind>,
 ) -> Publication {
+    record_batch_with_terminal(journal, source, task, kinds, None).await
+}
+
+pub(crate) async fn record_workflow_audit_summary(
+    journal: Journal,
+    root: TaskId,
+    committed: Result<Option<Vec<EventEnvelope>>, vespera_orchestrator::WorkflowStoreError>,
+    record_delegations: bool,
+) -> Option<Publication> {
+    let committed = match committed {
+        Ok(Some(events)) => events,
+        Ok(None) => return None,
+        Err(error) => return Some(Publication::from_result(Err(error.into()))),
+    };
+    let mut delegations = Vec::new();
+    let mut terminal = None;
+    for envelope in committed {
+        match envelope.kind {
+            EventKind::WorkflowAttemptAccepted {
+                task_id,
+                from_agent_id,
+                to_agent_id,
+                ..
+            } if record_delegations => delegations.push(EventKind::TaskDelegated {
+                task_id,
+                from_agent_id,
+                to_agent_id,
+            }),
+            EventKind::TaskCompleted { .. }
+            | EventKind::TaskFailed { .. }
+            | EventKind::TaskCancelled { .. } => terminal = Some(envelope),
+            _ => {}
+        }
+    }
+    if delegations.is_empty() && terminal.is_none() {
+        return None;
+    }
+    Some(record_batch_with_terminal(journal, "run-workflow", root, delegations, terminal).await)
+}
+
+async fn record_batch_with_terminal(
+    mut journal: Journal,
+    source: &'static str,
+    task: TaskId,
+    kinds: Vec<EventKind>,
+    terminal: Option<EventEnvelope>,
+) -> Publication {
     let result = tokio::task::spawn_blocking(move || {
         let timestamp = crate::memory_commands::current_timestamp()?;
-        let events = kinds
+        let mut events = kinds
             .into_iter()
             .map(|kind| {
                 let mut event = EventEnvelope::new(source, timestamp, kind)
@@ -270,6 +335,7 @@ pub(crate) async fn record_batch(
                 Ok(event)
             })
             .collect::<Result<Vec<_>, JournalError>>()?;
+        events.extend(terminal);
         Ok::<_, AppError>(journal.append_batch(&events)?)
     })
     .await
@@ -277,25 +343,41 @@ pub(crate) async fn record_batch(
     Publication::from_result(result)
 }
 
-pub(crate) struct WorkflowJournal {
-    pub(crate) sender: mpsc::UnboundedSender<EventKind>,
+pub(crate) struct WorkflowJournal<T> {
+    pub(crate) sender: mpsc::UnboundedSender<T>,
     writer: tokio::task::JoinHandle<Option<Publication>>,
 }
 
-impl WorkflowJournal {
-    pub(crate) fn start(mut journal: Journal, root: TaskId) -> Self {
+impl WorkflowJournal<EventKind> {
+    pub(crate) fn start(journal: Journal, root: TaskId) -> Self {
+        Self::start_with(journal, move |kind| {
+            let timestamp = crate::memory_commands::current_timestamp()?;
+            let mut event = EventEnvelope::new("run-workflow", timestamp, kind)
+                .map_err(|_| JournalError::Invalid("envelope"))?;
+            event.correlation_task_id = Some(root);
+            Ok(event)
+        })
+    }
+}
+
+impl WorkflowJournal<EventEnvelope> {
+    pub(crate) fn start_durable(journal: Journal) -> Self {
+        Self::start_with(journal, Ok)
+    }
+}
+
+impl<T: Send + 'static> WorkflowJournal<T> {
+    fn start_with(
+        mut journal: Journal,
+        envelope: impl Fn(T) -> Result<EventEnvelope, AppError> + Send + 'static,
+    ) -> Self {
         // One validated workflow emits at most 96 attempt events and one root outcome.
         let (sender, mut events) = mpsc::unbounded_channel();
         let writer = tokio::task::spawn_blocking(move || {
             let mut cursor = None;
-            while let Some(kind) = events.blocking_recv() {
-                let result = (|| {
-                    let timestamp = crate::memory_commands::current_timestamp()?;
-                    let mut event = EventEnvelope::new("run-workflow", timestamp, kind)
-                        .map_err(|_| JournalError::Invalid("envelope"))?;
-                    event.correlation_task_id = Some(root);
-                    Ok::<_, AppError>(journal.append(&event)?)
-                })();
+            while let Some(value) = events.blocking_recv() {
+                let result = envelope(value)
+                    .and_then(|event| journal.append(&event).map_err(AppError::from));
                 match result {
                     Ok(committed) => cursor = Some(committed),
                     Err(error) => {
@@ -314,7 +396,7 @@ impl WorkflowJournal {
         Self { sender, writer }
     }
 
-    pub(crate) async fn finish(self, terminal: Option<EventKind>) -> Option<Publication> {
+    pub(crate) async fn finish(self, terminal: Option<T>) -> Option<Publication> {
         if let Some(event) = terminal {
             let _ = self.sender.send(event);
         }
