@@ -1,5 +1,5 @@
-use crate::{ConflictPolicy, OutputPolicy, PlanError, Workflow};
-use serde::Serialize;
+use crate::{ConflictPolicy, OutputPolicy, PlanError, Workflow, WorkflowStore, WorkflowStoreError};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -20,7 +20,7 @@ fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Bounded, payload-free failure categories. Generated text never becomes an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Failure {
     NoCandidate,
@@ -35,8 +35,9 @@ pub enum Failure {
     Cancelled,
     Deadline,
     ConflictingOutputs,
+    Storage,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attempt {
     pub step: String,
     pub number: u32,
@@ -49,7 +50,7 @@ pub struct Attempt {
     pub failure: Option<Failure>,
     pub result: Option<TaskExecutionResult>,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowReport {
     pub task: Task,
     pub coordinator: AgentId,
@@ -80,6 +81,8 @@ impl WorkflowReport {
 }
 #[derive(Debug, Error)]
 pub enum OrchestratorError {
+    #[error(transparent)]
+    Store(#[from] WorkflowStoreError),
     #[error("{0}")]
     Plan(#[from] PlanError),
     #[error("coordinator must be registered, idle and explicitly permitted to delegate")]
@@ -100,12 +103,13 @@ pub struct Orchestrator {
     agents: AgentRuntime,
     history: Arc<Mutex<BTreeMap<TaskId, Arc<Mutex<WorkflowReport>>>>>,
 }
-struct RunGuard {
+struct RunGuard<'a> {
     report: Arc<Mutex<WorkflowReport>>,
     cancel: CancellationToken,
     started: Instant,
+    store: Option<&'a WorkflowStore>,
 }
-impl RunGuard {
+impl RunGuard<'_> {
     fn finish(&self, failure: Option<Failure>) -> WorkflowReport {
         let mut report = lock(&self.report);
         if report.task.state == TaskState::Running {
@@ -126,11 +130,14 @@ impl RunGuard {
         report.clone()
     }
 }
-impl Drop for RunGuard {
+impl Drop for RunGuard<'_> {
     fn drop(&mut self) {
         self.cancel.cancel();
         if lock(&self.report).task.state == TaskState::Running {
-            self.finish(Some(Failure::Cancelled));
+            let report = self.finish(Some(Failure::Cancelled));
+            if let Some(store) = self.store {
+                let _ = store.checkpoint(&report);
+            }
         }
     }
 }
@@ -215,6 +222,18 @@ impl Orchestrator {
         cancel: CancellationToken,
         observer: Option<&UnboundedSender<EventKind>>,
     ) -> Result<WorkflowReport, OrchestratorError> {
+        self.execute_checkpointed(workflow, cancel, observer, None)
+            .await
+    }
+
+    /// Persist an authorized plan, attempts, and results before advancing dependent work.
+    pub async fn execute_checkpointed(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
+        store: Option<&WorkflowStore>,
+    ) -> Result<WorkflowReport, OrchestratorError> {
         workflow.validate()?;
         let coordinator = self
             .agents
@@ -250,6 +269,9 @@ impl Orchestrator {
             if history.len() >= 8 {
                 return Err(OrchestratorError::Capacity);
             }
+            if let Some(store) = store {
+                store.begin(&workflow, &lock(&report))?;
+            }
             history.insert(workflow.task.id, report.clone());
         }
         let owned_cancel = CancellationToken::new();
@@ -257,9 +279,10 @@ impl Orchestrator {
             report: report.clone(),
             cancel: owned_cancel.clone(),
             started: Instant::now(),
+            store,
         };
         let failure = {
-            let work = self.run_steps(&workflow, &report, &owned_cancel, observer);
+            let work = self.run_steps(&workflow, &report, &owned_cancel, observer, store);
             tokio::pin!(work);
             tokio::select! {
                 biased;
@@ -268,7 +291,11 @@ impl Orchestrator {
                 result = &mut work => result.err(),
             }
         };
-        Ok(guard.finish(failure))
+        let terminal = guard.finish(failure);
+        if let Some(store) = store {
+            store.checkpoint(&terminal)?;
+        }
+        Ok(terminal)
     }
 
     async fn run_steps(
@@ -277,6 +304,7 @@ impl Orchestrator {
         report: &Arc<Mutex<WorkflowReport>>,
         cancel: &CancellationToken,
         observer: Option<&UnboundedSender<EventKind>>,
+        store: Option<&WorkflowStore>,
     ) -> Result<(), Failure> {
         let mut completed: BTreeMap<String, usize> = BTreeMap::new();
         for step in &workflow.steps {
@@ -370,6 +398,7 @@ impl Orchestrator {
                     });
                     index
                 };
+                checkpoint(store, report)?;
                 let mut guard = AttemptGuard {
                     agents: self.agents.clone(),
                     report: report.clone(),
@@ -389,34 +418,33 @@ impl Orchestrator {
                     guard.armed = false;
                     return Err(Failure::DelegationDenied);
                 }
-                {
-                    let mut record = lock(report);
-                    record.attempts[index].delegated = true;
-                    if let Some(observer) = observer {
-                        let dependencies = step
-                            .dependencies
-                            .iter()
-                            .map(|name| {
-                                let result = record.attempts[completed[name]]
-                                    .result
-                                    .as_ref()
-                                    .expect("completed dependency");
-                                WorkflowDependency {
-                                    task_id: result.task.id,
-                                    agent_id: result.agent_id,
-                                }
-                            })
-                            .collect();
-                        emit(
-                            Some(observer),
-                            EventKind::WorkflowAttemptAccepted {
-                                task_id: task.id,
-                                from_agent_id: workflow.coordinator,
-                                to_agent_id: agent_id,
-                                dependencies,
-                            },
-                        );
-                    }
+                lock(report).attempts[index].delegated = true;
+                checkpoint(store, report)?;
+                if let Some(observer) = observer {
+                    let record = lock(report);
+                    let dependencies = step
+                        .dependencies
+                        .iter()
+                        .map(|name| {
+                            let result = record.attempts[completed[name]]
+                                .result
+                                .as_ref()
+                                .expect("completed dependency");
+                            WorkflowDependency {
+                                task_id: result.task.id,
+                                agent_id: result.agent_id,
+                            }
+                        })
+                        .collect();
+                    emit(
+                        Some(observer),
+                        EventKind::WorkflowAttemptAccepted {
+                            task_id: task.id,
+                            from_agent_id: workflow.coordinator,
+                            to_agent_id: agent_id,
+                            dependencies,
+                        },
+                    );
                 }
                 let result = self
                     .agents
@@ -429,12 +457,17 @@ impl Orchestrator {
                 match result {
                     Ok(result) => {
                         let rejected = result.response.content.trim().is_empty();
-                        let mut record = lock(report);
-                        record.accepted_output_bytes += result.response.content.len();
-                        record.attempts[index].task_state = state;
-                        record.attempts[index].result = Some(result);
+                        {
+                            let mut record = lock(report);
+                            record.accepted_output_bytes += result.response.content.len();
+                            record.attempts[index].task_state = state;
+                            record.attempts[index].result = Some(result);
+                            if rejected {
+                                record.attempts[index].failure = Some(Failure::RejectedOutput);
+                            }
+                        }
+                        checkpoint(store, report)?;
                         if rejected {
-                            record.attempts[index].failure = Some(Failure::RejectedOutput);
                             return Err(Failure::RejectedOutput);
                         }
                         completed.insert(step.name.clone(), index);
@@ -461,6 +494,7 @@ impl Orchestrator {
                             record.attempts[index].task_state = state;
                             record.attempts[index].failure = Some(failure);
                         }
+                        checkpoint(store, report)?;
                         if failure != Failure::TransientRejection || number == step.max_attempts {
                             return Err(failure);
                         }
@@ -506,4 +540,16 @@ impl Orchestrator {
         record.selected_step = Some(selected);
         Ok(())
     }
+}
+
+fn checkpoint(
+    store: Option<&WorkflowStore>,
+    report: &Mutex<WorkflowReport>,
+) -> Result<(), Failure> {
+    if let Some(store) = store {
+        store
+            .checkpoint(&lock(report))
+            .map_err(|_| Failure::Storage)?;
+    }
+    Ok(())
 }

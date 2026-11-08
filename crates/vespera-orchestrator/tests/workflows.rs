@@ -251,6 +251,44 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn failed_result_checkpoint_stops_dependent_work() {
+    use vespera_orchestrator::WorkflowStore;
+
+    let fixture = Fixture::new(
+        vec![(200, "observation"), (200, "unexpected")],
+        Duration::ZERO,
+        100,
+    )
+    .await;
+    let plan = fixture.plan(true);
+    let task_id = plan.task.id;
+    let path = std::env::temp_dir().join(format!("vespera-workflow-{task_id}.sqlite3"));
+    drop(WorkflowStore::open(&path).unwrap());
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER reject_result_checkpoint BEFORE UPDATE ON workflows
+             WHEN NEW.terminal=0 AND json_extract(CAST(NEW.report AS TEXT), '$.attempts[0].result') IS NOT NULL
+             BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;",
+        ).unwrap();
+    }
+    let store = WorkflowStore::open(&path).unwrap();
+    let report = fixture
+        .orchestrator
+        .execute_checkpointed(plan, CancellationToken::new(), None, Some(&store))
+        .await
+        .unwrap();
+    assert_eq!(report.task.state, TaskState::Failed);
+    assert_eq!(report.failure, Some(Failure::Storage));
+    assert_eq!(fixture.inference().len(), 1);
+    drop(store);
+    let saved = WorkflowStore::inspect(&path, task_id).unwrap();
+    assert_eq!(saved.report.failure, Some(Failure::Storage));
+    assert!(!saved.interrupted);
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[tokio::test]
 async fn single_and_dependent_workflows_execute_only_selected_models_with_provenance() {
     for multi in [false, true] {
         let fixture = Fixture::new(

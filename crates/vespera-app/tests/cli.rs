@@ -1590,6 +1590,128 @@ fn run_fixture_workflow(
 }
 
 #[test]
+fn workflow_store_retains_lineage_and_fences_an_interrupted_attempt() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(900, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let config_path = directory.write_config(&config);
+    let workflow = workflow_value().to_string();
+    let plan = directory.0.join("interrupt.json");
+    fs::write(&plan, &workflow).unwrap();
+    let database = directory.0.join("interrupted.sqlite3");
+    let db = database.to_str().unwrap();
+    let inspect = |path| {
+        execute(&[
+            "workflow-history",
+            "--database",
+            path,
+            "--task",
+            "77777777-7777-4777-8777-777777777777",
+        ])
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "run-workflow",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--workflow-file",
+            plan.to_str().unwrap(),
+            "--resume",
+            "--workflow-store",
+            db,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut busy = None;
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        if fixture
+            .captured()
+            .iter()
+            .filter(|request| request.path == "/api/chat")
+            .count()
+            == 2
+        {
+            busy = Some(inspect(db));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    assert!(!child.wait().unwrap().success());
+    let busy = busy.expect("second attempt reached provider");
+    assert!(!busy.status.success());
+    assert!(String::from_utf8_lossy(&busy.stderr).contains("workflow database is in use"));
+
+    let output = inspect(db);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(saved["interrupted"], true);
+    assert_eq!(saved["report"]["task"]["state"], "running");
+    assert_eq!(
+        saved["plan"]["steps"][1]["dependencies"],
+        serde_json::json!(["contribute"])
+    );
+    let attempts = saved["report"]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(
+        attempts[0]["result"]["response"]["content"],
+        "fixture integrated answer"
+    );
+    assert_eq!(attempts[1]["delegated"], true);
+    assert!(attempts[1]["result"].is_null());
+    assert!(attempts[1]["task_state"].is_null());
+    let request_count = fixture.captured().len();
+    let duplicate = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow,
+        &["--resume", "--reconcile-residency", "--workflow-store", db],
+    );
+    assert!(!duplicate.status.success());
+    assert!(
+        String::from_utf8_lossy(&duplicate.stderr).contains("workflow identity already exists")
+    );
+    assert_eq!(fixture.captured().len(), request_count);
+
+    fixture.inference_delay_ms.store(0, Ordering::SeqCst);
+    let terminal_db = directory.0.join("terminal.sqlite3");
+    let path = terminal_db.to_str().unwrap();
+    let completed = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow,
+        &["--resume", "--unload-after", "--workflow-store", path],
+    );
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    let output = inspect(path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(saved["interrupted"], false);
+    assert_eq!(saved["report"], report["workflow"]);
+}
+
+#[test]
 fn workflow_publishes_only_observed_delegations_with_root_correlation() {
     use vespera_core::EventKind;
     use vespera_events::Journal;

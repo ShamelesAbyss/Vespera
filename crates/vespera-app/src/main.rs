@@ -71,6 +71,13 @@ enum Command {
     RunAgent(RunAgentArgs),
     /// Execute a strict bounded workflow file through authorized agent delegation.
     RunWorkflow(RunWorkflowArgs),
+    /// Inspect a private workflow checkpoint without contacting providers.
+    WorkflowHistory {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        task: vespera_core::TaskId,
+    },
     /// Manage declared models in a persistent SQLite catalog without provider I/O.
     Catalog(catalog_commands::CatalogArgs),
     /// Explicit offline durable memory operations; never start model providers.
@@ -174,6 +181,9 @@ struct RunAgentArgs {
 
 #[derive(Debug, Args)]
 struct RunWorkflowArgs {
+    /// Create or reopen a private SQLite workflow checkpoint database.
+    #[arg(long)]
+    workflow_store: Option<PathBuf>,
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
     reconcile_residency: bool,
@@ -267,6 +277,8 @@ enum AppError {
     InvalidWorkflow,
     #[error("{0}")]
     WorkflowPlan(#[from] vespera_orchestrator::PlanError),
+    #[error(transparent)]
+    WorkflowStore(#[from] vespera_orchestrator::WorkflowStoreError),
     #[error("workflow did not complete successfully; inspect its report")]
     WorkflowFailed,
     #[error("{0}")]
@@ -359,6 +371,10 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Command::RunAgent(args) => commands::run_agent(args).await?,
         Command::RunWorkflow(args) => commands::run_workflow(args).await?,
+        Command::WorkflowHistory { database, task } => {
+            let checkpoint = vespera_orchestrator::WorkflowStore::inspect(&database, task)?;
+            println!("{}", serde_json::to_string_pretty(&checkpoint)?);
+        }
         Command::Catalog(args) => catalog_commands::run(args)?,
         Command::Memory(args) => memory_commands::run(args).await?,
         Command::Events(args) => event_commands::run(args).await?,

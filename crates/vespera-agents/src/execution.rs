@@ -1,6 +1,6 @@
 //! One bounded, owned inference invocation per accepted agent task.
 use super::{AgentRuntime, AgentRuntimeError, lock_state};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
@@ -115,7 +115,7 @@ impl ExecutionOptions {
 }
 
 /// Task execution outcomes are data, never permission grants or tool instructions.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskExecutionResult {
     /// Accepted terminal task snapshot.
     pub task: Task,
@@ -130,7 +130,7 @@ pub struct TaskExecutionResult {
     /// Generated content and provider execution observations.
     pub response: InferenceResponse,
     /// Exact durable records included as untrusted user input.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_context_ids: Vec<MemoryId>,
     /// Runtime-observed local elapsed milliseconds, including queue/preparation.
     pub elapsed_ms: u64,

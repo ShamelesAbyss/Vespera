@@ -17,7 +17,9 @@ use vespera_core::{
 use vespera_model_registry::{
     ModelRegistration, ModelRegistry, ProviderHealthState, RegistryError,
 };
-use vespera_orchestrator::{Orchestrator, OrchestratorError, Workflow, WorkflowReport};
+use vespera_orchestrator::{
+    Orchestrator, OrchestratorError, Workflow, WorkflowReport, WorkflowStore,
+};
 use vespera_providers::{
     CancellationToken, EndpointPolicy, InferenceProvider, OllamaConfig, OllamaProvider,
     OpenAiCompatibleProvider, OpenAiConfig, ProviderError, ProviderHealthStatus, SecretRef,
@@ -467,6 +469,18 @@ impl VesperaRuntime {
         cancel: CancellationToken,
         observer: Option<&tokio::sync::mpsc::UnboundedSender<vespera_core::EventKind>>,
     ) -> Result<WorkflowReport, RuntimeError> {
+        self.run_workflow_checkpointed(workflow, cancel, observer, None)
+            .await
+    }
+
+    /// Run an authorized workflow and retain its durable checkpoints when configured.
+    pub async fn run_workflow_checkpointed(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&tokio::sync::mpsc::UnboundedSender<vespera_core::EventKind>>,
+        store: Option<&WorkflowStore>,
+    ) -> Result<WorkflowReport, RuntimeError> {
         workflow.validate().map_err(OrchestratorError::from)?;
         let coordinator = self.agents.get_agent(workflow.coordinator).await?;
         if coordinator.status != AgentStatus::Idle
@@ -479,7 +493,7 @@ impl VesperaRuntime {
         }
         Ok(self
             .orchestrator
-            .execute_observed(workflow, cancel, observer)
+            .execute_checkpointed(workflow, cancel, observer, store)
             .await?)
     }
     /// Access the registry; lookups alone do not establish provider health.

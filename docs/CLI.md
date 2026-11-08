@@ -20,6 +20,7 @@ Build with `cargo build --release --locked -p vespera-app`. On Windows use
 | `world` | Initialize, inspect and advance a persistent simulation or request a model decision | Local SQLite access. Decisions also require a configured agent and provider. |
 | `run-agent` | Execute one bounded task through the configured agent/model/provider | Health, supported load, inference; optional unload |
 | `run-workflow` | Execute a strict bounded workflow through authorized agents | Selected health before each attempt; supported load/inference; optional cleanup |
+| `workflow-history` | Read a durable workflow plan and latest checkpoint | None |
 | `memory` | Explicit local SQLite memory operations for a configured owner | None; file/database I/O only |
 | `events` | Initialize, replay or follow a local event journal | None. Local SQLite access. |
 
@@ -185,6 +186,7 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | --- | --- |
 | `--config <PATH>` | Default `config/local.toml` |
 | `--workflow-file <PATH>` | Required strict UTF-8 JSON, at most one MiB |
+| `--workflow-store <PATH>` | Create or reopen a private SQLite checkpoint database |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |
 | `--reconcile-residency` | Observe external residency at startup and before each admission |
@@ -198,6 +200,16 @@ The file supplies whole-workflow and per-step deadlines; the command deadline ad
 Composition initializes only providers/models eligible for named idle (or explicitly resumed) step candidates. A delegation-only coordinator needs no model activation or adapter/credential initialization. Each attempt refreshes relevant health, so a long prior step does not leave the next step dependent on expired observations. No unrelated inventory is activated.
 
 JSON fields are `task_id`, optional `workflow`, optional sanitized `error`, and `cleanup`. A failed/cancelled/partial workflow returns nonzero while retaining accepted attempt evidence. Command cancellation/expiry recovers any workflow history created before interruption; failure before workflow acceptance may leave it null. Early file/configuration/permission/credential errors can leave stdout empty. Human output prints a selected contribution only after workflow evaluation succeeds. Cleanup behavior and compatible unload limitations are the same as `run-agent`.
+
+After the workflow exits, inspect its durable history by root task UUID.
+
+```powershell
+.\target\release\vespera.exe workflow-history --database data/workflow.sqlite3 --task 77777777-7777-4777-8777-777777777777
+```
+
+This command returns JSON with `plan`, `report` and `interrupted`. Use the
+same path originally passed to `--workflow-store`. See [workflow history
+semantics](ORCHESTRATION.md#durable-workflow-history).
 
 See [ORCHESTRATION.md](ORCHESTRATION.md) for strict plan fields, bounds, retry/selection/conflict policies and in-process retention limits. [Live evidence](../artifacts/live-workflow-2026-11-06.json) records one native two-step sample, not broad interoperability or factual validation.
 

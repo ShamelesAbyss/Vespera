@@ -19,7 +19,7 @@ use vespera_core::{
 };
 use vespera_memory::{MemoryOrigin, MemoryStore, StorageLimits};
 use vespera_model_registry::ProviderHealthState;
-use vespera_orchestrator::{Workflow, WorkflowReport};
+use vespera_orchestrator::{Workflow, WorkflowReport, WorkflowStore, WorkflowStoreError};
 use vespera_providers::CancellationToken;
 use vespera_scheduler::StartupResidencyReport;
 
@@ -55,6 +55,16 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let workflow: Workflow = serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
     workflow.validate()?;
     let task_id = workflow.task.id;
+    let workflow_store = args
+        .workflow_store
+        .as_deref()
+        .map(WorkflowStore::open)
+        .transpose()?;
+    if let Some(store) = &workflow_store
+        && store.contains(task_id)?
+    {
+        return Err(WorkflowStoreError::Duplicate.into());
+    }
     let mut journal = event_commands::prepare(args.event_journal).await?;
     let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
     let publisher = Publisher::start(args.scheduler_telemetry, &runtime).await?;
@@ -82,7 +92,12 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
                 runtime.reconcile_startup(cancel.clone()).await?;
             }
             runtime
-                .run_workflow_observed(workflow, cancel, live.as_ref().map(|live| &live.sender))
+                .run_workflow_checkpointed(
+                    workflow,
+                    cancel,
+                    live.as_ref().map(|live| &live.sender),
+                    workflow_store.as_ref(),
+                )
                 .await
         },
     )
