@@ -620,6 +620,14 @@ cargo run --locked -p vespera-view --features graphics -- --desktop-data ./data/
 
 The Home world uses deterministic simulation rules. Provider-backed decisions, signed broker observation, and inspection of another world database use the explicit CLI or view options described below. The native Home walkthrough has been validated on Windows.
 
+### Discover local models in the desktop
+
+From Home, select **Models & Providers** or press **F6**. Select **Ollama** for the native adapter at `http://127.0.0.1:11434`, or **OpenAI-compatible** for the compatible adapter at `http://127.0.0.1:1234/v1`, the usual LM Studio endpoint. The server must already be running. For a different loopback address or port, select **Edit endpoint**, type the URL and press **Enter** to save it for the session. **Delete** clears the field while editing and **Esc** cancels the edit.
+
+Select **Test & discover** or press **Enter** to check health and fetch the model inventory. The panel shows the observed health, round-trip time, provider model IDs and adapter support for metadata, load, unload and residency. Use **Previous models** and **Next models** to browse results. **F5** returns Home.
+
+This panel handles unauthenticated loopback servers. Endpoint changes and discovery results live in the current app session. The listed IDs describe server inventory. Model registration, task execution and model lifecycle actions are available through their existing supported backend paths.
+
 ### Switch layers in Atlas
 
 Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.

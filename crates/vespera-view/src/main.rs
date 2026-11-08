@@ -2,6 +2,7 @@ mod atlas;
 mod gpu_telemetry;
 mod home_scene;
 mod machine_scene;
+mod provider_scene;
 mod scene;
 mod scene_measurement;
 mod swarm_scene;

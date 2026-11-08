@@ -11,7 +11,7 @@ use bevy::ui::prelude::{UiPickingCamera, UiPickingSettings};
 use vespera_world::{World as Simulation, WorldStore};
 
 use crate::atlas::{self, Layer, Layers};
-use crate::{machine_scene, scene, world_scene};
+use crate::{machine_scene, provider_scene, scene, world_scene};
 
 const PRESET: &str = include_str!("../../../config/world.example.json");
 
@@ -28,6 +28,7 @@ struct LocalWorld {
 enum Action {
     Machine,
     World,
+    Providers,
 }
 
 #[derive(Component)]
@@ -48,6 +49,7 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
     let mut app = scene::desktop("Vespera", Color::srgb(0.029, 0.040, 0.065), Layer::Home);
     machine_scene::install(&mut app, None, reduced_motion);
     world_scene::install_scene(&mut app, reduced_motion);
+    provider_scene::install(&mut app);
     atlas::register(&mut app, Layer::Home);
     app.world_mut()
         .resource_mut::<Layers>()
@@ -64,6 +66,7 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
         status,
     })
     .add_systems(Startup, setup)
+    .add_systems(Update, highlight)
     .add_systems(Update, (actions, finish_open, readouts).chain());
     app.run();
 }
@@ -137,7 +140,8 @@ fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
                     },
                     children![
                         button(Action::Machine, "Open Hardware  [F1]"),
-                        button(Action::World, "Create or resume world  [Enter]")
+                        button(Action::World, "Create or resume world  [Enter]"),
+                        button(Action::Providers, "Models & Providers  [F6]")
                     ]
                 ),
                 (
@@ -170,6 +174,7 @@ fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
                     match actions.get(event.original_event_target()) {
                         Ok(Action::Machine) => layers.request(Layer::Machine),
                         Ok(Action::World) => local.open_requested = true,
+                        Ok(Action::Providers) => layers.request(Layer::Providers),
                         Err(_) => {}
                     }
                 }
@@ -177,7 +182,7 @@ fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
         );
 }
 
-fn button(action: Action, label: &'static str) -> impl Bundle {
+pub(super) fn button(action: impl Component, label: &'static str) -> impl Bundle {
     (
         action,
         Pickable::default(),
@@ -197,7 +202,6 @@ fn button(action: Action, label: &'static str) -> impl Bundle {
 
 fn actions(
     keys: Res<ButtonInput<KeyCode>>,
-    mut buttons: Query<(&Hovered, &mut BackgroundColor), Changed<Hovered>>,
     mut layers: ResMut<Layers>,
     mut world: ResMut<LocalWorld>,
 ) {
@@ -205,13 +209,6 @@ fn actions(
         return;
     }
     let open_world = std::mem::take(&mut world.open_requested) || keys.just_pressed(KeyCode::Enter);
-    for (hovered, mut color) in &mut buttons {
-        color.0 = if hovered.0 {
-            Color::srgb(0.16, 0.33, 0.49)
-        } else {
-            Color::srgb(0.11, 0.23, 0.37)
-        };
-    }
     if !open_world || world.opening.is_some() {
         return;
     }
@@ -224,6 +221,16 @@ fn actions(
         });
         world.opening = Some(Mutex::new(receive));
         world.status = "Opening the local world...";
+    }
+}
+
+fn highlight(mut buttons: Query<(&Hovered, &mut BackgroundColor), Changed<Hovered>>) {
+    for (hovered, mut color) in &mut buttons {
+        color.0 = if hovered.0 {
+            Color::srgb(0.16, 0.33, 0.49)
+        } else {
+            Color::srgb(0.11, 0.23, 0.37)
+        };
     }
 }
 

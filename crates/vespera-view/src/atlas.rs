@@ -11,15 +11,17 @@ pub(super) enum Layer {
     Swarm,
     World,
     Home,
+    Providers,
 }
 
 impl Layer {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Machine,
         Self::Network,
         Self::Swarm,
         Self::World,
         Self::Home,
+        Self::Providers,
     ];
 
     pub(super) fn name(self) -> &'static str {
@@ -29,6 +31,7 @@ impl Layer {
             Self::Swarm => "Swarm",
             Self::World => "Living World",
             Self::Home => "Home",
+            Self::Providers => "Providers",
         }
     }
 }
@@ -139,6 +142,7 @@ fn switch(
             KeyCode::F3,
             KeyCode::F4,
             KeyCode::F5,
+            KeyCode::F6,
         ])
         .find_map(|(layer, key)| {
             (keys.just_pressed(key) && layers.available(layer)).then_some(layer)
@@ -167,7 +171,7 @@ fn switch(
                 Layer::Network => crate::scene::selected_agent(world),
                 Layer::Swarm => crate::swarm_scene::selected_agent(world),
                 Layer::World => crate::world_scene::selected_agent(world),
-                Layer::Home => None,
+                Layer::Home | Layer::Providers => None,
             };
             world.resource_mut::<Layers>().incoming = agent;
         });
@@ -188,7 +192,9 @@ fn switch(
     text.0 = Layer::ALL
         .iter()
         .enumerate()
-        .filter(|&(_, layer)| *layer != Layer::Home || layers.roots.contains_key(layer))
+        .filter(|&(_, layer)| {
+            !matches!(layer, Layer::Home | Layer::Providers) || layers.roots.contains_key(layer)
+        })
         .map(|(index, layer)| {
             let name = layer.name();
             let key = index + 1;

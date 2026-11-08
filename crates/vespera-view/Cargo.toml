@@ -7,7 +7,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-events", "dep:vespera-sdk", "dep:vespera-world"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world"]
 
 [[bin]]
 name = "vespera-view"
@@ -16,6 +16,9 @@ required-features = ["graphics"]
 
 [dependencies]
 vespera-core.workspace = true
+vespera-app = { path = "../vespera-app", optional = true }
+vespera-config = { workspace = true, optional = true }
+vespera-providers = { workspace = true, optional = true }
 vespera-events = { path = "../vespera-events", optional = true }
 vespera-sdk = { path = "../vespera-sdk", optional = true }
 vespera-world = { path = "../vespera-world", optional = true }

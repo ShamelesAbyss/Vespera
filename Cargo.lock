@@ -5540,8 +5540,11 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+ "vespera-app",
+ "vespera-config",
  "vespera-core",
  "vespera-events",
+ "vespera-providers",
  "vespera-sdk",
  "vespera-world",
 ]
