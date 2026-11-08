@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Live paired model experiments
+
+Verified implementation checkpoint `aaf324b8310efd510b52b7242deef8abad52b1c3`, pushed to `main`. The offline world experiment checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42441280150).
+
+`experiment-models` compares two fixed model bindings on the same private cases with alternating arm order. It reports attempts and exact-match outcomes, bounded timings, provider and model version observations, residency and terminal journal cursors. Formatting, strict workspace Clippy and offline workspace tests passed. The subprocess fixture verified pairing, deadline stops, redaction and journal correlation.
+
+On Ollama 0.40.13, `hermes3:8b` matched 1/2 test cases and the local Gemma 4 12B registration matched 0/2. All four calls completed and produced four journal records. The provider reported distinct stable digests across the two cases per arm. End-to-end times were 3.82–3.94 seconds for Hermes and 8.16–9.59 seconds for Gemma. Observed post-task VRAM was 4,614,782,975 and 6,228,740,669 bytes respectively. All cleanup was confirmed, and Ollama reported zero resident models at the end. These results describe one machine and two exact-match cases. Live orchestration and memory policy comparisons remain open.
+
 ## 2026-11-07 — Reproducible world policy experiments
 
 Verified implementation checkpoint `a07d129c9408abd6c1cff7eac811107161627c6f`, pushed to `main`. The scheduler admission checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42440745533).
