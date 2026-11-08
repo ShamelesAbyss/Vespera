@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Verified SQLite memory backup and restore
+
+Verified implementation checkpoint `a5617d48dabb82b9f14023e94a051eca7f525d78`, pushed to `main`.
+
+`memory-admin backup` and `restore` stage, verify and publish a full database at a new path. Fixtures restored committed WAL data for two namespaces, preserved FTS, lineage and owner counters, and rejected a damaged index, existing destination and stale sidecar. Windows formatting, strict Clippy and offline workspace tests passed. The previous task recovery checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42433564636).
+
+Live Ollama generated a task response that was saved with durable provenance. Independent backup, restore and read commands reopened the exact response and source UUID. Another live task included an authorized record from the restored database. Both inferences acknowledged unload and the final residency sample was empty. This verifies the original local SQLite Milestone 8 gates. Whole-database operations require a trusted filesystem operator and a private hard-link-capable destination directory. Agent task and workflow histories remain separate databases. Next is Milestone 9 durable event coordination.
+
 ## 2026-11-07 — Durable task result recovery into memory
 
 Verified implementation checkpoint `72090611aedc0ef870db7c7b8e45cdad8666453c`, pushed to `main`.
