@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Bounded agent planning and durable provenance
+
+Verified implementation checkpoint `dba89a21de6e142c1ddd5d7f0eb3061e5152c48a`, pushed to `main`.
+
+Bounded decomposition now sends the configured planner profile as structured input. Proposal validation and operator limits still govern execution. Workflow history retains the planning task, agent, model and provider identifiers from the first accepted plan checkpoint. Existing reports without planning provenance remain readable. Windows formatting, strict Clippy and the offline workspace suite passed. Tests inspected the actual planner request and reopened both stores. The inbox checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42432684113).
+
+In live Ollama, a durable hold prevented planning. After release, the configured `hermes3:8b` agent planned and executed two dependent steps as sole worker. Independent history commands reopened its plan, planning provenance, prompt and owner. Acknowledged unload left zero residents. The profile goes to the selected planning provider and is retained in the optional private agent task store. A process interruption before acceptance can leave a planning task without a workflow checkpoint. Integrated relationship and task recovery after model replacement remains open.
+
 ## 2026-11-07 — Permission-gated durable agent inboxes
 
 Verified implementation checkpoint `1182d0499124f4c1cb42b8e8b2093c7e9b574bcd`, pushed to `main`.
