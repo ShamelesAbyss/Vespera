@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Scheduler admission evidence in Machine
+
+Verified implementation checkpoint `8d830750c9e23478e969e2c9213db004e4c26d2f`, pushed to `main`. The NVIDIA telemetry checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42440299752).
+
+Scheduler sample version 5 preserves the latest returned preparation result with a model identity and a bounded reason. Earlier sample versions remain readable. Fixtures verified RAM and VRAM rejections, admitted reuse, final CLI snapshots and legacy decoding. Windows formatting, strict workspace and graphics Clippy, and offline workspace and graphics tests passed.
+
+Live Ollama 0.40.13 with `hermes3:8b` produced an admitted sample with acknowledged explicit loading and a separate RAM budget rejection of 13 GiB against 8 GiB. The latter came from a deliberately increased estimate. Both final snapshots were present, and Ollama reported no resident models afterward. The new native readouts still need an interactive inspection. The experiment runner and release gates remain open.
+
 ## 2026-11-07 — Measured NVIDIA VRAM in Machine
 
 Verified implementation checkpoint `9d07027463237725f2ac9ea451d26074d159b518`, pushed to `main`. The Swarm receipt checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42439913893).
