@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable agent task ownership
+
+Verified implementation checkpoint `ad458955821fae77629c8e01307668a893991dcf` was pushed to `main`. Automatic decomposition passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42431100527).
+
+`run-agent` and `run-workflow` can keep task ownership and managed outcomes in a private SQLite database. A killed subprocess left a running checkpoint with its original owner, and replay of the ID was rejected before provider traffic. The delegated workflow fixture retained the worker separately from the coordinator. An injected outcome write failure released the owned lease and left the prior durable checkpoint uncertain. Formatting, strict workspace Clippy and Windows offline workspace tests passed.
+
+On Ollama 0.40.13, a `hermes3:8b` task completed and unloaded. An independent `agent-task-history` invocation returned the same owner and exact result, and the task ID was fenced on reuse. Final residency was empty. Agent status and inboxes still live in the process. Persistent operator status is the next Milestone 7 checkpoint.
+
 ## 2026-11-07 — Bounded automatic workflow decomposition
 
 Verified implementation checkpoint `73c68698289f2f62e63fe59393efbae8c5ac4706` was pushed to `main`. Workflow resume passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42430453474).
