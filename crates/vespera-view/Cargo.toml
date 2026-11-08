@@ -8,7 +8,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit", "dep:xkbcommon-dl"]
 
 [[bin]]
 name = "vespera-view"
@@ -46,6 +46,9 @@ bevy = { version = "0.20.1", optional = true, default-features = false, features
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 nvml-wrapper = { version = "=0.13.0", default-features = false, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+xkbcommon-dl = { version = "=0.4.2", features = ["x11"], optional = true }
 
 [build-dependencies]
 cc = "=1.11.0"

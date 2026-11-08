@@ -88,6 +88,11 @@ fn main() -> ExitCode {
             .error(ErrorKind::ArgumentConflict, error)
             .exit();
     }
+    #[cfg(target_os = "linux")]
+    if let Err(error) = linux_graphics_prerequisites() {
+        eprintln!("error: {error}");
+        return ExitCode::FAILURE;
+    }
     if options.opens_home() {
         home_scene::run(options.desktop_data, options.reduced_motion);
         return ExitCode::SUCCESS;
@@ -149,6 +154,18 @@ fn main() -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(target_os = "linux")]
+fn linux_graphics_prerequisites() -> Result<(), &'static str> {
+    if std::env::var_os("DISPLAY").is_none_or(|display| display.is_empty()) {
+        return Err(
+            "An X11 display is required for graphics. Use the vespera CLI for headless operation.",
+        );
+    }
+    xkbcommon_dl::x11::xkbcommon_x11_option()
+        .ok_or("The X11 keyboard runtime libxkbcommon-x11.so.0 could not be loaded. Install your distribution's X11 keyboard runtime.")?;
+    Ok(())
 }
 
 impl Options {

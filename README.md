@@ -77,7 +77,7 @@ The OpenAI-compatible adapter leaves explicit load, unload and residency to the 
 | Target | Requirements and verification |
 | --- | --- |
 | **Windows x64** | Rust and Cargo, Git, and Visual Studio C++ Build Tools with the Windows SDK for source builds. The native desktop and per-user installer have been exercised on Windows. |
-| **Linux** | Rust and Cargo, Git, and a native C toolchain for bundled SQLite. Ubuntu CI covers the headless workspace. The graphical build additionally requires an X11 environment and a working wgpu adapter. |
+| **Linux** | Rust and Cargo, Git, and a native C toolchain for bundled SQLite. Ubuntu CI covers the headless workspace. The desktop needs X11, the `libxkbcommon-x11` runtime, and a working wgpu adapter. Ubuntu WSLg passed a software-rendered Living World walkthrough. [Linux validation](docs/RELEASE.md#linux-desktop-validation) |
 | **macOS** | The repository includes a derived ICNS asset. Native packaging and desktop behavior still need platform verification. |
 | **Model inference** | A separately running supported provider, an installed model and credible resource estimates. Headless diagnostics and deterministic world simulation need no model or GPU. |
 

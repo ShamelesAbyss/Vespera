@@ -5746,6 +5746,7 @@ dependencies = [
  "vespera-sdk",
  "vespera-world",
  "winit",
+ "xkbcommon-dl",
 ]
 
 [[package]]

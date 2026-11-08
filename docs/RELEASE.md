@@ -93,8 +93,14 @@ The optimized `0.1.1` archive was built from `3d232672abacbfac1f0467cbbc5c64e581
 | `vespera-0.1.1.msi` | `739B1293CB0877EA524D11957A808FA5B9E8DC17DB4132900303161FF727B46B` |
 | `Vespera-Setup-0.1.1.exe` | `2E776B571A69C71F27D6D858EF4AF2E72AD1666BB86A9AD09BED399E95B35CE3` |
 
-The Windows runner installed a per-user MSI fixture at `0.1.0`, upgraded to `0.1.1`, verified the downgrade guard, then removed the candidate and restored the earlier fixture. The saved world stayed byte-identical and reopened at revision 3. That rehearsal used debug payloads built in the runner. The local portable rollback separately reopened an actual `0.1.0` backup with the earlier binary. [Windows CI evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42484231483/job/128742500430)
+The Windows runner installed a per-user MSI fixture at `0.1.0`, upgraded to `0.1.1`, verified the downgrade guard, then removed the candidate and restored the earlier fixture. The saved world stayed byte-identical and reopened at revision 3. That rehearsal used debug payloads built in the runner. The local portable rollback separately reopened an actual `0.1.0` backup with the earlier binary. Both CI jobs passed at the archive's source revision. [Windows CI evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42484887677/job/128744494799)
 
 The final optimized archive opened all four Atlas views. At 1200×800 on an RTX 4070 Laptop GPU with Vulkan and FIFO presentation, p95 application update intervals were 7.81 ms for Machine, 7.50 ms for Intelligence Network, 7.32 ms for Swarm, and 7.35 ms for Living World. Each sample used 120 focused updates after 120 warmup updates. Living World committed revision 97, displayed revision 96 in replay, and reopened the live revision through the packaged CLI. These measurements cover steady views on one adapter.
 
-The Windows walkthrough also covered local model discovery and registration, a live Ollama task, delegated workflow execution, and retained workflow history. Other graphics platforms, deployment between separate physical hosts, signing, and the distribution notice and owner licensing decisions remain release gates. [Development log](DEVELOPMENT_LOG.md)
+The Windows walkthrough also covered local model discovery and registration, a live Ollama task, delegated workflow execution, and retained workflow history. Additional graphics environments, deployment between separate physical hosts, signing, and the distribution notice and owner licensing decisions remain release gates. [Development log](DEVELOPMENT_LOG.md)
+
+### Linux desktop validation
+
+The graphical build uses X11. It requires an available X11 display, the `libxkbcommon-x11` runtime and a wgpu adapter. On Ubuntu 24.04, the `libxkbcommon-x11-0` package supplies the keyboard runtime. The viewer reports a missing `DISPLAY` or keyboard runtime before initializing the window. The `vespera` CLI is the headless entry point.
+
+The Ubuntu 24.04 WSLg rehearsal built the Linux graphics executables and displayed Living World through Mesa llvmpipe software Vulkan. It opened a copy of the Windows world at revision 97, committed revision 98, and replayed revision 97. The test used an isolated copy of the X11 keyboard libraries. Hardware-accelerated Linux graphics and other desktop environments remain separate qualification gates.

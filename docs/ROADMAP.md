@@ -2,7 +2,7 @@
 
 Use the [milestone acceptance ledger](MILESTONE_LEDGER.md) for requirement status, implementation evidence, blockers and next actions in dependency order.
 
-The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner's full-platform directive. The historical [INITIAL_PLAN.md](INITIAL_PLAN.md) describes the initial foundation, not a reduction of the current product scope. Status was re-audited on 2026-11-06; source and checkpoint evidence in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) are authoritative. Gates below remain acceptance criteria, not blanket completion claims.
+The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner's full-platform directive. The historical [INITIAL_PLAN.md](INITIAL_PLAN.md) describes the starting workspace. The [development log](DEVELOPMENT_LOG.md) records the source and evidence from the November 8 stabilization audit. The gates below define the remaining scope.
 
 | Milestone | Current status and remaining evidence |
 | --- | --- |
@@ -12,13 +12,14 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 4: registry | Durable SQLite model metadata, revision-fenced edits and live inference from a reopened catalog are verified. The headless health monitor handles bounded rounds, failure and recovery. Opt-in startup lifecycle reconciliation is verified on native Ollama. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Verified in the native Ollama scope. Admission uses conservative estimates, optional host RAM and CPU ceilings and an operator-mapped NVIDIA VRAM ceiling. Fixtures and live runs cover lifecycle, contention, latency routing, external pressure and durable restart recovery. Other GPU backends use declared ceilings. |
 | 6: master orchestration | Verified for bounded native Ollama workflows. The coordinator can decompose a task within an authorized roster and explicit budgets. Durable history supports resume at a committed step boundary. Fixtures verify routing, retries, cancellation and conflict policies. See [ORCHESTRATION.md](ORCHESTRATION.md). |
-| 7: agents | Bounded records, permissions, delegation and owned inference are verified. An opt-in task store preserves ownership and outcomes across restart and fences duplicate IDs. Durable agent status, inboxes and autonomous planning remain. See [AGENTS.md](AGENTS.md). |
+| 7: agents | Bounded execution, permission-checked delegation and operator-controlled planning are verified. Durable task ownership, operator holds and inboxes survive restart. See [AGENTS.md](AGENTS.md). |
 | 8: memory | Verified local SQLite namespaces, FTS, lineage, backup and restore. Live inference retrieved memory from a restored database. See [MEMORY.md](MEMORY.md). |
 | 9: events | Verified local SQLite replay, recoverable audit, signed broker delivery and native Windows Swarm live and historical observation. See the [event journal CLI](CLI.md#local-task-outcome-journal). |
-| 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls, scoped events and directed worker messaging. Optional SQLite recovers work, revocations, feeds and worker inboxes. Opt-in TLS 1.3 supports remote binding. Independent-host deployment still needs validation. |
+| 10: interoperability | Signed leases, directed messages, WebSocket resume and broker restart recovery passed over non-loopback TLS between Windows and an Ubuntu WSL2 guest. Rehearse between separate physical hosts to complete the deployment gate. |
 | 11: simulation | Persistent deterministic world, native CLI and graphical inspection are integrated. Explicit decisions and bounded resident reasoning use revision fences. World Mode shows preparation and active leases. Retained commits replay without a provider in the CLI and fixed-revision 3D view. |
-| 12: 3D command center | The optional Bevy executable opens an observed broker graph or a persistent simulated world with selection, inspection and controls. Full orchestration telemetry, model-driven world behavior and hardware validation remain release gates. |
-| 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
+| 12: 3D command center | All four Atlas modes and Living World persistence and replay were exercised in the Windows x64 candidate. Living World also rendered and replayed through software Vulkan on Ubuntu WSLg. Additional hardware, desktop environments, workflow authoring and OS-backed credentials remain open. |
+| 13: experiments | Deterministic world experiments and bounded native Ollama comparisons are verified. Additional providers and broader statistical benchmarking remain outside that scope. |
+| 14: release readiness | Windows x64 has an internal `0.1.1` candidate with portable package verification, a hosted per-user MSI lifecycle rehearsal and local rollback evidence. Public distribution still requires signing, notice and licensing review, and a supported production installer toolchain. See [RELEASE.md](RELEASE.md). |
 
 ## Milestone 0 — Repository inspection and architecture
 
