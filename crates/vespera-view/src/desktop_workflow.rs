@@ -10,6 +10,7 @@ use vespera_orchestrator::{OutputPolicy, Step, Workflow, WorkflowReport, Workflo
 use vespera_providers::CancellationToken;
 
 use crate::desktop_agent::{self, Roster};
+use crate::desktop_evidence::{self, Projection};
 
 const STEP_OUTPUT_TOKENS: u32 = 128;
 const STEP_TIMEOUT_MS: u64 = 50_000;
@@ -25,6 +26,7 @@ pub(super) struct WorkflowRequest {
 pub(super) struct FinishedWorkflow {
     pub report: WorkflowReport,
     pub cleanup_confirmed: bool,
+    pub observation_error: Option<String>,
 }
 
 fn plan(coordinator: AgentId, reviewer: AgentId, request: WorkflowRequest) -> Workflow {
@@ -128,15 +130,22 @@ pub(super) async fn run(
             .await
             .map_err(|error| error.to_string())?;
     }
-    let store = WorkflowStore::open(&dir.join("desktop-workflows.sqlite3"))
+    let store = WorkflowStore::open(&desktop_evidence::workflow_path(dir))
         .map_err(|error| error.to_string())?;
+    let task = workflow.task.id;
+    let projection = Projection::start(dir, &store, task);
     let outcome = runtime
         .run_workflow_checkpointed(workflow, cancel, None, Some(&store))
         .await;
+    let observation = match projection {
+        Ok(projection) => projection.finish(dir, &store, task).await,
+        Err(_) => desktop_evidence::replay(dir, &store),
+    };
     let cleanup = runtime.cleanup(native, Duration::from_secs(5)).await;
     Ok(FinishedWorkflow {
         report: outcome.map_err(|error| error.to_string())?,
         cleanup_confirmed: cleanup.drained && cleanup.unload_errors.is_empty(),
+        observation_error: observation.err(),
     })
 }
 

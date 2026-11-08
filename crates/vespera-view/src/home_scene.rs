@@ -11,7 +11,7 @@ use bevy::ui::prelude::{UiPickingCamera, UiPickingSettings};
 use vespera_world::{World as Simulation, WorldStore};
 
 use crate::atlas::{self, Layer, Layers};
-use crate::{machine_scene, provider_scene, scene, world_scene};
+use crate::{machine_scene, provider_scene, scene, swarm_scene, world_scene};
 
 const PRESET: &str = include_str!("../../../config/world.example.json");
 
@@ -29,6 +29,7 @@ enum Action {
     Machine,
     World,
     Providers,
+    Swarm,
 }
 
 #[derive(Component)]
@@ -48,6 +49,9 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
     let mut app = scene::desktop("Vespera", Color::srgb(0.029, 0.040, 0.065), Layer::Home);
     machine_scene::install(&mut app, None, reduced_motion);
     world_scene::install_scene(&mut app, reduced_motion);
+    if let Some(dir) = data_dir.clone() {
+        swarm_scene::install_desktop(&mut app, dir, reduced_motion);
+    }
     provider_scene::install(&mut app, data_dir);
     atlas::register(&mut app, Layer::Home);
     app.world_mut()
@@ -164,7 +168,8 @@ fn setup(
                     children![
                         button(Action::Machine, "Open Hardware  [F1]"),
                         button(Action::World, "Create or resume world  [Enter]"),
-                        button(Action::Providers, "Models & Providers  [F6]")
+                        button(Action::Providers, "Models & Providers  [F6]"),
+                        button(Action::Swarm, "Open Swarm  [F3]")
                     ]
                 ),
                 (
@@ -198,6 +203,7 @@ fn setup(
                         Ok(Action::Machine) => layers.request(Layer::Machine),
                         Ok(Action::World) => local.open_requested = true,
                         Ok(Action::Providers) => layers.request(Layer::Providers),
+                        Ok(Action::Swarm) => layers.request(Layer::Swarm),
                         Err(_) => {}
                     }
                 }

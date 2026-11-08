@@ -242,6 +242,40 @@ impl WorkflowStore {
         audit::read(&connection, task)
     }
 
+    /// Read only the bounded retained audit, in workflow acceptance order.
+    pub fn inspect_audit_history(path: &Path) -> Result<Vec<EventEnvelope>, WorkflowStoreError> {
+        Self::connect(path, false, false)?.audit_history()
+    }
+
+    /// Read audits without decoding the private plans or responses.
+    pub fn audit_history(&self) -> Result<Vec<EventEnvelope>, WorkflowStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
+        let mut query = connection
+            .prepare("SELECT task_id FROM workflows ORDER BY rowid LIMIT ?1")
+            .map_err(db)?;
+        let tasks = query
+            .query_map([MAX_WORKFLOWS + 1], |row| row.get::<_, String>(0))
+            .map_err(db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db)?;
+        if tasks.len() > MAX_WORKFLOWS as usize {
+            return Err(WorkflowStoreError::InvalidCheckpoint);
+        }
+        let mut history = Vec::new();
+        for task in tasks {
+            let task = task
+                .parse()
+                .map_err(|_| WorkflowStoreError::InvalidCheckpoint)?;
+            if let Some(events) = audit::read(&connection, task)? {
+                history.extend(events);
+            }
+        }
+        Ok(history)
+    }
+
     pub(crate) fn checkpoint(
         &self,
         workflow: &Workflow,

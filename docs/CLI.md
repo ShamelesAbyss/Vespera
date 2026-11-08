@@ -646,6 +646,8 @@ Select the drafting agent, choose **Allow delegation**, and open **Draft + revie
 
 The orchestrator runs the draft first and sends its accepted output to the reviewer as untrusted input. Each step gets one attempt and at most 128 output tokens. The workflow has a 100-second execution budget. Use **Cancel work** to request local cancellation. The panel reports the workflow ID, step owners, observed task outcomes, and the selected review response. The desktop stores private workflow checkpoints in `desktop-workflows.sqlite3`. Use `workflow-history` with that database and the displayed ID to reopen the full report after exiting. Individual steps also appear in their owners' desktop task histories.
 
+Press **F3** during the run to follow committed desktop workflow observations in Swarm, or use **Open Swarm** from Home. The desktop projects the retained audit into `desktop-events.sqlite3` without copying prompts or responses. On startup it restores missing observations from the workflow store. **T** freezes the display or returns live. While frozen, **[** and **]** step through captured observations. The workflow store remains the recovery source if the journal cannot be written.
+
 ### Switch layers in Atlas
 
 Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.

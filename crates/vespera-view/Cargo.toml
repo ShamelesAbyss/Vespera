@@ -1,5 +1,6 @@
 [package]
 name = "vespera-view"
+default-run = "vespera-view"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

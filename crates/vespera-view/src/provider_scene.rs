@@ -913,6 +913,14 @@ fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> Stri
     if !finished.cleanup_confirmed {
         summary.push_str("\nRuntime cleanup was not confirmed.");
     }
+    if let Some(error) = finished.observation_error {
+        let _ = write!(
+            summary,
+            "\nSwarm journal publication failed. Workflow evidence is retained. {error}"
+        );
+    } else {
+        summary.push_str("\nF3 opens the committed observations in Swarm.");
+    }
     summary
 }
 

@@ -363,9 +363,24 @@ pub(super) fn install_journal(
         ..default()
     };
     let (send, input) = watch::channel(evidence.clone());
-    std::thread::spawn(move || observe(&path, &send));
+    std::thread::spawn(move || observe(&path, &send, false));
     install(app, input, evidence, reduced_motion);
     Ok(())
+}
+
+pub(super) fn install_desktop(app: &mut App, dir: PathBuf, reduced_motion: bool) {
+    let evidence = Evidence {
+        status: "Waiting for desktop workflow observations",
+        ..default()
+    };
+    let (send, input) = watch::channel(evidence.clone());
+    std::thread::spawn(move || {
+        if let Err(error) = crate::desktop_evidence::restore(&dir) {
+            warn!("Desktop workflow evidence recovery: {error}");
+        }
+        observe(&crate::desktop_evidence::journal_path(&dir), &send, true);
+    });
+    install(app, input, evidence, reduced_motion);
 }
 
 pub(super) fn run_broker(updates: mpsc::Receiver<Update>, reduced_motion: bool) {
@@ -445,7 +460,7 @@ fn install(
     );
 }
 
-fn observe(path: &Path, send: &watch::Sender<Evidence>) {
+fn observe(path: &Path, send: &watch::Sender<Evidence>, desktop: bool) {
     let mut cursor: Option<Cursor> = None;
     let mut evidence = Evidence::default();
     while !send.is_closed() {
@@ -461,6 +476,9 @@ fn observe(path: &Path, send: &watch::Sender<Evidence>) {
             ) => {
                 cursor = None;
                 evidence.reset("Journal changed; rebuilding observations");
+            }
+            Err(_) if desktop && matches!(path.try_exists(), Ok(false)) => {
+                evidence.status = "Waiting for desktop workflow observations";
             }
             Err(_) => evidence.status = "Journal unavailable; showing last observations",
         }
@@ -490,6 +508,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     focus: Res<Focus>,
     layers: Res<Layers>,
+    brand: Res<crate::branding::Brand>,
 ) {
     commands.insert_resource(AgentMesh(
         meshes.add(Sphere::new(0.48)),
@@ -507,6 +526,7 @@ fn setup(
             Orbit::at_home(&focus),
         ))
         .id();
+    commands.spawn((UiTargetCamera(camera), crate::branding::header_node(&brand)));
     commands.spawn((
         layers.parent(Layer::Swarm),
         DirectionalLight {

@@ -69,8 +69,11 @@ pub(super) fn install(app: &mut App) {
 }
 
 fn header(mut commands: Commands, brand: Res<Brand>) {
-    commands.spawn((
-        Header,
+    commands.spawn((Header, header_node(&brand)));
+}
+
+pub(super) fn header_node(brand: &Brand) -> impl Bundle {
+    (
         Node {
             position_type: PositionType::Absolute,
             top: px(12),
@@ -97,7 +100,7 @@ fn header(mut commands: Commands, brand: Res<Brand>) {
                 ),
             ],
         )],
-    ));
+    )
 }
 
 fn track_camera(
@@ -109,7 +112,7 @@ fn track_camera(
     let Some((camera, _, layer)) = cameras.iter().find(|(_, camera, _)| camera.is_active) else {
         return;
     };
-    visible.set_if_neq(if *layer == Layer::Home {
+    visible.set_if_neq(if matches!(layer, Layer::Home | Layer::Swarm) {
         Visibility::Hidden
     } else {
         Visibility::Inherited

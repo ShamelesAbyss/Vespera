@@ -51,7 +51,7 @@ An agent keeps its identity when you change its model. The registry records whic
 | **Agents and orchestration** | Stable identities, fixed or capability-based model policies, permission-gated delegation, operator holds, durable tasks and inboxes. Run an authored workflow or bounded model-assisted decomposition. The desktop supports up to 16 saved agents and a same-provider draft-and-review workflow. [Agent runtime](docs/AGENTS.md) · [Orchestration](docs/ORCHESTRATION.md) |
 | **Persistent memory and events** | Private SQLite memory namespaces, bounded phrase retrieval, consolidation with lineage, backup and restore, and opt-in memory context. A separate event journal retains sanitized observations with cursors and checkpoint recovery. [Memory](docs/MEMORY.md) · [Events](docs/CLI.md#local-task-outcome-journal) |
 | **External workers** | An authenticated broker and Rust SDK with signed HTTP actions, fenced leases, cancellation, scoped replay and live WebSockets. Broker SQLite recovery and opt-in TLS are available. [Implemented protocol](docs/PROTOCOL.md#implemented-loopback-worker-api) |
-| **Intelligence Atlas** | Machine shows host and opted-in scheduler evidence. Intelligence Network shows signed broker tasks and workers. Swarm shows delegation, dependencies or worker messages from its configured source. Select, inspect, navigate and replay retained evidence. [Atlas controls](docs/CLI.md#switch-layers-in-atlas) |
+| **Intelligence Atlas** | Machine shows host and opted-in scheduler evidence. Intelligence Network shows signed broker tasks and workers. Swarm follows committed desktop workflow observations, or reads delegation, dependencies and messages from configured sources. Select, inspect, navigate and replay retained evidence. [Atlas controls](docs/CLI.md#switch-layers-in-atlas) |
 | **Living World** | Persistent seeded worlds with foragers, builders, resources, a depot, shelters and encounters. Advance or inspect committed revisions, or authorize bounded model-assisted resident decisions. [Simulation](docs/CLI.md#persistent-world-simulation) |
 | **Experiments** | Compare deterministic world policies or paired local Ollama models, retrieval policies and authored workflows. Reports separate observed timings, outcomes and missing measurements. [Experiment commands](docs/CLI.md#compare-two-world-policies) |
 
@@ -304,7 +304,7 @@ The offline suites use local fixtures. Opt-in live tests require their named dae
 | Symptom | What to check |
 | --- | --- |
 | **The Windows build cannot find `rc.exe`** | Install the Windows SDK and MSVC C++ tools. The graphics build compiles the embedded icon as a Windows resource. |
-| **The app opens but a layer is unavailable** | Atlas layers follow configured sources. Home can open a local world directly. Use the explicit broker or journal flags for Intelligence Network and Swarm. |
+| **The app opens but a layer is unavailable** | Atlas layers follow configured sources. Home can open a local world and desktop Swarm directly. Use the explicit broker or journal flags for additional sources. |
 | **Provider health fails or the model list is empty** | Check the daemon, the adapter and endpoint path. Discover models from the desktop or run `provider-health` with the private configuration. |
 | **Admission rejects a task** | Check both RAM and VRAM estimates, the configured budget, requested context and external residency. Zero VRAM is an explicit CPU-only estimate and does not force backend placement. |
 | **A held agent cannot start** | Resume the selected agent in the desktop or release its durable hold with `agent-state`. An invocation-only resume cannot clear a hold. |
@@ -317,7 +317,7 @@ Vespera is under active development. The Windows desktop has verified Home, hard
 
 | Next area | Work underway or still open |
 | --- | --- |
-| **Desktop and Atlas** | Live desktop workflow projection into Swarm, broader workflow authoring and history navigation, authenticated provider management, and persistent settings |
+| **Desktop and Atlas** | Broader workflow authoring and history navigation, authenticated provider management, and persistent settings |
 | **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
 | **Release** | Signing, a supported production installer toolchain, macOS packaging and the owner's license decision |
 
