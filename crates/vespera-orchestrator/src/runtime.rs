@@ -1,6 +1,6 @@
 use crate::{ConflictPolicy, OutputPolicy, PlanError, Workflow, WorkflowStore, WorkflowStoreError};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
@@ -107,6 +107,7 @@ struct RunGuard<'a> {
     report: Arc<Mutex<WorkflowReport>>,
     cancel: CancellationToken,
     started: Instant,
+    prior_elapsed: Duration,
     store: Option<&'a WorkflowStore>,
 }
 impl RunGuard<'_> {
@@ -124,8 +125,12 @@ impl RunGuard<'_> {
                 .transition(state)
                 .expect("legal workflow terminal edge");
             report.failure = failure;
-            report.elapsed_ms =
-                u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            report.elapsed_ms = u64::try_from(
+                self.prior_elapsed
+                    .saturating_add(self.started.elapsed())
+                    .as_millis(),
+            )
+            .unwrap_or(u64::MAX);
         }
         report.clone()
     }
@@ -234,6 +239,30 @@ impl Orchestrator {
         observer: Option<&UnboundedSender<EventKind>>,
         store: Option<&WorkflowStore>,
     ) -> Result<WorkflowReport, OrchestratorError> {
+        self.execute_internal(workflow, cancel, observer, store, false)
+            .await
+    }
+
+    /// Continue an interrupted workflow from a validated complete step prefix.
+    pub async fn resume_checkpointed(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
+        store: &WorkflowStore,
+    ) -> Result<WorkflowReport, OrchestratorError> {
+        self.execute_internal(workflow, cancel, observer, Some(store), true)
+            .await
+    }
+
+    async fn execute_internal(
+        &self,
+        workflow: Workflow,
+        cancel: CancellationToken,
+        observer: Option<&UnboundedSender<EventKind>>,
+        store: Option<&WorkflowStore>,
+        resume: bool,
+    ) -> Result<WorkflowReport, OrchestratorError> {
         workflow.validate()?;
         let coordinator = self
             .agents
@@ -249,18 +278,31 @@ impl Orchestrator {
         task.state
             .transition(TaskState::Running)
             .expect("validated queued workflow");
-        let report = Arc::new(Mutex::new(WorkflowReport {
-            task,
-            coordinator: workflow.coordinator,
-            output_policy: workflow.output.clone(),
-            attempts: Vec::new(),
-            reserved_output_tokens: 0,
-            accepted_output_bytes: 0,
-            selected_step: None,
-            conflicting_steps: Vec::new(),
-            failure: None,
-            elapsed_ms: 0,
-        }));
+        let (snapshot, prior_elapsed, completed) = if resume {
+            store
+                .expect("resume requires a store")
+                .claim_resume(&workflow)?
+        } else {
+            (
+                WorkflowReport {
+                    task,
+                    coordinator: workflow.coordinator,
+                    output_policy: workflow.output.clone(),
+                    attempts: Vec::new(),
+                    reserved_output_tokens: 0,
+                    accepted_output_bytes: 0,
+                    selected_step: None,
+                    conflicting_steps: Vec::new(),
+                    failure: None,
+                    elapsed_ms: 0,
+                },
+                Duration::ZERO,
+                BTreeMap::new(),
+            )
+        };
+        let report = Arc::new(Mutex::new(snapshot));
+        let started = Instant::now();
+        let remaining = Duration::from_millis(workflow.timeout_ms).saturating_sub(prior_elapsed);
         {
             let mut history = lock(&self.history);
             if history.contains_key(&workflow.task.id) {
@@ -269,7 +311,9 @@ impl Orchestrator {
             if history.len() >= 8 {
                 return Err(OrchestratorError::Capacity);
             }
-            if let Some(store) = store {
+            if let Some(store) = store
+                && !resume
+            {
                 store.begin(&workflow, &lock(&report))?;
             }
             history.insert(workflow.task.id, report.clone());
@@ -278,16 +322,24 @@ impl Orchestrator {
         let guard = RunGuard {
             report: report.clone(),
             cancel: owned_cancel.clone(),
-            started: Instant::now(),
+            started,
+            prior_elapsed,
             store,
         };
         let failure = {
-            let work = self.run_steps(&workflow, &report, &owned_cancel, observer, store);
+            let work = self.run_steps(
+                &workflow,
+                &report,
+                &owned_cancel,
+                observer,
+                store,
+                completed,
+            );
             tokio::pin!(work);
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => Some(Failure::Cancelled),
-                () = tokio::time::sleep(Duration::from_millis(workflow.timeout_ms)) => Some(Failure::Deadline),
+                () = tokio::time::sleep_until(started + remaining) => Some(Failure::Deadline),
                 result = &mut work => result.err(),
             }
         };
@@ -305,9 +357,9 @@ impl Orchestrator {
         cancel: &CancellationToken,
         observer: Option<&UnboundedSender<EventKind>>,
         store: Option<&WorkflowStore>,
+        mut completed: BTreeMap<String, usize>,
     ) -> Result<(), Failure> {
-        let mut completed: BTreeMap<String, usize> = BTreeMap::new();
-        for step in &workflow.steps {
+        for step in workflow.steps.iter().skip(completed.len()) {
             let prompt = {
                 let record = lock(report);
                 let dependencies: Vec<_> = step.dependencies.iter().map(|name| {
@@ -540,6 +592,86 @@ impl Orchestrator {
         record.selected_step = Some(selected);
         Ok(())
     }
+}
+
+/// Validate a stored checkpoint before any completed result is reused.
+pub(crate) fn committed_steps(
+    workflow: &Workflow,
+    report: &WorkflowReport,
+) -> Result<BTreeMap<String, usize>, WorkflowStoreError> {
+    let mut root = workflow.task.clone();
+    root.state = TaskState::Running;
+    if report.task != root
+        || report.output_policy != workflow.output
+        || report.failure.is_some()
+        || report.selected_step.is_some()
+        || !report.conflicting_steps.is_empty()
+        || report.attempts.len() > workflow.max_total_attempts as usize
+    {
+        return Err(WorkflowStoreError::UnsafeResume);
+    }
+    let mut ids = BTreeSet::from([root.id]);
+    let mut completed = BTreeMap::new();
+    let mut index = 0;
+    let mut tokens = 0;
+    let mut bytes = 0usize;
+    for step in &workflow.steps {
+        if index == report.attempts.len() {
+            break;
+        }
+        for number in 1..=step.max_attempts {
+            let attempt = report
+                .attempts
+                .get(index)
+                .ok_or(WorkflowStoreError::UnsafeResume)?;
+            if attempt.step != step.name
+                || attempt.number != number
+                || !attempt.delegated
+                || !step.candidates.contains(&attempt.agent_id)
+                || !ids.insert(attempt.task_id)
+            {
+                return Err(WorkflowStoreError::UnsafeResume);
+            }
+            tokens += u64::from(step.max_output_tokens);
+            index += 1;
+            match &attempt.result {
+                Some(result)
+                    if attempt.failure.is_none()
+                        && attempt.task_state == Some(TaskState::Completed)
+                        && result.task.state == TaskState::Completed
+                        && result.task.id == attempt.task_id
+                        && result.agent_id == attempt.agent_id
+                        && result.task.required_capabilities == step.required_capabilities
+                        && result.response.provider_id == result.provider_id
+                        && result
+                            .response
+                            .metrics
+                            .completion_tokens
+                            .is_none_or(|tokens| tokens <= step.max_output_tokens)
+                        && !result.response.content.trim().is_empty() =>
+                {
+                    bytes = bytes
+                        .checked_add(result.response.content.len())
+                        .ok_or(WorkflowStoreError::UnsafeResume)?;
+                    completed.insert(step.name.clone(), index - 1);
+                    break;
+                }
+                None if number < step.max_attempts
+                    && attempt.failure == Some(Failure::TransientRejection)
+                    && attempt.task_state == Some(TaskState::Failed) => {}
+                _ => return Err(WorkflowStoreError::UnsafeResume),
+            }
+        }
+    }
+    if index != report.attempts.len()
+        || tokens != report.reserved_output_tokens
+        || tokens > workflow.max_total_output_tokens
+        || bytes != report.accepted_output_bytes
+        || bytes > 1024 * 1024
+    {
+        return Err(WorkflowStoreError::UnsafeResume);
+    }
+    Ok(completed)
 }
 
 fn checkpoint(

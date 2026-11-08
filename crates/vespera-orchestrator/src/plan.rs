@@ -37,7 +37,7 @@ pub struct Step {
 }
 
 /// Protocol-level evaluation; never a claim that generated assertions are true.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutputPolicy {
     Step {
@@ -49,7 +49,7 @@ pub enum OutputPolicy {
         on_conflict: ConflictPolicy,
     },
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConflictPolicy {
     Fail,

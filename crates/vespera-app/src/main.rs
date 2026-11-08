@@ -184,6 +184,9 @@ struct RunWorkflowArgs {
     /// Create or reopen a private SQLite workflow checkpoint database.
     #[arg(long)]
     workflow_store: Option<PathBuf>,
+    /// Continue an interrupted workflow from its last committed step boundary.
+    #[arg(long, requires = "workflow_store")]
+    resume_workflow: bool,
     /// Probe external residency at startup and before each admission. Requires provider telemetry.
     #[arg(long)]
     reconcile_residency: bool,

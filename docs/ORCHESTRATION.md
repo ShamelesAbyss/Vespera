@@ -52,9 +52,21 @@ exits. It opens an existing database exclusively and prints the stored plan,
 report and interruption flag without provider access. A retained running
 checkpoint is reported as interrupted. Its last observed task states are
 preserved, including any attempt with an unknown outcome. A duplicate root
-ID is rejected before provider access when reusing the same database.
-Inspection and duplicate fencing are available. Resuming execution from a
-safe checkpoint remains open.
+ID is rejected before provider access unless explicitly resuming.
+
+Use `run-workflow --workflow-store <PATH> --resume-workflow` with the same
+workflow plan to continue an interrupted run at a committed step boundary.
+The runtime revalidates current coordinator and worker configuration,
+preserves prior attempt IDs and token charges, and passes retained results
+to dependent steps. The original workflow deadline includes time spent
+offline. A terminal workflow, a changed plan, an unresolved attempt, an
+expired or rolled-back deadline, or a version 1 checkpoint without a
+recorded deadline is ineligible. Version 1 history remains inspectable.
+
+`--resume` still controls activation of suspended configured agents.
+Workflow resume and provider residency recovery are separate operations.
+If a stopped invocation left provider state unresolved, resolve it through
+the [scheduler recovery procedure](SCHEDULER.md#durable-restart-recovery).
 
 ## Output policies and conflicting contributions
 

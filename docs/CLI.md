@@ -187,6 +187,7 @@ The shipped [workflow example](../config/workflow.example.json) validates struct
 | `--config <PATH>` | Default `config/local.toml` |
 | `--workflow-file <PATH>` | Required strict UTF-8 JSON, at most one MiB |
 | `--workflow-store <PATH>` | Create or reopen a private SQLite checkpoint database |
+| `--resume-workflow` | Continue an interrupted workflow from a committed step boundary. Requires the original plan and an existing `--workflow-store` |
 | `--timeout-seconds <N>` | Overall health/execution bound 1–3,600; default 60 |
 | `--resume` | Activate only named coordinator/candidate agents for this invocation; no new grants |
 | `--reconcile-residency` | Observe external residency at startup and before each admission |
@@ -210,6 +211,10 @@ After the workflow exits, inspect its durable history by root task UUID.
 This command returns JSON with `plan`, `report` and `interrupted`. Use the
 same path originally passed to `--workflow-store`. See [workflow history
 semantics](ORCHESTRATION.md#durable-workflow-history).
+
+To continue an eligible interrupted workflow, add `--resume-workflow`
+to the original invocation. Completed steps retain their committed results.
+The original workflow deadline still applies.
 
 See [ORCHESTRATION.md](ORCHESTRATION.md) for strict plan fields, bounds, retry/selection/conflict policies and in-process retention limits. [Live evidence](../artifacts/live-workflow-2026-11-06.json) records one native two-step sample, not broad interoperability or factual validation.
 

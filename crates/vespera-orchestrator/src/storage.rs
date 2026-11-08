@@ -1,7 +1,8 @@
 //! Private workflow checkpoints. The connection holds an exclusive lock until dropped.
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
@@ -11,7 +12,7 @@ use vespera_core::{TaskId, TaskState};
 use crate::{Workflow, WorkflowReport};
 
 const APPLICATION_ID: i64 = 0x56535057;
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const MAX_WORKFLOWS: i64 = 16;
 const MAX_PLAN_BYTES: usize = 1024 * 1024;
 const MAX_REPORT_BYTES: usize = 32 * 1024 * 1024;
@@ -32,6 +33,12 @@ pub enum WorkflowStoreError {
     InvalidCheckpoint,
     #[error("workflow identity is absent from the database")]
     NotFound,
+    #[error("supplied plan differs from the stored workflow")]
+    PlanChanged,
+    #[error("workflow has a terminal outcome or an unresolved attempt")]
+    UnsafeResume,
+    #[error("workflow resume deadline is missing, expired, or affected by a clock change")]
+    ResumeDeadline,
 }
 
 fn db(error: rusqlite::Error) -> WorkflowStoreError {
@@ -50,15 +57,23 @@ pub struct StoredWorkflow {
     pub interrupted: bool,
 }
 
-pub struct WorkflowStore(Mutex<Connection>);
+pub struct WorkflowStore {
+    connection: Mutex<Connection>,
+    claimed: Mutex<BTreeSet<TaskId>>,
+}
 
 impl WorkflowStore {
     /// Open or initialize a private workflow database.
     pub fn open(path: &Path) -> Result<Self, WorkflowStoreError> {
-        Self::connect(path, true)
+        Self::connect(path, true, true)
     }
 
-    fn connect(path: &Path, create: bool) -> Result<Self, WorkflowStoreError> {
+    /// Open an existing database for continuation without creating a missing file.
+    pub fn open_for_resume(path: &Path) -> Result<Self, WorkflowStoreError> {
+        Self::connect(path, false, true)
+    }
+
+    fn connect(path: &Path, create: bool, migrate: bool) -> Result<Self, WorkflowStoreError> {
         if path.as_os_str().is_empty() {
             return Err(WorkflowStoreError::WrongDatabase);
         }
@@ -100,7 +115,9 @@ impl WorkflowStore {
                     task_id TEXT PRIMARY KEY NOT NULL,
                     plan BLOB NOT NULL,
                     report BLOB NOT NULL,
-                    terminal INTEGER NOT NULL CHECK(terminal IN (0, 1))
+                    terminal INTEGER NOT NULL CHECK(terminal IN (0, 1)),
+                    started_unix_ms INTEGER,
+                    observed_unix_ms INTEGER
                 ) STRICT;",
             )
             .map_err(db)?;
@@ -108,15 +125,28 @@ impl WorkflowStore {
                 .map_err(db)?;
             tx.pragma_update(None, "user_version", VERSION)
                 .map_err(db)?;
+        } else if (id, version) == (APPLICATION_ID, 1) {
+            if migrate {
+                tx.execute_batch(
+                    "ALTER TABLE workflows ADD COLUMN started_unix_ms INTEGER;
+                     ALTER TABLE workflows ADD COLUMN observed_unix_ms INTEGER;",
+                )
+                .map_err(db)?;
+                tx.pragma_update(None, "user_version", VERSION)
+                    .map_err(db)?;
+            }
         } else if (id, version) != (APPLICATION_ID, VERSION) {
             return Err(WorkflowStoreError::WrongDatabase);
         }
         tx.commit().map_err(db)?;
-        Ok(Self(Mutex::new(connection)))
+        Ok(Self {
+            connection: Mutex::new(connection),
+            claimed: Mutex::new(BTreeSet::new()),
+        })
     }
 
     pub fn contains(&self, task_id: TaskId) -> Result<bool, WorkflowStoreError> {
-        self.0
+        self.connection
             .lock()
             .map_err(|_| WorkflowStoreError::Database)?
             .query_row(
@@ -127,6 +157,21 @@ impl WorkflowStore {
             .map_err(db)
     }
 
+    /// Check the plan, deadline, and step boundary before runtime composition.
+    pub fn ensure_resumable(&self, workflow: &Workflow) -> Result<(), WorkflowStoreError> {
+        if self
+            .claimed
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?
+            .contains(&workflow.task.id)
+        {
+            return Err(WorkflowStoreError::Busy);
+        }
+        let (report, _) = self.resumable_report(workflow)?;
+        crate::runtime::committed_steps(workflow, &report)?;
+        Ok(())
+    }
+
     pub(crate) fn begin(
         &self,
         workflow: &Workflow,
@@ -135,7 +180,15 @@ impl WorkflowStore {
         let plan = encode(workflow, MAX_PLAN_BYTES)?;
         let snapshot = encode(report, MAX_REPORT_BYTES)?;
         let id = workflow.task.id.to_string();
-        let connection = self.0.lock().map_err(|_| WorkflowStoreError::Database)?;
+        let now = unix_ms()?;
+        let mut claimed = self
+            .claimed
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
         let exists: bool = connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM workflows WHERE task_id=?1)",
@@ -147,12 +200,13 @@ impl WorkflowStore {
             return Err(WorkflowStoreError::Duplicate);
         }
         let written = connection.execute(
-            "INSERT INTO workflows SELECT ?1, ?2, ?3, 0 WHERE (SELECT count(*) FROM workflows) < ?4",
-            params![id, plan, snapshot, MAX_WORKFLOWS],
+            "INSERT INTO workflows SELECT ?1, ?2, ?3, 0, ?4, ?4 WHERE (SELECT count(*) FROM workflows) < ?5",
+            params![id, plan, snapshot, now, MAX_WORKFLOWS],
         ).map_err(db)?;
         if written != 1 {
             return Err(WorkflowStoreError::Capacity);
         }
+        claimed.insert(workflow.task.id);
         Ok(())
     }
 
@@ -160,12 +214,13 @@ impl WorkflowStore {
         let snapshot = encode(report, MAX_REPORT_BYTES)?;
         let terminal = report.task.state != TaskState::Running;
         let written = self
-            .0
+            .connection
             .lock()
             .map_err(|_| WorkflowStoreError::Database)?
             .execute(
-                "UPDATE workflows SET report=?2, terminal=?3 WHERE task_id=?1 AND terminal=0",
-                params![report.task.id.to_string(), snapshot, terminal],
+                "UPDATE workflows SET report=?2, terminal=?3, observed_unix_ms=max(observed_unix_ms,?4)
+                 WHERE task_id=?1 AND terminal=0",
+                params![report.task.id.to_string(), snapshot, terminal, unix_ms()?],
             )
             .map_err(db)?;
         if written != 1 {
@@ -176,12 +231,66 @@ impl WorkflowStore {
 
     /// Read a checkpoint after acquiring the exclusive database connection.
     pub fn inspect(path: &Path, task_id: TaskId) -> Result<StoredWorkflow, WorkflowStoreError> {
-        Self::connect(path, false)?.read(task_id)
+        Self::connect(path, false, false)?.read(task_id)
+    }
+
+    pub(crate) fn claim_resume(
+        &self,
+        workflow: &Workflow,
+    ) -> Result<(WorkflowReport, Duration, BTreeMap<String, usize>), WorkflowStoreError> {
+        let mut claimed = self
+            .claimed
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?;
+        if claimed.contains(&workflow.task.id) {
+            return Err(WorkflowStoreError::Busy);
+        }
+        let (report, elapsed) = self.resumable_report(workflow)?;
+        let completed = crate::runtime::committed_steps(workflow, &report)?;
+        self.checkpoint(&report)?;
+        claimed.insert(workflow.task.id);
+        Ok((report, elapsed, completed))
+    }
+
+    fn resumable_report(
+        &self,
+        workflow: &Workflow,
+    ) -> Result<(WorkflowReport, Duration), WorkflowStoreError> {
+        let stored = self.read(workflow.task.id)?;
+        if !stored.interrupted {
+            return Err(WorkflowStoreError::UnsafeResume);
+        }
+        if encode(&stored.plan, MAX_PLAN_BYTES)? != encode(workflow, MAX_PLAN_BYTES)? {
+            return Err(WorkflowStoreError::PlanChanged);
+        }
+        let (started, observed): (Option<i64>, Option<i64>) = self
+            .connection
+            .lock()
+            .map_err(|_| WorkflowStoreError::Database)?
+            .query_row(
+                "SELECT started_unix_ms, observed_unix_ms FROM workflows WHERE task_id=?1",
+                [workflow.task.id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(db)?;
+        let (Some(started), Some(observed)) = (started, observed) else {
+            return Err(WorkflowStoreError::ResumeDeadline);
+        };
+        let now = unix_ms()?;
+        if started < 0 || observed < started || now < observed {
+            return Err(WorkflowStoreError::ResumeDeadline);
+        }
+        let elapsed =
+            u64::try_from(now - started).map_err(|_| WorkflowStoreError::ResumeDeadline)?;
+        if elapsed >= workflow.timeout_ms {
+            return Err(WorkflowStoreError::ResumeDeadline);
+        }
+        Ok((stored.report, Duration::from_millis(elapsed)))
     }
 
     fn read(&self, task_id: TaskId) -> Result<StoredWorkflow, WorkflowStoreError> {
         let (plan, report, terminal): (Option<Vec<u8>>, Option<Vec<u8>>, bool) = self
-            .0
+            .connection
             .lock()
             .map_err(|_| WorkflowStoreError::Database)?
             .query_row(
@@ -218,6 +327,13 @@ impl WorkflowStore {
     }
 }
 
+fn unix_ms() -> Result<i64, WorkflowStoreError> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| WorkflowStoreError::ResumeDeadline)?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| WorkflowStoreError::ResumeDeadline)
+}
+
 fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, WorkflowStoreError> {
     let bytes = serde_json::to_vec(value).map_err(|_| WorkflowStoreError::InvalidCheckpoint)?;
     if bytes.len() > limit {
@@ -229,4 +345,72 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, WorkflowStore
 fn decode<T: serde::de::DeserializeOwned>(bytes: Option<Vec<u8>>) -> Result<T, WorkflowStoreError> {
     serde_json::from_slice(&bytes.ok_or(WorkflowStoreError::InvalidCheckpoint)?)
         .map_err(|_| WorkflowStoreError::InvalidCheckpoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_rejects_expired_rolled_back_and_legacy_deadlines() {
+        let mut workflow: Workflow =
+            serde_json::from_str(include_str!("../../../config/workflow.example.json")).unwrap();
+        workflow.task.id = TaskId::new();
+        let path =
+            std::env::temp_dir().join(format!("vespera-deadline-{}.sqlite3", workflow.task.id));
+        let mut task = workflow.task.clone();
+        task.state = TaskState::Running;
+        let report = WorkflowReport {
+            task,
+            coordinator: workflow.coordinator,
+            output_policy: workflow.output.clone(),
+            attempts: vec![],
+            reserved_output_tokens: 0,
+            accepted_output_bytes: 0,
+            selected_step: None,
+            conflicting_steps: vec![],
+            failure: None,
+            elapsed_ms: 0,
+        };
+        let store = WorkflowStore::open(&path).unwrap();
+        store.begin(&workflow, &report).unwrap();
+        drop(store);
+        let store = WorkflowStore::open_for_resume(&path).unwrap();
+        store.ensure_resumable(&workflow).unwrap();
+        for update in [
+            "UPDATE workflows SET started_unix_ms=0, observed_unix_ms=0",
+            "UPDATE workflows SET observed_unix_ms=9223372036854775807",
+        ] {
+            store
+                .connection
+                .lock()
+                .unwrap()
+                .execute_batch(update)
+                .unwrap();
+            assert!(matches!(
+                store.ensure_resumable(&workflow),
+                Err(WorkflowStoreError::ResumeDeadline)
+            ));
+        }
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "ALTER TABLE workflows DROP COLUMN observed_unix_ms;
+             ALTER TABLE workflows DROP COLUMN started_unix_ms;
+             PRAGMA user_version=1;",
+            )
+            .unwrap();
+        drop(store);
+        let legacy = WorkflowStore::inspect(&path, workflow.task.id).unwrap();
+        assert!(legacy.interrupted);
+        let migrated = WorkflowStore::open_for_resume(&path).unwrap();
+        assert!(matches!(
+            migrated.ensure_resumable(&workflow),
+            Err(WorkflowStoreError::ResumeDeadline)
+        ));
+        drop(migrated);
+        std::fs::remove_file(path).unwrap();
+    }
 }

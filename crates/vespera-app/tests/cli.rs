@@ -1684,6 +1684,21 @@ fn workflow_store_retains_lineage_and_fences_an_interrupted_attempt() {
         String::from_utf8_lossy(&duplicate.stderr).contains("workflow identity already exists")
     );
     assert_eq!(fixture.captured().len(), request_count);
+    let unresolved = run_fixture_workflow(
+        &directory,
+        &config,
+        &workflow,
+        &[
+            "--resume",
+            "--reconcile-residency",
+            "--workflow-store",
+            db,
+            "--resume-workflow",
+        ],
+    );
+    assert!(!unresolved.status.success());
+    assert!(String::from_utf8_lossy(&unresolved.stderr).contains("unresolved attempt"));
+    assert_eq!(fixture.captured().len(), request_count);
 
     fixture.inference_delay_ms.store(0, Ordering::SeqCst);
     let terminal_db = directory.0.join("terminal.sqlite3");
@@ -1709,6 +1724,117 @@ fn workflow_store_retains_lineage_and_fences_an_interrupted_attempt() {
     let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(saved["interrupted"], false);
     assert_eq!(saved["report"], report["workflow"]);
+}
+
+#[test]
+fn workflow_resume_reuses_a_committed_dependency_after_process_exit() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let fixture = HttpFixture::new(false);
+    fixture.inference_delay_ms.store(600, Ordering::SeqCst);
+    let directory = ScratchDirectory::new();
+    let config = runtime_config(&fixture, false, true)
+        .replace("permissions = []", "permissions = [\"delegate\"]");
+    let config_path = directory.write_config(&config);
+    let mut workflow = workflow_value();
+    workflow["timeout_ms"] = 30_000.into();
+    let plan = directory.0.join("resume.json");
+    fs::write(&plan, workflow.to_string()).unwrap();
+    let database = directory.0.join("resume.sqlite3");
+    let db = database.to_str().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vespera"))
+        .args([
+            "run-workflow",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--workflow-file",
+            plan.to_str().unwrap(),
+            "--resume",
+            "--workflow-store",
+            db,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut boundary = false;
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        let requests = fixture.captured();
+        if let Some(chat) = requests
+            .iter()
+            .position(|request| request.path == "/api/chat")
+        {
+            fixture.hold_health.store(true, Ordering::SeqCst);
+            if requests[chat + 1..]
+                .iter()
+                .any(|request| request.path == "/api/version")
+            {
+                boundary = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    assert!(!child.wait().unwrap().success());
+    fixture.hold_health.store(false, Ordering::SeqCst);
+    fixture.inference_delay_ms.store(0, Ordering::SeqCst);
+    assert!(boundary);
+    let saved = execute(&[
+        "workflow-history",
+        "--database",
+        db,
+        "--task",
+        "77777777-7777-4777-8777-777777777777",
+    ]);
+    assert!(saved.status.success());
+    let saved: serde_json::Value = serde_json::from_slice(&saved.stdout).unwrap();
+    assert_eq!(saved["interrupted"], true);
+    assert_eq!(saved["report"]["attempts"].as_array().unwrap().len(), 1);
+    let committed = &saved["report"]["attempts"][0];
+    assert_eq!(committed["task_state"], "completed");
+
+    let flags = [
+        "--resume",
+        "--resume-workflow",
+        "--workflow-store",
+        db,
+        "--unload-after",
+    ];
+    let request_count = fixture.captured().len();
+    let mut changed = workflow.clone();
+    changed["steps"][1]["prompt"] = "modified plan".into();
+    let rejected = run_fixture_workflow(&directory, &config, &changed.to_string(), &flags);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("supplied plan differs"));
+    assert_eq!(fixture.captured().len(), request_count);
+
+    let resumed = run_fixture_workflow(&directory, &config, &workflow.to_string(), &flags);
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    let attempts = report["workflow"]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(&attempts[0], committed);
+    assert_eq!(report["workflow"]["reserved_output_tokens"], 16);
+    let calls: Vec<_> = fixture
+        .captured()
+        .into_iter()
+        .filter(|request| request.path == "/api/chat")
+        .collect();
+    assert_eq!(calls.len(), 2);
+    let second: serde_json::Value = serde_json::from_str(&calls[1].body).unwrap();
+    let prompt: serde_json::Value =
+        serde_json::from_str(second["messages"][0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        prompt["untrusted_dependency_outputs"][0]["task_id"],
+        committed["task_id"]
+    );
 }
 
 #[test]

@@ -58,12 +58,20 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
     let workflow_store = args
         .workflow_store
         .as_deref()
-        .map(WorkflowStore::open)
+        .map(|path| {
+            if args.resume_workflow {
+                WorkflowStore::open_for_resume(path)
+            } else {
+                WorkflowStore::open(path)
+            }
+        })
         .transpose()?;
-    if let Some(store) = &workflow_store
-        && store.contains(task_id)?
-    {
-        return Err(WorkflowStoreError::Duplicate.into());
+    if let Some(store) = &workflow_store {
+        if args.resume_workflow {
+            store.ensure_resumable(&workflow)?;
+        } else if store.contains(task_id)? {
+            return Err(WorkflowStoreError::Duplicate.into());
+        }
     }
     let mut journal = event_commands::prepare(args.event_journal).await?;
     let runtime = VesperaRuntime::from_config_for_workflow(&config, &workflow, args.resume).await?;
@@ -91,14 +99,23 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
             } else if args.reconcile_residency {
                 runtime.reconcile_startup(cancel.clone()).await?;
             }
-            runtime
-                .run_workflow_checkpointed(
-                    workflow,
-                    cancel,
-                    live.as_ref().map(|live| &live.sender),
-                    workflow_store.as_ref(),
-                )
-                .await
+            let observer = live.as_ref().map(|live| &live.sender);
+            if args.resume_workflow {
+                runtime
+                    .orchestrator()
+                    .resume_checkpointed(
+                        workflow,
+                        cancel,
+                        observer,
+                        workflow_store.as_ref().expect("resume requires store"),
+                    )
+                    .await
+                    .map_err(RuntimeError::from)
+            } else {
+                runtime
+                    .run_workflow_checkpointed(workflow, cancel, observer, workflow_store.as_ref())
+                    .await
+            }
         },
     )
     .await;
