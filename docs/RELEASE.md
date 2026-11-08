@@ -12,7 +12,9 @@ cargo run --locked -p vespera-app --example package-local -- --output target/ves
 
 The same Cargo command works in a POSIX shell. Add `--offline` after the final `--` to require a cached dependency set for the release build. To keep the entire invocation offline, also put `--offline` before `-p`. Add `--headless` after the final `--` to stage the CLI alone. Use a fresh output directory with an existing parent.
 
-The tool builds the release executables with the lockfile and stages the requested binaries, the tracked configuration examples, the license and operator documentation. It copies tracked materials from the recorded Git revision. `manifest.json` lists the source revision, Cargo.lock hash and SHA-256 and byte size of each staged file. A staging error can leave a partial directory. Treat a directory without a manifest as incomplete.
+The tool builds the release executables with the lockfile and stages the requested binaries, the tracked configuration examples, the license, branding assets and operator documentation. It copies tracked materials from the recorded Git revision. `manifest.json` lists the source revision, Cargo.lock hash and SHA-256 and byte size of each staged file. A staging error can leave a partial directory. Treat a directory without a manifest as incomplete.
+
+On Windows, open `bin\vespera-launcher.exe` for the native desktop without a console. The graphics build requires the Windows SDK resource compiler. Home shows the official icon on its first rendered frame. Other screens use the same image in the shared header. The desktop also embeds the PNG and Windows icon resources, so it can render its branding from any working directory. The portable package includes the unchanged original and the derived PNG, multi-resolution ICO and ICNS. The ICNS is available for future macOS app packaging. Run `./scripts/generate-branding.ps1` on Windows to regenerate derivatives from the canonical JPEG.
 
 ## Verify and start
 
@@ -41,6 +43,20 @@ New-Item -ItemType Directory -Path data | Out-Null
 On POSIX shells, use `cd target/vespera-local`, `mkdir data`, and `./bin/vespera` or `./bin/vespera-view` with the same arguments. On Linux, checksum verification can use `jq -r '.files[] | "\(.sha256)  \(.path)"' manifest.json | sha256sum -c -`. The graphics command requires the package with Atlas, a working window system and a supported wgpu adapter. The headless commands require neither a model backend nor a graphics device.
 
 For inference, copy the example configuration to a private file and follow the provider and agent instructions. Keep the staged example unchanged so its manifest continues to verify. [CLI reference](CLI.md)
+
+## Build the Windows installer
+
+The x64 per-user installer uses the verified Windows graphics candidate as its input. Use the WiX command-line compiler and its matching `WixToolset.BootstrapperApplications.wixext` extension. The local rehearsal used WiX 5.0.2. Run from the repository root after verifying the staged manifest.
+
+```powershell
+$stage = (Resolve-Path target/vespera-local).Path
+$version = (Get-Content (Join-Path $stage 'manifest.json') -Raw | ConvertFrom-Json).vespera_version
+wix build -arch x64 -d "Stage=$stage" -d "Version=$version" -o target/vespera.msi packaging/windows/vespera.wxs
+$msi = (Resolve-Path target/vespera.msi).Path
+wix build -arch x64 -ext WixToolset.BootstrapperApplications.wixext -d "Stage=$stage" -d "Version=$version" -d "Msi=$msi" -o target/Vespera-Setup.exe packaging/windows/setup.wxs
+```
+
+`Vespera-Setup.exe` shows the official icon and installs the desktop, launcher, CLI, and branding assets under `%LOCALAPPDATA%\Programs\Vespera`. Both the Start Menu and desktop shortcuts target the console-free launcher. The desktop's world and agent data stay in its separate per-user data directory. Signing and public distribution remain release gates.
 
 ## Upgrade and recovery
 

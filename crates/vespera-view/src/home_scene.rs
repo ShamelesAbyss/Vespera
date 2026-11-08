@@ -85,7 +85,12 @@ fn default_data_dir() -> Option<PathBuf> {
         .map(|base| base.join("Vespera"))
 }
 
-fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
+fn setup(
+    mut commands: Commands,
+    layers: Res<Layers>,
+    local: Res<LocalWorld>,
+    brand: Res<crate::branding::Brand>,
+) {
     let camera = commands
         .spawn((
             Layer::Home,
@@ -116,14 +121,33 @@ fn setup(mut commands: Commands, layers: Res<Layers>, local: Res<LocalWorld>) {
             },
             children![
                 (
-                    Text::new("VESPERA"),
-                    TextFont::from_font_size(48.0),
-                    TextColor(Color::srgb(0.92, 0.95, 1.0))
-                ),
-                (
-                    Text::new("Local intelligence workspace"),
-                    TextFont::from_font_size(22.0),
-                    TextColor(Color::srgb(0.61, 0.78, 0.95))
+                    Node {
+                        align_items: AlignItems::Center,
+                        column_gap: px(24),
+                        ..default()
+                    },
+                    children![
+                        brand.mark(144.0),
+                        (
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: px(6),
+                                ..default()
+                            },
+                            children![
+                                (
+                                    Text::new("VESPERA"),
+                                    TextFont::from_font_size(48.0),
+                                    TextColor(Color::srgb(0.92, 0.95, 1.0))
+                                ),
+                                (
+                                    Text::new("Local intelligence workspace"),
+                                    TextFont::from_font_size(22.0),
+                                    TextColor(Color::srgb(0.61, 0.78, 0.95))
+                                )
+                            ]
+                        )
+                    ]
                 ),
                 (
                     HardwareStatus,

@@ -1,0 +1,15 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Vespera Setup" Manufacturer="Vespera" Version="$(Version)"
+          UpgradeCode="4F794EB6-3762-4530-9B7B-C4657417E086"
+          IconSourceFile="$(Stage)\assets\branding\vespera.ico">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense" LicenseUrl=""
+          LogoFile="$(Stage)\assets\branding\vespera.png"
+          LaunchTarget="[LocalAppDataFolder]Programs\Vespera\bin\vespera-launcher.exe" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(Msi)" />
+    </Chain>
+  </Bundle>
+</Wix>

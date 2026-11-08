@@ -1,4 +1,5 @@
 mod atlas;
+mod branding;
 mod desktop_agent;
 mod gpu_telemetry;
 mod home_scene;

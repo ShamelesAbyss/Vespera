@@ -161,6 +161,7 @@ pub(super) fn desktop(title: &str, clear: Color, layer: Layer) -> App {
             }),
             MeshPickingPlugin,
         ));
+    crate::branding::install(&mut app);
     app
 }
 

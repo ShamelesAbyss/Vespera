@@ -7,11 +7,16 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit"]
 
 [[bin]]
 name = "vespera-view"
 path = "src/main.rs"
+required-features = ["graphics"]
+
+[[bin]]
+name = "vespera-launcher"
+path = "src/launcher.rs"
 required-features = ["graphics"]
 
 [dependencies]
@@ -24,6 +29,8 @@ vespera-events = { path = "../vespera-events", optional = true }
 vespera-sdk = { path = "../vespera-sdk", optional = true }
 vespera-world = { path = "../vespera-world", optional = true }
 clap = { workspace = true, optional = true }
+png = { version = "=0.17.16", optional = true }
+winit = { version = "=0.30.13", default-features = false, optional = true }
 serde_json = { workspace = true, optional = true }
 rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqlite3-sys", "bundled"], optional = true }
 sysinfo = { version = "0.39.5", default-features = false, features = ["system"], optional = true }
@@ -37,6 +44,9 @@ bevy = { version = "0.20.1", optional = true, default-features = false, features
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 nvml-wrapper = { version = "=0.13.0", default-features = false, optional = true }
+
+[build-dependencies]
+cc = "=1.11.0"
 
 [lints]
 workspace = true

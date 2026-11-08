@@ -158,3 +158,10 @@ Release only after integrated behavior and limitations are verified.
 - Run offline tests plus an explicit live-provider matrix; record CPU-only operation, optional GPUs, permission checks, and interruption recovery.
 - Validate packaging, owner licensing decision, dependencies, migration/backup recovery, protocol compatibility, and a fresh-user walkthrough.
 - Publish measured performance, resource limits, unresolved issues, upgrade/rollback instructions, and support scope; optimize against recorded baselines.
+
+### Native application identity
+
+- Keep the supplied Vespera artwork as the canonical icon. Derive the Windows ICO, desktop PNG, and macOS ICNS from the whole square image without redesigning it.
+- Display the icon alongside the VESPERA name on the first rendered Home frame and in the shared header during Atlas and desktop navigation.
+- Use the same artwork for Windows window chrome, taskbar, application and launcher executables, installer, and installed Start Menu and desktop shortcuts.
+- Verify a fresh portable launch and installed launch on Windows. Verify native macOS packaging when that release target is available. [Release validation](RELEASE.md)

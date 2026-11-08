@@ -18,6 +18,10 @@ const DOCUMENTS: &[&str] = &[
     "artifacts/live-ollama-2026-11-06.json",
     "artifacts/live-ollama-context-2026-11-06.json",
     "artifacts/live-workflow-2026-11-06.json",
+    "assets/branding/vespera-original.jpg",
+    "assets/branding/vespera.png",
+    "assets/branding/vespera.ico",
+    "assets/branding/vespera.icns",
     "config/local.toml",
     "config/world.example.json",
     "config/workflow.example.json",
@@ -79,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let names: &[&str] = if args.headless {
         &["vespera"]
     } else {
-        &["vespera", "vespera-view"]
+        &["vespera", "vespera-view", "vespera-launcher"]
     };
     let artifacts = build(&root, &args, names)?;
     if clean_revision(&root)? != revision {
@@ -167,6 +171,8 @@ fn build(
             "vespera-view/graphics",
             "--bin",
             "vespera-view",
+            "--bin",
+            "vespera-launcher",
         ]);
     }
     if args.offline {
@@ -254,12 +260,19 @@ mod tests {
     fn selects_only_requested_cargo_binaries_and_rejects_missing_or_duplicate_artifacts() {
         let messages = br#"{"reason":"compiler-artifact","target":{"name":"vespera","kind":["bin"]},"executable":"/out/vespera"}
 {"reason":"compiler-artifact","target":{"name":"vespera-view","kind":["bin"]},"executable":"/out/vespera-view"}
+{"reason":"compiler-artifact","target":{"name":"vespera-launcher","kind":["bin"]},"executable":"/out/vespera-launcher"}
 {"reason":"compiler-artifact","target":{"name":"vespera","kind":["example"]},"executable":"/out/example"}
 {"reason":"build-finished","success":true}
 "#;
-        let artifacts = executable_artifacts(messages, &["vespera", "vespera-view"]).unwrap();
+        let artifacts =
+            executable_artifacts(messages, &["vespera", "vespera-view", "vespera-launcher"])
+                .unwrap();
         assert_eq!(artifacts["vespera"], Path::new("/out/vespera"));
         assert_eq!(artifacts["vespera-view"], Path::new("/out/vespera-view"));
+        assert_eq!(
+            artifacts["vespera-launcher"],
+            Path::new("/out/vespera-launcher")
+        );
         assert!(executable_artifacts(messages, &["other"]).is_err());
         assert!(executable_artifacts(&messages.repeat(2), &["vespera"]).is_err());
     }
