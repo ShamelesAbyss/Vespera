@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Provider health journal observations
+
+Verified implementation checkpoint `9bdd8535c6369b26902bcd9297dcdefde159e98c`, pushed to `main`.
+
+`provider-health --event-journal` publishes the provider UUID, effective state and age from each reported sample using event schema 6. The watch fixture observed unknown after a deadline, then unreachable and healthy after recovery. It checked replay against each report and verified redaction. An injected journal failure reported the affected round and preserved the printed healthy observation. Windows formatting, strict Clippy and offline workspace tests passed. The inbox checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42436460440).
+
+A live Ollama poll produced one healthy journal entry and left residency at zero. These samples are expiring telemetry. A failed append leaves an explicit gap in journal history. Scheduler activation, unload and active inference events remain open under Milestone 9.
+
 ## 2026-11-07 — Recoverable agent inbox events
 
 Verified implementation checkpoint `d9269f87ca2e7b45837e9ee77aba037c482d4e69`, pushed to `main`.
