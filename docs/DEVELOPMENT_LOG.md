@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-08 — Endpoint-bound Windows provider credentials
+
+Checkpoint `0c1baa6f7038c2378503d63014c5d21cb35f0157` adds an opt-in generic Windows Credential Manager reference for the desktop and CLI loopback providers. The saved profile carries the source flag and provider endpoint. The operator provisions the token in Windows. Vespera reads it when building the adapter and fails closed if the credential is missing. A SHA-256 digest preserves distinctions between endpoint paths with different letter case even though Windows credential target names compare case-insensitively. Existing environment references still work, and configuration rejects combining both sources.
+
+The opt-in Windows fixture wrote a uniquely named synthetic credential, checked its bearer header at a loopback HTTP server, rejected lookup when only the endpoint path case changed, and removed the fixture credential. Desktop regressions verified exclusive source selection, clearing after an endpoint edit, and reopening the saved source. Windows formatting and strict workspace and graphics Clippy passed. The Windows workspace passed 278 tests with five ignored, and the graphics suite passed 34 with one ignored. Ubuntu WSL2 graphics Clippy and tests passed with 33 passed and one ignored. The resolved Windows notice inventory now contains 429 third-party entries. [Setup and test procedure](PROVIDERS.md#verification-and-live-scope)
+
+All hosted jobs for clipboard checkpoint `329ea10` passed, including the isolated X11 clipboard test and Windows installer lifecycle. [CI evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42530564613)
+
 ## 2026-11-08 — Native prompt paste
 
 Checkpoint `329ea100abfe076fb41008ef958af1108de1ff11` uses Bevy's native clipboard for explicit paste in task and workflow prompt fields. The keyboard handler processes modifier events in order, so a complete shortcut in one frame appends the clipboard text without typing the shortcut character. Paste applies the typed character limit and leaves the prompt in the editor. Credential references, endpoints and numeric fields stay outside the clipboard read path.
