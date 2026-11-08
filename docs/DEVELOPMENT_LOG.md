@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-08 — Windows candidate stabilization
+
+The `0.1.1` installer checkpoint `594bd40297ed1f14891c0ee84b9bcb251a2ddca2` was pushed to `main`. It gives the candidate a distinct three-component product version and schedules old-product removal inside the MSI transaction. WiX 5.0.2 built the installer and the Windows Installer tables placed removal between initialization and finalization. An administrative extraction matched the checked executable, icon and art-notice hashes. The per-user lifecycle rehearsal runs in the disposable Windows CI profile. The [earlier CI checkpoint](https://github.com/ShamelesAbyss/Vespera/actions/runs/42481878887) passed both Ubuntu and Windows native jobs.
+
+Routine broker tests now bind the successful TLS fixture to loopback, avoiding a Windows Firewall consent prompt for the test executable. The unauthorized non-loopback startup rejection remains covered. All nine HTTP and WebSocket broker tests passed. Non-loopback success is covered by the separate WSL2 rehearsal. Checkpoint `4ecfb6aaa2812c47e6dfe35dd96f70125a3370ac`.
+
+Desktop checkpoint `7569ca15e60e81ce134262e10e906b4ac599c11e` adds a persistent reduced-motion toggle on Home and configures the no-tonemapping Atlas cameras to disable unused dithering. The native walkthrough switched the setting on, restarted the profile, and switched it off. Automated coverage verifies saved state, forced launch behavior, and preservation of an unrecognized settings file. The Windows graphics suite, strict Clippy and the separately invoked live NVML check passed.
+
+The `0.1.1` headless build reopened a `0.1.0` world copy at revision 8 and committed revision 9. The original `0.1.0` CLI reopened the byte-identical pre-upgrade backup at revision 8. A native Ollama 0.40.13 task on `hermes3:8b` completed and reopened by durable ID. A workflow without the delegation grant was rejected. After granting delegation in the scratch configuration, both authored steps completed and durable history reopened. Ollama reported zero resident models after cleanup.
+
 ## 2026-11-08 — Stabilization audit and non-loopback TLS
 
 Packaging and CI checkpoint `928c69784074a44a59bb8972a8569d7aa31e5022` was pushed to `main`. The portable allowlist now includes the Living World screenshots, visual guide, art credits, and other files linked from the packaged README and ledger. The packager test passed, and all 37 allowlisted documentation and asset paths resolved in Git. Windows workspace compilation, tests, strict Clippy, Rustdoc, and the graphics suite passed during the baseline audit. The GitHub workflow now includes a Windows native build and test job.
