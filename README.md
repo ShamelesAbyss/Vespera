@@ -1,248 +1,328 @@
-# Vespera
+<p align="center">
+  <img src="assets/branding/vespera.png" alt="Official Vespera icon" width="132">
+</p>
 
-![Official Vespera application icon](assets/branding/vespera.png)
+<h1 align="center">Vespera</h1>
 
-A local-first AI orchestration and simulation platform written in Rust. Vespera separates agent identity from inference models and makes provider health, resource admission, execution ownership and cleanup explicit.
+<p align="center"><strong>An Omniverse for Artificial Intelligence</strong></p>
 
-**Development status.** Vespera runs bounded inference through Ollama and OpenAI-compatible HTTP adapters, serves an authenticated worker broker, and opens native 3D views of local hardware, broker activity, workflow delegation and persistent simulation state. The fourteen-crate workspace has 224 passing offline tests plus the SDK doctest. Two bounded live tasks passed against Ollama 0.40.13 using its native and compatible interfaces. Full orchestration telemetry and experiments remain roadmap work.
+<p align="center">A local-first Rust workspace for running models, coordinating agents, and exploring persistent simulated worlds.</p>
 
-[CLI reference](docs/CLI.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Development log](docs/DEVELOPMENT_LOG.md) · [Live evidence](artifacts/live-ollama-2026-11-06.json)
+<p align="center">
+  <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.99.1-7357D9?logo=rust" alt="Rust 1.99.1"></a>
+  <a href="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml"><img src="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml/badge.svg?branch=main" alt="Rust foundation CI"></a>
+  <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/desktop-Windows%20verified-2563A5" alt="Windows desktop verified"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-all%20rights%20reserved-654A87" alt="All rights reserved"></a>
+</p>
 
-## Native 3D client
+<p align="center">
+  <a href="#getting-started">Get started</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#commands-and-examples">Commands</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#roadmap-and-project-status">Roadmap</a>
+</p>
 
-Open `vespera-view.exe` on Windows to see live host measurements, inspect the machine in 3D, and create or resume a persistent local simulation. Home opens without a provider, broker, credentials, or configuration file. From source, launch it with the command below. [Desktop launch and controls](docs/CLI.md#open-the-native-desktop)
+## Overview
 
-```powershell
-cargo run --locked -p vespera-view --features graphics
-```
+Inspired by NVIDIA Omniverse's idea of a shared workspace, Vespera brings AI models, agent identities, compute budgets, workflow execution, and persistent worlds into one local-first environment. Start with a headless CLI or open the native Bevy and wgpu desktop. Both use the same Rust runtime.
 
-For a configured Atlas session, use `--atlas` and the flags for your broker, journal, or world database. **F1–F4** switch between the available 3D layers. [Atlas setup and controls](docs/CLI.md#switch-layers-in-atlas)
+An agent keeps its identity when you change its model. The registry records which models are available, the scheduler decides whether a task fits its configured budgets, and the runtime records who performed the work. The Intelligence Atlas visualizes the evidence those systems produce. Living World uses a separate simulation engine and labels simulated state explicitly.
 
-From Home, open **Models & Providers** to check a loopback Ollama or OpenAI-compatible server, browse its exposed models, save a model binding, and run a bounded task through the agent runtime. [Desktop provider and agent walkthrough](docs/CLI.md#discover-local-models-in-the-desktop)
+![Living World in the Windows desktop with a committed starter world and its inspector](assets/screenshots/living-world.jpg)
 
-The standalone Intelligence Network renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
+*Living World at revision 0 in the native Windows app. The inspector reports committed simulation state.*
 
-```powershell
-cargo run --locked -p vespera-view --features graphics -- --broker 127.0.0.1:8765
-```
+<details>
+<summary>See a completed two-agent desktop workflow</summary>
 
-The Intelligence Network groups tasks by observed state. Pick a task or worker, use N or B to cycle through them, or press Tab to filter tasks. Right-drag to orbit, scroll to zoom, and use WASD to pan. Press F to focus or R to reset the camera. Press T to freeze or return live and use [ and ] to replay captured transitions. In live mode with `--allow-cancel`, press C on a queued or running task, then Y to confirm or Esc to dismiss. The inspector shows the broker response. Add `--reduced-motion` to skip animated lane and camera focus transitions. The view labels resource measurements as unavailable. [Intelligence Network controls](docs/CLI.md#intelligence-network-controls)
+![A completed draft and delegated review in the Vespera desktop](assets/screenshots/desktop-workflow.jpg)
 
-Open the read-only Machine view to inspect local CPU utilization, system memory and the adapter Bevy uses to render the application. It requires no broker or operator key. Select a component with the mouse or keys 1–3. [Machine controls and measurement scope](docs/CLI.md#machine-view)
+*Captured during the live Ollama walkthrough. The panel shows the observed draft, delegated review, and returned result.* [Validation record](docs/DEVELOPMENT_LOG.md#2026-11-07--delegated-desktop-workflow)
 
-```powershell
-cargo run --locked -p vespera-view --features graphics -- --machine
-```
+</details>
 
-Machine can also inspect scheduler queues, estimated reservations and running task leases from an opted-in local run. Press 4 for the scheduler, 5 for models, 6 for providers, 7 for tasks, or 8 for retrieved memory counts attached to requests. [Connect a run to Machine](docs/CLI.md#observe-a-local-scheduler)
+## Features
 
-Open the read-only Swarm view to follow live workflow attempts in a local event journal or accepted worker messages on a signed broker connection. Cyan arrows show delegations, green arrows show predecessor results included in accepted attempts, and amber arrows show messages. Freeze and step through a bounded evidence window while the source continues live. [Open Swarm](docs/CLI.md#swarm-view)
-
-Open the same executable in World Simulation Mode with an initialized database.
-
-```powershell
-cargo run --locked -p vespera-view --features graphics -- --world data/world.sqlite3
-```
-
-Pick residents, the depot or resource sites to inspect their committed state. World Mode is read-only by default. Add `--allow-world-control` to enable Space for a tick, P for playback, Enter for resident activity and IJKL for one-cell movement. The view labels its state as simulated and uses the same camera controls. It requires no broker or provider. [World setup](docs/CLI.md#persistent-world-simulation)
-
-Press T in World Mode to freeze the display, use [ and ] to step through retained commits, and press T again to return live. Add `--world-revision <REVISION>` to start at a particular commit. Recorded choices replay without running the model again. [World replay](docs/CLI.md#replay-a-committed-world-revision)
-
-## Architecture and workspace
-
-```mermaid
-flowchart TD
-    CLI[vespera-app: CLI and composition] --> Config[vespera-config: strict TOML]
-    CLI --> Memory
-    CLI --> Broker[vespera-api: external worker lease broker]
-    Worker[Approved external worker] --> SDK[vespera-sdk: typed Rust client]
-    SDK --> Broker
-    Broker --> Core
-    CLI --> Journal[vespera-events: local outcome journal]
-    Journal --> Core
-    CLI --> Orchestrator[vespera-orchestrator: bounded workflows]
-    Orchestrator --> Agents
-    CLI --> Agents[vespera-agents: identities and bounded execution]
-    Agents --> Scheduler[vespera-scheduler: queue and owned leases]
-    Scheduler --> Registry[vespera-model-registry: inventory and health]
-    Registry --> Providers[vespera-providers: Ollama and compatible HTTP]
-    Providers --> Backend[Explicitly configured model server]
-    Config --> Core[vespera-core: domain contracts]
-    Agents --> Memory[vespera-memory: authorized SQLite and FTS]
-    Memory --> Core
-    Agents --> Core
-    Scheduler --> Core
-    Registry --> Core
-    Providers --> Core
-```
-
-| Crate | Implemented responsibility |
+| Area | What you can use today |
 | --- | --- |
-| `vespera-core` | Typed identities, capabilities, task transitions, memory/event contracts and checked resource arithmetic |
-| `vespera-config` | Bounded strict configuration, reference validation and endpoint policy |
-| `vespera-providers` | Async inference, streaming, cancellation, discovery and explicit lifecycle support |
-| `vespera-model-registry` | Independent model inventory, health freshness, lifecycle-safe updates |
-| `vespera-scheduler` | Conservative reservations, bounded priority admission, coordinated loading and owned inference leases |
-| `vespera-agents` | Independent identities, permissions, bounded in-process memory/messages/history and actual inference |
-| `vespera-orchestrator` | Bounded sequential workflows, provenance, retry/failure history and explicit output evaluation |
-| `vespera-memory` | Explicit durable namespaces, structured/phrase search, atomic lineage, quotas and process-exit recovery |
-| `vespera-api` | Authenticated task service with fenced leases, scoped events and opt-in TLS |
-| `vespera-sdk` | Standalone async Rust clients for operator actions and worker leases |
-| `vespera-view` | Optional native 3D Machine, orchestration and persistent simulation views |
-| `vespera-world` | Deterministic resident actions, shared resources, relationships and transactional SQLite worlds |
-| `vespera-events` | Local SQLite task outcome journal with bounded retention and cursor replay |
-| `vespera-app` | Runtime composition, diagnostics and eleven top-level CLI commands |
+| **Providers** | Native Ollama and OpenAI-compatible HTTP adapters with bounded chat, streaming, health and discovery. LM Studio Bionic has live compatibility evidence. Native Ollama also supplies model metadata, supported load and unload, and residency observations. [Provider contracts](docs/PROVIDERS.md) |
+| **Model inventory and compute** | Strict TOML or a revision-fenced SQLite model catalog. Bounded priority queues, owned leases, context limits, explicit RAM and VRAM estimates, optional host ceilings and Ollama residency reconciliation. [Registry](docs/REGISTRY.md) · [Scheduler](docs/SCHEDULER.md) |
+| **Agents and orchestration** | Stable identities, fixed or capability-based model policies, permission-gated delegation, operator holds, durable tasks and inboxes. Run an authored workflow or bounded model-assisted decomposition. The desktop supports up to 16 saved agents and a same-provider draft-and-review workflow. [Agent runtime](docs/AGENTS.md) · [Orchestration](docs/ORCHESTRATION.md) |
+| **Persistent memory and events** | Private SQLite memory namespaces, bounded phrase retrieval, consolidation with lineage, backup and restore, and opt-in memory context. A separate event journal retains sanitized observations with cursors and checkpoint recovery. [Memory](docs/MEMORY.md) · [Events](docs/CLI.md#local-task-outcome-journal) |
+| **External workers** | An authenticated broker and Rust SDK with signed HTTP actions, fenced leases, cancellation, scoped replay and live WebSockets. Broker SQLite recovery and opt-in TLS are available. [Implemented protocol](docs/PROTOCOL.md#implemented-loopback-worker-api) |
+| **Intelligence Atlas** | Machine shows host and opted-in scheduler evidence. Intelligence Network shows signed broker tasks and workers. Swarm shows delegation, dependencies or worker messages from its configured source. Select, inspect, navigate and replay retained evidence. [Atlas controls](docs/CLI.md#switch-layers-in-atlas) |
+| **Living World** | Persistent seeded worlds with foragers, builders, resources, a depot, shelters and encounters. Advance or inspect committed revisions, or authorize bounded model-assisted resident decisions. [Simulation](docs/CLI.md#persistent-world-simulation) |
+| **Experiments** | Compare deterministic world policies or paired local Ollama models, retrieval policies and authored workflows. Reports separate observed timings, outcomes and missing measurements. [Experiment commands](docs/CLI.md#compare-two-world-policies) |
 
-`config/` contains examples; `docs/` contains subsystem contracts and development records; `artifacts/` contains recorded validation evidence. Local `data/` and `config/local.private.toml` are ignored. No database, server listener or graphical application starts automatically.
+The OpenAI-compatible adapter leaves explicit load, unload and residency to the provider. Its logical context budget does not establish the actual backend allocation. The desktop provider panel currently handles unauthenticated loopback endpoints. [Context and lifecycle evidence](docs/PROVIDERS.md#resource-observations-and-lifecycle)
 
-## Requirements and installation
+## Getting started
 
-The workspace pins Rust **1.99.1**, edition 2024, through `rust-toolchain.toml`. Install [Rust and Cargo](https://rustup.rs/) and Git. Windows MSVC builds also require the Microsoft C++ build tools used by Rust's MSVC toolchain. Cargo fetches locked dependencies during the first build. Vespera needs no Python, Node.js or separate database server. SQLite is bundled through a Rust binding; building it requires a C compiler (MSVC tools on Windows or an equivalent native toolchain).
+### Requirements
 
-Windows x86-64 has been built and tested locally; Ubuntu is tested by [GitHub Actions](https://github.com/ShamelesAbyss/Vespera/actions). macOS has not been validated. Offline commands need no model or GPU. Inference requires a separately installed/configured backend, an installed model and operator-supplied RAM/VRAM estimates including context overhead. Hardware suitability depends on that backend and model; `doctor` preserves unknown measurements.
+| Target | Requirements and verification |
+| --- | --- |
+| **Windows x64** | Rust and Cargo, Git, and Visual Studio C++ Build Tools with the Windows SDK for source builds. The native desktop and per-user installer have been exercised on Windows. |
+| **Linux** | Rust and Cargo, Git, and a native C toolchain for bundled SQLite. Ubuntu CI covers the headless workspace. The graphical build additionally requires an X11 environment and a working wgpu adapter. |
+| **macOS** | The repository includes a derived ICNS asset. Native packaging and desktop behavior still need platform verification. |
+| **Model inference** | A separately running supported provider, an installed model and credible resource estimates. Headless diagnostics and deterministic world simulation need no model or GPU. |
+
+The workspace pins Rust **1.99.1**. A fresh source build needs access to locked dependencies. After they are cached, add `--offline` to Cargo commands. There is no separate database server. [Dependency record](docs/DEPENDENCIES.md)
+
+### Windows installer or portable build
+
+For an internal build, follow the release walkthrough to stage and verify the Windows package. Run the resulting `Vespera-Setup.exe` for a per-user install with Start Menu and desktop shortcuts. For a portable candidate, open `bin\vespera-launcher.exe`. The installer and portable build include the official icon and assets. [Build and verify a local package](docs/RELEASE.md)
+
+### Run from source
+
+<details open>
+<summary>Windows PowerShell</summary>
 
 ```powershell
 git clone https://github.com/ShamelesAbyss/Vespera.git
 Set-Location Vespera
 cargo build --release --locked -p vespera-app
-.\target\release\vespera.exe validate-config --config config/local.toml --json
 .\target\release\vespera.exe doctor --json
+cargo run --locked -p vespera-view --features graphics --bin vespera-view
 ```
 
-On POSIX shells, use `cd Vespera` and `./target/release/vespera`. All commands can also run as `cargo run --locked -p vespera-app -- <command>`. See the [dependency record](docs/DEPENDENCIES.md) for dependency decisions and licenses.
+</details>
 
-For an internal build containing the CLI and Atlas executables, use the [local release walkthrough](docs/RELEASE.md).
+<details>
+<summary>Linux shell</summary>
 
-## Configure providers and models
-
-`config/local.toml` is a safe, offline-valid **placeholder inventory**, not a runnable model installation. Copy it to `config/local.private.toml`. Replace `example-local-model` with an installed provider-native identifier, set accurate capabilities/context/resources and enable the model with `availability = "available"`. The sample agent remains suspended until explicitly resumed for an invocation.
-
-```toml
-# Within the selected [[models]] entry; illustrative estimates only.
-context_window_tokens = 512
-availability = "available"
-[models.resources]
-ram_bytes = 6442450944
-vram_bytes = 6442450944
+```bash
+git clone https://github.com/ShamelesAbyss/Vespera.git
+cd Vespera
+cargo build --release --locked -p vespera-app
+./target/release/vespera doctor --json
+cargo run --locked -p vespera-view --features graphics --bin vespera-view
 ```
 
-Both resource values are mandatory for admission. Zero VRAM is an explicit CPU-only estimate, not a command forcing CPU execution. Missing estimates block loading. Match `[resources]` budgets to your hardware and backend settings; model disk size does not establish resident RAM. Registering inventory does not load models.
+</details>
 
-| Provider kind | Configuration and behavior |
-| --- | --- |
-| `ollama` | Endpoint such as `http://127.0.0.1:11434`; native discovery, inference/streaming, lifecycle and residency observations |
-| `open_ai_compatible` | Endpoint such as `http://127.0.0.1:11434/v1`; chat completions/SSE and discovery; explicit load/unload/residency unsupported |
-| `custom` | Declaration accepted, but no operational adapter installed |
+### Run your first desktop task
 
-For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in its provider entry and supply that environment variable privately. Never put literal credentials in TOML. Offline commands do not resolve credentials. Loopback is the default network policy; remote access requires `network.allow_remote = true`, and plaintext remote HTTP additionally requires `allow_insecure_http = true`. Redirects, embedded URL credentials, query strings and fragments are rejected. See [provider contracts](docs/PROVIDERS.md).
+1. Start Ollama or a compatible local server with a text model available. Open Vespera and choose **Models & Providers**.
+2. Choose the adapter, check the endpoint, and select **Test & discover**. The default native Ollama URL is `http://127.0.0.1:11434`. The compatible preset uses `http://127.0.0.1:1234/v1`, which can be edited.
+3. Choose **New agent** and press the number next to an exposed model. Enter the agent name, role, and credible RAM and VRAM estimates in MiB.
+4. Choose **Run agent task**, enter a short prompt, and press **Enter**. Open **Task history** to inspect the saved outcome.
 
-**Context limitation:** the compatible API provides no portable context-allocation control. A live task admitted at 512 tokens caused Ollama's compatible backend to allocate 65,536 tokens. Admission is a logical bound, not proof of backend allocation. Native scheduler-driven preload and inference now both send the admitted context setting; a backend acknowledgement still does not establish measured allocation. External allocations and context-dependent overhead are not yet reconciled into scheduler accounting. These are active engineering gaps, not whole-device capacity guarantees.
+Home also opens Hardware and a starter world before any provider is configured. **F5** returns Home. **F6** opens Models & Providers. For a two-agent workflow, grant delegation to the drafting agent and choose **Draft + review**. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow steps](docs/CLI.md#run-a-delegated-desktop-workflow)
 
-## Inspect and execute
+## Commands and examples
 
-| Command | Behavior |
-| --- | --- |
-| `validate-config` | Offline schema, identity, reference and declaration validation |
-| `doctor` | Offline host diagnostics |
-| `models` | Offline declared model inventory |
-| `agents` | Offline declared agent inventory |
-| `provider-health` | Explicit bounded provider health polling, without model loading |
-| `run-agent` | One actual bounded agent task, followed by cleanup reporting |
-| `agent-state` | Inspect, set or release a durable operator hold in the private task store |
-| `agent-task-history` | Inspect durable task ownership and outcomes offline |
-| `agent-inbox` | Send or list private durable messages with current communication grants |
-| `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
-| `events` | Initialize, replay or follow a local journal and recover committed agent, workflow, simulation or memory events |
-| `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |
-| `memory-admin` | Verified whole-database backup and restore to new files |
+Examples using `cargo run` work in PowerShell and Linux shells unless marked otherwise. The command reference covers flags, outputs, prerequisites and recovery. [CLI reference](docs/CLI.md)
 
-Every command supports `--help` and `--json`; the root supports `--version`. All except `doctor` accept `--config PATH`, defaulting to `config/local.toml`. The [complete CLI reference](docs/CLI.md) documents every option, range, default, exit behavior and JSON limitation.
+### Inspect and configure
+
+```sh
+cargo run --locked -p vespera-app -- validate-config --config config/local.toml --json
+cargo run --locked -p vespera-app -- models --config config/local.toml --json
+cargo run --locked -p vespera-app -- agents --config config/local.toml --json
+cargo run --locked -p vespera-app -- provider-health --config config/local.toml --timeout-seconds 30 --json
+```
+
+The checked-in TOML is a placeholder inventory. For inference, copy it to `config/local.private.toml`, select an installed provider-native model identifier, declare capabilities and memory estimates, and enable the model. Keep the sample agent UUID to use the example below. The health check contacts the daemon without loading a model. [Configure a real model](docs/CLI.md#run-one-agent-task)
+
+<details>
+<summary>Run and inspect a durable CLI task</summary>
+
+PowerShell:
 
 ```powershell
-.\target\release\vespera.exe models --config config/local.private.toml --json
-.\target\release\vespera.exe agents --config config/local.private.toml --json
-.\target\release\vespera.exe provider-health --config config/local.private.toml --timeout-seconds 30 --json
 New-Item -ItemType Directory -Force data | Out-Null
-Set-Content -LiteralPath data/task.txt -Encoding utf8 -Value 'Reply briefly with a greeting.'
-.\target\release\vespera.exe run-agent --config config/local.private.toml --agent 33333333-3333-4333-8333-333333333333 --prompt-file data/task.txt --resume --max-output-tokens 8 --context-tokens 512 --timeout-seconds 120 --temperature 0 --unload-after --json
+Set-Content -LiteralPath data/task.txt -Encoding utf8 -Value 'Reply with a short greeting.'
+cargo run --locked -p vespera-app -- run-agent --config config/local.private.toml --agent 33333333-3333-4333-8333-333333333333 --prompt-file data/task.txt --task-store data/agent-tasks.sqlite3 --resume --max-output-tokens 32 --json
 ```
 
-The example assumes the sample agent UUID was retained and the private inventory has been configured for real hardware/model availability. Prompt files must be nonempty UTF-8 and at most 64 KiB. `--resume` changes status for this invocation only. Generated content is untrusted data and does not execute tools or model instructions.
+Linux:
 
-`--unload-after` explicitly requests unload because a backend may be shared. Omit it when preserving backend residency is intended. Compatible providers cannot acknowledge unload: requesting it can return nonzero even after successful inference. Cleanup reports local draining, acknowledged unloads, remaining estimated reservations and errors. Cancellation does not prove remote computation stopped. CLI task state is not persisted across processes.
-
-## Agents, orchestration and memory
-
-Configure agents in TOML with stable independent UUIDs, identity/personality/goals, permissions and either a fixed model UUID or capability policy. The library supports policy rebinding without replacing identity. Health-aware selection and scheduler admission precede inference. Model names are captured at admission, and task/agent/model/provider/lease provenance accompanies accepted results.
-
-Permissions default to empty. Library memory and inbox operations enforce ownership, provenance, duplicate checks and bounded retention. Defaults are 64 agents, 1,024 retained tasks, 256 memory/inbox records per agent, 64 KiB per text record and 64 MiB aggregate logical retained text. These are in-process bounds, not a durable store or measured heap limit. CLI execution does not automatically inject persona/memory or write memories. Library callers are trusted; UUIDs alone do not authenticate remote actors. See [agents](docs/AGENTS.md) and [durable memory](docs/MEMORY.md). The separate `vespera-memory` library now provides permission-checked SQLite persistence, bounded structured/phrase search and atomic consolidation lineage. Its real agent authorization adapter survives model rebinding and supports reopening under a fresh runtime. The explicit `memory` CLI opens storage for operator requests. Use `run-agent --memory-query-file` to attach authorized durable records and `--remember-result` to save an accepted response. Both are explicit options. See the [CLI reference](docs/CLI.md#opt-in-memory-during-inference).
-
-The orchestrator executes bounded operator-authored workflows with capability routing, authorized delegation, dependency results, capped retries, deadlines and explicit conflict policies. The native `run-workflow` command accepts a strict bounded JSON plan. Automatic decomposition and rendering native workflow events remain roadmap work. [Orchestrator reference](docs/ORCHESTRATION.md)
-
-## Persistent simulation
-
-The headless `world` command runs a configurable, seeded grid with resident foragers, builders, regenerating resource sites and a shared depot. Committed state includes positions, goals, resources, shelters, encounters and owned action memories. Deterministic ticks require no provider. An operator can request one model decision or run a finite schedule that rotates decisions across approved residents. World Mode shows reasoning preparation and active local inference during a scheduled run, alongside separately committed choices. [World setup and controls](docs/CLI.md#persistent-world-simulation) · [Model decisions](docs/CLI.md#model-assisted-resident-decisions)
-
-## External workers
-
-Run `vespera serve --access-file <path>` to start the default loopback service with operator-approved worker IDs, capability grants and signing keys supplied through environment variables. The v2 API uses short-lived HMAC proofs and rejects duplicate nonces. Operators can submit, inspect and cancel tasks and revoke workers. Workers claim, renew and complete fenced attempts with their own keys. Operators and workers can replay broker events or subscribe over WebSocket using the same scoped cursors. Enable TLS 1.3 for HTTPS and secure WebSockets. A non-loopback bind requires a TLS identity and `--allow-remote`. Tasks execute in the external worker. Set `--broker-db <path>` to retain tasks, results, revocations and recent event feeds across restarts. [Setup and PowerShell example](docs/CLI.md#external-worker-service) · [Rust SDK](docs/PROTOCOL.md#rust-sdk) · [API contract](docs/PROTOCOL.md#implemented-loopback-worker-api)
-
-To manage durable memory, add `memory_read` and `memory_write` grants to the selected agent's private configuration and initialize its local database:
-
-```powershell
-$memoryArgs = @('memory', '--config', 'config/local.private.toml', '--agent', '33333333-3333-4333-8333-333333333333')
-.\target\release\vespera.exe @memoryArgs init --json
-Set-Content -LiteralPath data/observation.txt -Encoding utf8 -Value 'An observation to retain.'
-.\target\release\vespera.exe @memoryArgs add --content-file data/observation.txt --json
-.\target\release\vespera.exe @memoryArgs list --json
+```bash
+mkdir -p data
+printf '%s\n' 'Reply with a short greeting.' > data/task.txt
+cargo run --locked -p vespera-app -- run-agent --config config/local.private.toml --agent 33333333-3333-4333-8333-333333333333 --prompt-file data/task.txt --task-store data/agent-tasks.sqlite3 --resume --max-output-tokens 32 --json
 ```
 
-These operations run without a model server. The default database is `data/vespera.sqlite3` and inspection uses a read-only open. The [memory CLI reference](docs/CLI.md#offline-durable-memory) covers permissions, filtering and protected lineage deletion. Use `memory-admin` for [whole-database backup and restore](docs/CLI.md#memory-backup-and-restore).
+Use the returned task UUID with `agent-task-history --database data/agent-tasks.sqlite3 --task <UUID>`. The example's `--resume` activates the agent for the invocation. A durable operator hold must be released separately. [Task history and holds](docs/AGENTS.md#durable-task-ownership)
 
-Run an operator-authored workflow after explicitly granting its coordinator `delegate` in the private configuration:
+</details>
 
-```powershell
-.\target\release\vespera.exe run-workflow --config config/local.private.toml --workflow-file config/workflow.example.json --resume --timeout-seconds 120 --unload-after --json
+<details>
+<summary>Run an authored workflow and reopen its checkpoint</summary>
+
+Configure the sample agent as above and give the coordinator the `delegate` permission in your private TOML. The shipped example uses that agent for both steps. For distinct agents, use a plan naming their configured IDs.
+
+```sh
+cargo run --locked -p vespera-app -- run-workflow --config config/local.private.toml --workflow-file config/workflow.example.json --workflow-store data/workflows.sqlite3 --task-store data/agent-tasks.sqlite3 --resume --timeout-seconds 120 --json
+cargo run --locked -p vespera-app -- workflow-history --database data/workflows.sqlite3 --task 77777777-7777-4777-8777-777777777777
 ```
 
-The [example plan](config/workflow.example.json) uses the sample agent for two bounded dependent steps. [Workflow documentation](docs/ORCHESTRATION.md) explains capabilities, attempts, budgets, prior-result handling and explicit conflict policies. A [live native sample](artifacts/live-workflow-2026-11-06.json) completed both steps with acknowledged cleanup. This does not establish semantic correctness or multi-model live compatibility.
+The sample plan has a fixed task UUID. To run it again against the same history, author a plan with a fresh root UUID. Use `--decomposition-file` for a bounded planning request with an explicit roster. [Workflow execution and recovery](docs/CLI.md#execute-a-workflow)
 
-## Validation and development
+</details>
 
-```powershell
+### Create, advance and open a world
+
+Create the `data` directory first with `New-Item -ItemType Directory -Force data` in PowerShell or `mkdir -p data` in Linux. Choose a fresh database for initialization.
+
+```sh
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 init --spec config/world.example.json
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 advance --ticks 8
+cargo run --locked -p vespera-app -- world --database data/world.sqlite3 replay --revision 8
+cargo run --locked -p vespera-view --features graphics --bin vespera-view -- --world data/world.sqlite3
+```
+
+A standalone World view starts read-only. With `--allow-world-control`, **Space** commits a tick and **P** toggles playback. Press **T** to freeze or return live, and **[** or **]** to step through retained commits. Right-drag orbits, the wheel zooms, and **WASD** pans. [World controls and model decisions](docs/CLI.md#graphical-world-controls)
+
+<details>
+<summary>Open Atlas layers and run a paired simulation experiment</summary>
+
+```sh
+cargo run --locked -p vespera-view --features graphics --bin vespera-view -- --atlas --world data/world.sqlite3
+cargo run --locked -p vespera-view --features graphics --bin vespera-view -- --machine
+cargo run --locked -p vespera-app -- experiment-world --spec config/world.example.json --evidence-dir target/world-policy-evidence --ticks 60 --seeds 3 --suspend-role forager --target-shelters 5
+```
+
+Use a fresh experiment evidence directory. **F1–F4** select configured Atlas layers. Add `--broker 127.0.0.1:8765` for Intelligence Network with a running broker and privately supplied `VESPERA_OPERATOR_TOKEN`. A local journal can be opened with `--swarm <PATH>`. [Atlas sources](docs/CLI.md#switch-layers-in-atlas) · [Experiment scope](docs/CLI.md#compare-two-world-policies)
+
+</details>
+
+<details>
+<summary>Command map</summary>
+
+| Work | Commands |
+| --- | --- |
+| Configure and diagnose | `validate-config`, `doctor`, `models`, `agents`, `catalog`, `provider-health` |
+| Execute and recover | `run-agent`, `agent-state`, `agent-task-history`, `agent-inbox`, `run-workflow`, `workflow-history` |
+| Store and observe | `memory`, `memory-admin`, `events`, `serve` |
+| Simulate and compare | `world`, `experiment-world`, `experiment-models`, `experiment-workflows` |
+
+Use `--help` on any command or subcommand. The desktop executable also has `--help`. [Full command reference](docs/CLI.md)
+
+</details>
+
+## Real-world use cases
+
+- **Local AI research.** Compare two installed Ollama models on the same private cases. Read the outcomes alongside provider observations and cleanup evidence.
+- **Multi-agent collaboration.** Assign a drafter and reviewer to different saved identities. Inspect who ran each step and recover the exact dependency evidence from the workflow store.
+- **Resource-constrained inference.** Give a task a small context and output budget, set model estimates, and use Machine to inspect the scheduler's decision.
+- **Persistent AI memory.** Write records to an agent-owned namespace and compare responses with and without authorized retrieval. The same namespace follows the agent across model changes.
+- **Artificial world simulation.** Replay a seeded world, then vary resident availability and compare changes in resources and shelters.
+
+## Architecture
+
+The desktop and CLI compose the same execution stack. The broker gives external workers a separate authenticated path. World state, task history, private memory and observation events each have their own storage boundary.
+
+```mermaid
+flowchart TD
+    CLI["CLI"]
+    UI["Native desktop and Atlas"]
+    Runtime["Application runtime"]
+    CLI --> Runtime
+    UI --> Runtime
+    Runtime --> Agents["Agents and orchestrator"]
+    Agents --> Scheduler["Scheduler and model registry"]
+    Scheduler --> Adapters["Ollama and compatible adapters"]
+    Adapters --> Server["Configured model server"]
+    Agents --> Private["Private task, workflow and memory stores"]
+    Runtime --> Evidence["Events and observations"]
+    Evidence --> UI
+    CLI --> Broker["Authenticated worker broker"]
+    Worker["External worker and Rust SDK"] --> Broker
+    Broker --> Evidence
+    CLI --> World["Persistent world engine"]
+    UI --> World
+```
+
+<details>
+<summary>Follow a bounded inference request and explore the workspace</summary>
+
+```mermaid
+sequenceDiagram
+    participant A as Agent runtime
+    participant S as Scheduler
+    participant P as Provider
+    participant D as Durable task store
+    A->>D: Record accepted ownership when enabled
+    A->>S: Request a bounded model lease
+    alt Request admitted
+        S->>P: Prepare model when supported
+        S-->>A: Return the owned lease
+        A->>P: Send bounded inference
+        P-->>A: Return response or error
+        A->>D: Record terminal checkpoint when enabled
+        A->>S: Release the owned lease
+    else Request denied
+        S-->>A: Return the admission reason
+        A->>D: Record terminal checkpoint when enabled
+    end
+```
+
+| Workspace crates | Responsibility |
+| --- | --- |
+| `vespera-core`, `vespera-config` | Domain contracts, strict configuration and endpoint declarations |
+| `vespera-app`, `vespera-view` | Shared application composition, CLI, launcher and native desktop |
+| `vespera-providers`, `vespera-model-registry`, `vespera-scheduler` | Provider contracts, inventory and health, queues and model leases |
+| `vespera-agents`, `vespera-orchestrator` | Stable identities, execution, permissions and bounded workflows |
+| `vespera-memory`, `vespera-events`, `vespera-world` | Private retrieval, observation journal and persistent simulation |
+| `vespera-api`, `vespera-sdk` | Worker and operator broker protocol and Rust client |
+
+`config/` contains runnable specifications and placeholder inventory. `docs/` holds contracts and release procedures. `artifacts/` records validation evidence, and `packaging/windows/` defines the installer. [Architecture guide](docs/ARCHITECTURE.md)
+
+</details>
+
+## Configuration and security
+
+- **Providers.** Use `ollama` for native lifecycle support and `open_ai_compatible` for compatible chat and discovery. The `custom` declaration has no installed adapter. Configure credential references with `credential_env = "VESPERA_PROVIDER_TOKEN"` in a private configuration and supply the value outside the file. [Endpoint policy](docs/PROVIDERS.md#endpoints-and-credentials)
+- **Permissions.** New desktop agents have no optional grants. Delegation, memory, communication and simulation actions use explicit permission checks. Model outputs and retrieved text are treated as untrusted input. [Agent grants](docs/AGENTS.md)
+- **Network.** Providers and broker default to loopback. Remote provider access and remote broker TLS are explicit operator settings. The broker derives scoped authority from signed requests and fenced leases. [Authentication and routes](docs/PROTOCOL.md#request-authentication) · [TLS](docs/CLI.md#tls-worker-transport)
+- **Storage.** The desktop uses a per-user data directory, separate from the installation. Task, workflow and memory files can contain private prompts, responses and records. Back up while writers are stopped, keep related SQLite sidecars with the backup, and use the memory backup command where applicable. [Desktop data](docs/CLI.md#open-the-native-desktop) · [Backup and recovery](docs/RELEASE.md#upgrade-and-recovery)
+
+## Development and testing
+
+```sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
-$env:RUSTDOCFLAGS = '-D warnings'
-cargo doc --workspace --no-deps --locked
-cargo build --release --workspace --locked
-cargo test -p vespera-app --release --locked
 ```
 
-For POSIX documentation builds use `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked`. Ordinary tests use local fixtures, require no downloaded model and ignore the explicit live Ollama health test. To opt into that health test against a running local daemon:
+The default workspace commands are headless. Check graphics separately on a host with the platform build tools.
 
-```powershell
-cargo test -p vespera-providers --test ollama --locked live_ollama_smoke_test -- --ignored
+```sh
+cargo build --locked -p vespera-view --features graphics
+cargo test --locked -p vespera-view --features graphics
+cargo clippy --locked -p vespera-view --features graphics --all-targets -- -D warnings
 ```
 
-[Recorded live evidence](artifacts/live-ollama-2026-11-06.json) covers two nonstreaming tasks on one model/backend version, not a benchmark or broad compatibility matrix. Native execution returned `OK` and acknowledged unload; compatible execution returned `OK` and retained an honest provider-managed reservation. A separate native operator request cleaned up that compatible run. Provider measurements, estimates and client timings are distinguished in the artifact.
+The offline suites use local fixtures. Opt-in live tests require their named daemon and model. Record OS, adapter, backend, model and observed result when reporting a live check. [Provider test matrix](docs/PROVIDERS.md#verification-and-live-scope) · [Development log](docs/DEVELOPMENT_LOG.md)
 
-Active development is on `main`, the repository default. The previous baseline is preserved on [old-dead-code](https://github.com/ShamelesAbyss/Vespera/tree/old-dead-code).
+## Troubleshooting
 
-For contributions, inspect the [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [implementation report](docs/IMPLEMENTATION_REPORT.md) and [development log](docs/DEVELOPMENT_LOG.md). Keep first-party implementation in Rust, maintain acyclic crate boundaries, add meaningful regression coverage, validate intended diffs and record limitations. Verified upgrades are committed and pushed as recoverable checkpoints; do not commit private configuration or credentials.
+| Symptom | What to check |
+| --- | --- |
+| **The Windows build cannot find `rc.exe`** | Install the Windows SDK and MSVC C++ tools. The graphics build compiles the embedded icon as a Windows resource. |
+| **The app opens but a layer is unavailable** | Atlas layers follow configured sources. Home can open a local world directly. Use the explicit broker or journal flags for Intelligence Network and Swarm. |
+| **Provider health fails or the model list is empty** | Check the daemon, the adapter and endpoint path. Discover models from the desktop or run `provider-health` with the private configuration. |
+| **Admission rejects a task** | Check both RAM and VRAM estimates, the configured budget, requested context and external residency. Zero VRAM is an explicit CPU-only estimate and does not force backend placement. |
+| **A held agent cannot start** | Resume the selected agent in the desktop or release its durable hold with `agent-state`. An invocation-only resume cannot clear a hold. |
+| **Cancellation or unload is unconfirmed** | Check the cleanup report and provider activity. Compatible servers manage their own residency. Native unload acknowledgements and device measurements are separate observations. |
+| **The renderer cannot start** | Check the display server and GPU driver. The CLI and deterministic experiments remain available without graphics. |
 
-## Troubleshooting and operational limits
+## Roadmap and project status
 
-- **Unknown cost or admission rejected:** supply both estimates, check model/context limits and budgets; do not substitute zero for unknown costs.
-- **Unhealthy provider:** check the daemon, endpoint policy and credential environment reference with `provider-health`. Inventory alone does not establish health.
-- **Suspended agent:** explicitly use `--resume` or change its configured status after reviewing its policy.
-- **Unsupported unload:** use the backend's operator controls; an estimate remains charged until supported cleanup is acknowledged. Compatible inference does not imply native lifecycle support.
-- **Timeout/cancellation:** inspect structured cleanup and backend activity. The command deadline covers health and execution, with up to five additional seconds for cleanup.
-- **Configuration failure:** schema v1 rejects unknown fields, duplicate IDs and broken references. Errors suppress raw configuration and credential values.
+Vespera is under active development. The Windows desktop has verified Home, hardware inspection, persistent world controls, native and compatible inference, durable agent history, branded installation and a live two-agent workflow. Headless tests run in Ubuntu CI. The milestone ledger distinguishes those checks from work that still needs broader evidence.
 
-Resource accounting is conservative but incomplete: no startup/external allocation reconciliation, per-inference overhead reservation or restart recovery exists yet. Capability routing currently selects the first matching inventory entry rather than ranking resource/context suitability. No production-readiness, comprehensive OS support or performance claim is made. Interactive Ctrl+C delivery has not been manually verified on every OS.
+| Next area | Work underway or still open |
+| --- | --- |
+| **Desktop and Atlas** | Live desktop workflow projection into Swarm, broader workflow authoring and history navigation, authenticated provider management, and persistent settings |
+| **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
+| **Release** | Signing, a supported production installer toolchain, macOS packaging and the owner's license decision |
 
-## License
+[Milestone ledger](docs/MILESTONE_LEDGER.md) · [Roadmap](docs/ROADMAP.md) · [Verified checkpoints](docs/DEVELOPMENT_LOG.md)
 
-The repository currently reserves all rights; no open-source redistribution license has been granted. See [LICENSE](LICENSE). Third-party dependencies retain their own licenses. Cargo package publication is disabled pending the owner's licensing decision.
+For contributions, start with the architecture and relevant contract, preserve the headless and native entry points, and include scoped validation evidence. Keep credentials, private TOML, model outputs and user databases out of commits. Development lands on `main`. The original baseline is retained on [old-dead-code](https://github.com/ShamelesAbyss/Vespera/tree/old-dead-code).
+
+**License.** Vespera is currently all rights reserved. The repository's license does not grant redistribution rights. Third-party dependencies retain their own licenses. [Project license](LICENSE) · [Release scope](docs/RELEASE.md)
