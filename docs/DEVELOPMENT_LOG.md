@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Scheduler lifecycle journal
+
+Verified implementation checkpoint `d0349c0f10a812173ed81b3b752ac2e860815a84`, pushed to `main`.
+
+`run-agent` and `run-workflow` can publish acknowledged explicit load and unload, managed inference entry and resource admission rejection events. Fixtures observed inference entry before completion, verified provider-managed inference without explicit residency claims, and withheld success events on failed load or unload. The 256-entry transport reported overflow. A journal failure reported omissions while the task completed and unloaded. Windows formatting, strict Clippy and offline workspace tests passed. The provider health checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42436776470).
+
+Live Ollama `hermes3:8b` completed a two-step workflow. Replay showed one acknowledged activation, two inference entries correlated to their attempts, and one acknowledged deactivation. Final residency was empty. Lifecycle telemetry can report gaps and is separate from recoverable outcomes. Remaining Milestone 9 work includes registration and agent lifecycle events and their graphical subscriptions.
+
 ## 2026-11-07 — Provider health journal observations
 
 Verified implementation checkpoint `9bdd8535c6369b26902bcd9297dcdefde159e98c`, pushed to `main`.
