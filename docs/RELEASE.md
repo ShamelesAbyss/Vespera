@@ -4,7 +4,7 @@ Vespera has an internal release candidate workflow. Public distribution requires
 
 ## Build and stage
 
-Use the pinned Rust toolchain, Git and the platform build tools from [the README](../README.md#requirements-and-installation). Start from a commit with a clean tracked worktree. Run the packager from the workspace root.
+Use the pinned Rust toolchain, Git and the platform build tools. Start from a commit with a clean tracked worktree. Run the packager from the workspace root. [Build requirements](../README.md#requirements)
 
 ```powershell
 cargo run --locked -p vespera-app --example package-local -- --output target/vespera-local
@@ -12,7 +12,7 @@ cargo run --locked -p vespera-app --example package-local -- --output target/ves
 
 The same Cargo command works in a POSIX shell. Add `--offline` after the final `--` to require a cached dependency set for the release build. To keep the entire invocation offline, also put `--offline` before `-p`. Add `--headless` after the final `--` to stage the CLI alone. Use a fresh output directory with an existing parent.
 
-The tool builds the release executables with the lockfile and stages the requested binaries, the tracked configuration examples, the license, branding assets and operator documentation. It copies tracked materials from the recorded Git revision. `manifest.json` lists the source revision, Cargo.lock hash and SHA-256 and byte size of each staged file. A staging error can leave a partial directory. Treat a directory without a manifest as incomplete.
+The tool builds the release executables with the lockfile and stages the requested binaries, tracked configuration examples, licenses, branding, screenshots and operator documentation. It copies tracked materials from the recorded Git revision. `manifest.json` lists the source revision, Cargo.lock hash and SHA-256 and byte size of each staged file. A staging error can leave a partial directory. Treat a directory without a manifest as incomplete.
 
 On Windows, open `bin\vespera-launcher.exe` for the native desktop without a console. The graphics build requires the Windows SDK resource compiler. Home shows the official icon on its first rendered frame. Other screens use the same image in the shared header. The desktop also embeds the PNG and Windows icon resources, so it can render its branding from any working directory. The portable package includes the unchanged original and the derived PNG, multi-resolution ICO and ICNS. The ICNS is available for future macOS app packaging. Run `./scripts/generate-branding.ps1` on Windows to regenerate derivatives from the canonical JPEG.
 

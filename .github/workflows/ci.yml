@@ -32,3 +32,22 @@ jobs:
         run: cargo run --locked -p vespera-app -- validate-config --config config/local.toml --json
       - name: Read-only host diagnostics
         run: cargo run --locked -p vespera-app -- doctor --json
+
+  windows-native:
+    runs-on: windows-2025
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - name: Strict native Clippy
+        run: cargo clippy --locked -p vespera-view --features graphics --all-targets -- -D warnings
+      - name: Native desktop tests
+        run: cargo test --locked -p vespera-view --features graphics
+      - name: Build desktop and launcher resources
+        run: cargo build --locked -p vespera-view --features graphics --bins
+      - name: Portable packaging tests
+        run: cargo test --locked -p vespera-app --example package-local

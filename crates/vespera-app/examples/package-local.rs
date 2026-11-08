@@ -24,6 +24,10 @@ const DOCUMENTS: &[&str] = &[
     "assets/branding/vespera.icns",
     "assets/screenshots/desktop-workflow.jpg",
     "assets/screenshots/living-world.jpg",
+    "assets/screenshots/living-world-resident.jpg",
+    "assets/screenshots/living-world-settlement.jpg",
+    "assets/world/ATTRIBUTION.md",
+    "assets/world/space-base/LICENSE.txt",
     "config/local.toml",
     "config/world.example.json",
     "config/workflow.example.json",
@@ -35,6 +39,7 @@ const DOCUMENTS: &[&str] = &[
     "docs/DEVELOPMENT_LOG.md",
     "docs/IMPLEMENTATION_REPORT.md",
     "docs/INITIAL_PLAN.md",
+    "docs/MASTER_DIRECTIVE.txt",
     "docs/MEMORY.md",
     "docs/MILESTONE_LEDGER.md",
     "docs/ORCHESTRATION.md",
@@ -44,6 +49,8 @@ const DOCUMENTS: &[&str] = &[
     "docs/RELEASE.md",
     "docs/ROADMAP.md",
     "docs/SCHEDULER.md",
+    "docs/WORLD_VISUALS.md",
+    "rust-toolchain.toml",
 ];
 
 #[derive(Parser)]
