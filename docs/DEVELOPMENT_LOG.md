@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable external worker inboxes
+
+Verified implementation checkpoint `92b59939917bd0643414c991edc797bb182f310a`, pushed to `main`.
+
+Broker schema 3 persists pending messages and bounded acknowledgement fingerprints alongside existing work, revocations and event feeds. Accepted enqueues and their operator events commit atomically. The current access file governs recovery. Startup drops entries and fingerprints whose directed routes have been removed.
+
+Windows formatting, strict workspace Clippy and the offline workspace suite passed. A signed Rust SDK subprocess test verified version 2 migration, FIFO recovery, idempotent retries, conflicting payload rejection and permanent route removal. With a SQLite trigger rejecting a mailbox update, the broker returned `storage_unavailable` and fenced further reads. Restart recovered the previous inbox and event feed together. A separate test verified durable revocation despite a policy that still listed the revoked worker. These runs used local processes. Milestone 10 still needs an independent TLS host and explicitly provisioned trust root. The next locally actionable gate is Milestone 11 simulation reproducibility and scale.
+
 ## 2026-11-07 — Swarm status and durable outcome replay
 
 Verified implementation checkpoint `9c66452fac73c941af9fae7245042842945c7709`, pushed to `main`.
