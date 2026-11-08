@@ -451,6 +451,14 @@ Tick batches, resident activity and movement controls, and committed model choic
 
 History keeps a rolling checkpoint and up to 512 commits within a span of 4,096 revisions. An older database starts with its current revision as the first available checkpoint. A writer that predates recording can also leave gaps. An unavailable revision returns an explicit error.
 
+### Reproduce the world scale check
+
+```sh
+cargo test --locked --release -p vespera-world --test scale_replay -- --nocapture
+```
+
+The test generates a seeded 64×64 world with 32 residents and 64 resource sites. It compares 5,120 direct engine ticks against 40 separate SQLite commits and checks replay before and after the retention boundary. Output reports direct engine time, SQLite commit time including tick execution, latest replay time and database bytes. The check requires no model or graphics device.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

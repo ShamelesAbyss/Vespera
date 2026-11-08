@@ -113,7 +113,7 @@ The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK]
 
 ## Milestone 11 — Simulation and artificial civilization
 
-Extend the [deterministic world engine and graphical view](CLI.md#persistent-world-simulation) with model-driven resident actions.
+Verified within the bounded [world engine](CLI.md#persistent-world-simulation). Three residents committed two live Ollama choices each and retained their own action histories and encounter relationships. The maximum supported world passed deterministic replay through 5,120 ticks and a history checkpoint rollover. [Reproduce the scale check](CLI.md#reproduce-the-world-scale-check).
 
 - Reproduce a fixed number of ticks with a recorded seed/inputs, without inference access.
 - Pause/stall inference while world state stays valid; reject or explicitly reconcile late results by world version.
