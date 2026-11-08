@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Recoverable workflow audit
+
+Verified implementation checkpoint `6e12ccfcbb0992049c41e7486cb18ca90639f59b`, pushed to `main`.
+
+Workflow checkpoints now commit accepted attempt, dependency, terminal attempt and root outcome envelopes alongside the report. Live publication uses the original envelopes. A journal insert failure left the audit recoverable, and a source checkpoint failure withheld the uncommitted root outcome. The killed-process fixture resumed a completed dependency with its original event IDs. Windows formatting, strict Clippy and offline workspace tests passed. The memory mutation checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42435462221).
+
+Live Ollama `hermes3:8b` completed a two-step workflow. Live publication and recovery returned the same cursor, and replay contained five unique events with the recorded dependency. Acknowledged unload left zero residents. Legacy workflow rows remain readable without a recoverable audit. Agent communication, provider observations and concurrent recovery remain open under Milestone 9.
+
 ## 2026-11-07 — Durable memory mutation audit
 
 Verified implementation checkpoint `221be81e798f0ae5b23e1a4f2f1d7af074f520ce`, pushed to `main`.
