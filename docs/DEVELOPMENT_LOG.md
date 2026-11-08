@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable workflow lineage
+
+Verified implementation checkpoint `7ba48173d74725d657977f7b56079de3e34be8c5` was pushed to `main`. The NVIDIA admission checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42429199750).
+
+`run-workflow --workflow-store` retains the plan, root state, delegation intent, accepted attempts and outcomes in a bounded private SQLite database. A subprocess fixture killed the workflow during its second provider call. Reopen retained the first result and second delegation without claiming a second outcome. The same root was fenced before provider requests, and inspection during the active invocation returned a busy error. An injected result checkpoint failure prevented the dependent call.
+
+On Windows, a live two-step Ollama 0.40.13 workflow using `hermes3:8b` completed and acknowledged unload. `workflow-history` reopened the database and returned the exact terminal report from execution. Formatting, strict workspace Clippy and offline workspace tests passed. The store distinguishes inspection after interruption from re-execution. Safe resume from committed boundaries and automatic decomposition remain Milestone 6 work.
+
 ## 2026-11-07 — NVIDIA VRAM admission limit
 
 Verified implementation checkpoint `69ddd91f1ec9279fdb30756c7d367a00fb236d0c` was pushed to `main`. Observed-latency routing passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42428793122).
