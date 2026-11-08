@@ -49,6 +49,112 @@ fn execute(args: &[&str]) -> Output {
 }
 
 #[test]
+fn world_experiment_repeats_metrics_and_retains_redacted_commit_evidence() {
+    use serde_json::Value;
+    use vespera_world::WorldStore;
+
+    let scratch = ScratchDirectory::new();
+    let spec = scratch.0.join("spec.json");
+    let input = fs::read_to_string(workspace().join("config/world.example.json")).unwrap();
+    fs::write(&spec, input.replace("Aster", "Private name")).unwrap();
+    let compare = |spec: &Path, output: &Path, seeds| {
+        execute(&[
+            "experiment-world",
+            "--spec",
+            spec.to_str().unwrap(),
+            "--evidence-dir",
+            output.to_str().unwrap(),
+            "--ticks",
+            "60",
+            "--seeds",
+            seeds,
+            "--suspend-role",
+            "forager",
+            "--target-shelters",
+            "5",
+        ])
+    };
+    let first = scratch.0.join("first");
+    let output = compare(&spec, &first, "3");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Private name"));
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("3510be17-235a-4493-83ab-99d2ebf11ad4")
+    );
+    assert_eq!(report["summary"]["pairs"], 3);
+    assert_eq!(report["summary"]["baseline_target_met"], 3);
+    assert_eq!(report["summary"]["intervention_target_missed"], 3);
+    assert!(report["measurements"]["inference_latency_ns"].is_null());
+    assert!(report["inference"]["provider_version"].is_null());
+    for (index, pair) in report["pairs"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(pair["seed"], 42 + index);
+        let baseline = pair["baseline"]["shelters"].as_u64().unwrap();
+        let intervention = pair["intervention"]["shelters"].as_u64().unwrap();
+        assert!((1..baseline).contains(&intervention));
+        for arm in ["baseline", "intervention"] {
+            let trial = &pair[arm];
+            let evidence = &trial["evidence"];
+            let database = first.join(evidence["database"].as_str().unwrap());
+            let revision = evidence["revision"].as_u64().unwrap();
+            let replay = WorldStore::replay(&database, Some(revision)).unwrap();
+            let snapshot = replay.world.snapshot();
+            assert_eq!(trial["tick"], snapshot.tick);
+            assert_eq!(trial["shelters"], snapshot.shelters);
+            assert_eq!(trial["shared_stock"], snapshot.shared_stock);
+            assert_eq!(snapshot.residents[0].name, "Resident 1");
+            assert_eq!(
+                evidence["database_bytes"],
+                fs::metadata(&database).unwrap().len()
+            );
+            let event = WorldStore::advance_event(&database, revision)
+                .unwrap()
+                .unwrap();
+            assert_eq!(evidence["advance_event_id"], event.event_id.to_string());
+        }
+    }
+
+    let exported = scratch.0.join("exported.json");
+    fs::write(
+        &exported,
+        serde_json::to_vec(&report["configuration"]["world"]).unwrap(),
+    )
+    .unwrap();
+    let second = scratch.0.join("second");
+    let rerun = compare(&exported, &second, "3");
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    let rerun: Value = serde_json::from_slice(&rerun.stdout).unwrap();
+    assert_eq!(report["configuration"], rerun["configuration"]);
+    assert_eq!(report["summary"], rerun["summary"]);
+    let deterministic_pairs = |mut pairs: Value| {
+        for pair in pairs.as_array_mut().unwrap() {
+            for arm in ["baseline", "intervention"] {
+                let trial = pair[arm].as_object_mut().unwrap();
+                trial.remove("execution_elapsed_ns");
+                trial.remove("evidence");
+            }
+        }
+        pairs
+    };
+    assert_eq!(
+        deterministic_pairs(report["pairs"].clone()),
+        deterministic_pairs(rerun["pairs"].clone())
+    );
+    assert!(!compare(&spec, &first, "3").status.success());
+    let invalid = scratch.0.join("invalid");
+    assert!(!compare(&spec, &invalid, "4").status.success());
+    assert!(!invalid.exists());
+}
+
+#[test]
 fn validates_sample_as_machine_readable_inventory() {
     let output = execute(&["validate-config", "--json"]);
     assert!(

@@ -145,6 +145,8 @@ Keep read-only operation as the default, require explicit authorization for cont
 
 Record reproducible bounded experiments, not model opinions presented as research results.
 
+The [world policy runner](CLI.md#compare-two-world-policies) compares two roster policies with paired seed rotations. It exports reproducible redacted configuration, observed outcome denominators, execution measurements and replayable event references. Live-provider model and orchestration comparisons remain open.
+
 - Export configuration, seed, model/provider versions, event references, measured latency/resources, and known unknowns.
 - Reproduce a deterministic fixture's metrics; mark live-provider nondeterminism and missing measurements.
 - Compare two bounded policies with stated denominators, failures, and uncertainty; redact unauthorized/private data and secrets.

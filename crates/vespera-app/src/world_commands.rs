@@ -109,7 +109,7 @@ pub(super) async fn run(args: WorldArgs) -> Result<(), AppError> {
     let database = &args.database;
     let world = match args.command {
         WorldCommand::Init { spec } => {
-            let world = load_spec(&spec)?;
+            let world = World::new(load_spec(&spec)?)?;
             WorldStore::initialize(database, &world)?;
             world
         }
@@ -365,7 +365,7 @@ async fn decide(database: &Path, args: DecisionArgs) -> Result<(), AppError> {
     Ok(())
 }
 
-fn load_spec(path: &Path) -> Result<World, WorldError> {
+pub(super) fn load_spec(path: &Path) -> Result<vespera_world::WorldSpec, WorldError> {
     const LIMIT: u64 = 64 * 1024;
     let mut bytes = Vec::new();
     File::open(path)
@@ -374,7 +374,5 @@ fn load_spec(path: &Path) -> Result<World, WorldError> {
     if bytes.len() as u64 > LIMIT {
         return Err(WorldError::Invalid("world specification exceeds 64 KiB"));
     }
-    let spec = serde_json::from_slice(&bytes)
-        .map_err(|_| WorldError::Invalid("world specification JSON"))?;
-    World::new(spec)
+    serde_json::from_slice(&bytes).map_err(|_| WorldError::Invalid("world specification JSON"))
 }

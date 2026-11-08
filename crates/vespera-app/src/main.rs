@@ -4,6 +4,7 @@ mod catalog_commands;
 mod commands;
 mod doctor;
 mod event_commands;
+mod experiment;
 mod memory_commands;
 mod scheduler_telemetry;
 mod world_commands;
@@ -127,6 +128,8 @@ enum Command {
     Events(event_commands::EventArgs),
     /// Initialize, inspect and advance a persistent simulated world.
     World(world_commands::WorldArgs),
+    /// Compare two resident roster policies with paired deterministic seeds.
+    ExperimentWorld(experiment::Args),
     /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {
         /// Strict JSON access policy with environment variable references.
@@ -354,6 +357,8 @@ enum AppError {
     SchedulerTelemetry(std::io::Error),
     #[error(transparent)]
     World(#[from] vespera_world::WorldError),
+    #[error("cannot create a fresh experiment evidence directory: {0}")]
+    ExperimentDirectory(std::io::Error),
     #[error("world revision {revision} committed but event publication failed: {source}")]
     WorldEventPublication {
         revision: u64,
@@ -522,6 +527,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::MemoryAdmin { action } => memory_commands::run_admin(action).await?,
         Command::Events(args) => event_commands::run(args).await?,
         Command::World(args) => world_commands::run(args).await?,
+        Command::ExperimentWorld(args) => experiment::run(args)?,
         Command::Serve {
             access_file,
             listen,
