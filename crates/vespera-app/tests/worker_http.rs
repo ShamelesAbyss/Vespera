@@ -523,20 +523,14 @@ async fn tls_broker_requires_opt_in_and_verifies_trust_for_http_and_websocket() 
 
     let operator_key = fresh_token();
     let worker_key = fresh_token();
-    let mut command = server_command_at(&policy, None, "0.0.0.0:0");
+    let mut command = server_command(&policy, None);
     identity.configure(&mut command);
     command
-        .arg("--allow-remote")
         .env("TEST_OPERATOR_TOKEN", &operator_key)
         .env("TEST_FIRST_TOKEN", &worker_key)
         .env("TEST_SECOND_TOKEN", fresh_token());
     let (_process, base) = launch_command(command, policy);
-    let port = base
-        .strip_prefix("https://0.0.0.0:")
-        .unwrap()
-        .parse()
-        .unwrap();
-    let endpoint = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let endpoint = base.strip_prefix("https://").unwrap().parse().unwrap();
     let operator = OperatorClient::new_tls(
         endpoint,
         SigningKey::from_hex(&operator_key).unwrap(),
