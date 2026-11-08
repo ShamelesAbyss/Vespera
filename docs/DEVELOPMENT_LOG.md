@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Recoverable simulation tick events
+
+Verified implementation checkpoint `082c921c3540a38548acf3215cfe6b3397ede7b4`, pushed to `main`.
+
+Tick-advancing world commits retain the original simulation envelope with a stable simulation UUID. `world advance` and `world run` can publish to an existing event journal. An injected journal failure left a committed tick and recoverable envelope. An injected world update failure rolled both back. Tests also checked batching, ordered cadence, idempotent recovery and the 512-advance retention limit. Windows formatting, strict Clippy and offline workspace tests passed. The agent terminal checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42434453232).
+
+Live Ollama `hermes3:8b` selected a legal action after two ticks. The resulting world revision was 3, the journal contained exactly two simulation events, and replay after recovering revision 2 still contained the original two entries. Unload completed and final residency was empty. The simulation audit covers tick advancement. Non-tick controls and model decisions retain their separate world history evidence. Broader lifecycle coverage and recovery under load remain open.
+
 ## 2026-11-07 — Recoverable agent terminal events
 
 Verified implementation checkpoint `06eb99408e908f493a95c9ed3444905de6d10dcc`, pushed to `main`.
