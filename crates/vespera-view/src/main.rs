@@ -1,5 +1,6 @@
 mod atlas;
 mod gpu_telemetry;
+mod home_scene;
 mod machine_scene;
 mod scene;
 mod scene_measurement;
@@ -23,6 +24,9 @@ use vespera_sdk::{
 #[derive(Parser)]
 #[command(about = "Vespera native 3D orchestration and simulation")]
 struct Options {
+    /// Use this directory for the Home screen's local world.
+    #[arg(long, conflicts_with_all = ["atlas", "machine", "world", "swarm", "swarm_broker", "broker", "allow_cancel"])]
+    desktop_data: Option<PathBuf>,
     /// Signed broker address. Standalone broker views default to 127.0.0.1:8765.
     #[arg(long)]
     broker: Option<SocketAddr>,
@@ -76,6 +80,10 @@ fn main() -> ExitCode {
         Options::command()
             .error(ErrorKind::ArgumentConflict, error)
             .exit();
+    }
+    if options.opens_home() {
+        home_scene::run(options.desktop_data, options.reduced_motion);
+        return ExitCode::SUCCESS;
     }
     if options.atlas {
         return match run_atlas(&mut options) {
@@ -137,6 +145,16 @@ fn main() -> ExitCode {
 }
 
 impl Options {
+    fn opens_home(&self) -> bool {
+        !(self.atlas
+            || self.machine
+            || self.world.is_some()
+            || self.swarm.is_some()
+            || self.swarm_broker
+            || self.broker.is_some()
+            || self.allow_cancel)
+    }
+
     fn conflict(&self) -> Option<&'static str> {
         if self.scheduler_telemetry.is_some() && !(self.atlas || self.machine) {
             return Some("--scheduler-telemetry requires --machine or --atlas");
@@ -288,5 +306,32 @@ async fn observe(client: OperatorClient, updates: Feeds, mut actions: mpsc::Rece
         }
         while actions.try_recv().is_ok() {}
         tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn home_is_the_default_and_explicit_modes_still_select_their_views() {
+        assert!(
+            Options::try_parse_from(["vespera-view"])
+                .unwrap()
+                .opens_home()
+        );
+        for args in [
+            vec!["--atlas"],
+            vec!["--machine"],
+            vec!["--world", "world.sqlite3"],
+            vec!["--broker", "127.0.0.1:8765"],
+            vec!["--swarm", "events.sqlite3"],
+            vec!["--swarm-broker"],
+        ] {
+            let options =
+                Options::try_parse_from(std::iter::once("vespera-view").chain(args)).unwrap();
+            assert!(!options.opens_home());
+            assert!(options.conflict().is_none());
+        }
     }
 }

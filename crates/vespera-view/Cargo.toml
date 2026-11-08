@@ -26,7 +26,7 @@ tokio = { workspace = true, optional = true }
 bevy = { version = "0.20.1", optional = true, default-features = false, features = [
     "default_app", "std", "multi_threaded", "bevy_winit", "x11", "default_font",
     "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_render",
-    "bevy_ui", "bevy_ui_render", "bevy_text", "bevy_picking", "mesh_picking",
+    "bevy_ui", "bevy_ui_render", "bevy_text", "bevy_picking", "mesh_picking", "ui_picking",
     "bevy_gizmos", "bevy_gizmos_render",
 ] }
 

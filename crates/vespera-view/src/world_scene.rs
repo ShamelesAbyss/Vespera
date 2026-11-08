@@ -61,7 +61,7 @@ enum TimelineRequest {
 }
 
 #[derive(Resource)]
-struct View {
+pub(super) struct View {
     updates: watch::Receiver<Observation>,
     commands: SyncSender<Request>,
     allow_control: bool,
@@ -128,6 +128,17 @@ pub(super) fn install(
     allow_control: bool,
     reduced_motion: bool,
 ) -> Result<(), WorldError> {
+    let view = connect(path, revision, allow_control)?;
+    install_scene(app, reduced_motion);
+    app.insert_resource(view);
+    Ok(())
+}
+
+pub(super) fn connect(
+    path: PathBuf,
+    revision: Option<u64>,
+    allow_control: bool,
+) -> Result<View, WorldError> {
     let (world, reasoning, status, history) = if let Some(revision) = revision {
         let replay = WorldStore::replay(&path, Some(revision))?;
         let history = HistoryPosition::from(&replay);
@@ -136,10 +147,6 @@ pub(super) fn install(
         let (world, reasoning) = read_observed(&path)?;
         (world, reasoning, "Database connected", None)
     };
-    let state = world.snapshot();
-    let home_distance = f32::from(state.width.max(state.depth))
-        .mul_add(1.35, 4.0)
-        .clamp(9.0, 85.0);
     let (observations, updates) = watch::channel(Observation {
         world: world.clone(),
         status,
@@ -149,8 +156,7 @@ pub(super) fn install(
     });
     let (commands, actions) = mpsc::sync_channel(1);
     std::thread::spawn(move || observe(path, observations, actions));
-    register(app, Layer::World);
-    app.insert_resource(View {
+    Ok(View {
         updates,
         commands,
         allow_control,
@@ -165,14 +171,18 @@ pub(super) fn install(
         clock: Timer::from_seconds(0.5, TimerMode::Repeating),
         entities: BTreeMap::new(),
     })
-    .insert_resource(Focus {
+}
+
+pub(super) fn install_scene(app: &mut App, reduced_motion: bool) {
+    register(app, Layer::World);
+    app.insert_resource(Focus {
         point: None,
         home_point: Vec3::ZERO,
-        home_distance,
+        home_distance: 16.0,
         reduced_motion,
     })
     .init_resource::<Selected>()
-    .add_systems(Startup, setup)
+    .add_systems(Update, setup.run_if(resource_added::<View>).before(receive))
     .add_systems(
         Update,
         (
@@ -184,10 +194,10 @@ pub(super) fn install(
         )
             .chain()
             .run_if(|layers: Res<Layers>| layers.active == Layer::World)
+            .run_if(resource_exists::<View>)
             .after(receive),
     )
-    .add_systems(Update, receive);
-    Ok(())
+    .add_systems(Update, receive.run_if(resource_exists::<View>));
 }
 
 fn read_observed(path: &Path) -> Result<(World, Option<ReasoningStatus>), WorldError> {
@@ -321,7 +331,7 @@ fn commit(path: &Path, command: Command) -> Result<World, WorldError> {
 fn setup(
     mut commands: Commands,
     view: Res<View>,
-    focus: Res<Focus>,
+    mut focus: ResMut<Focus>,
     layers: Res<Layers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -346,6 +356,9 @@ fn setup(
         material: colors.map(|color| materials.add(unlit(color))),
     });
     let state = view.world.snapshot();
+    focus.home_distance = f32::from(state.width.max(state.depth))
+        .mul_add(1.35, 4.0)
+        .clamp(9.0, 85.0);
     let camera = commands
         .spawn((
             Layer::World,

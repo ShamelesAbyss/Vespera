@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -10,10 +10,17 @@ pub(super) enum Layer {
     Network,
     Swarm,
     World,
+    Home,
 }
 
 impl Layer {
-    const ALL: [Self; 4] = [Self::Machine, Self::Network, Self::Swarm, Self::World];
+    const ALL: [Self; 5] = [
+        Self::Machine,
+        Self::Network,
+        Self::Swarm,
+        Self::World,
+        Self::Home,
+    ];
 
     pub(super) fn name(self) -> &'static str {
         match self {
@@ -21,6 +28,7 @@ impl Layer {
             Self::Network => "Intelligence Network",
             Self::Swarm => "Swarm",
             Self::World => "Living World",
+            Self::Home => "Home",
         }
     }
 }
@@ -31,6 +39,8 @@ pub(super) struct Layers {
     pub switched: bool,
     pub incoming: Option<AgentId>,
     roots: BTreeMap<Layer, Entity>,
+    disabled: BTreeSet<Layer>,
+    requested: Option<Layer>,
 }
 
 impl Layers {
@@ -40,11 +50,29 @@ impl Layers {
             switched: false,
             incoming: None,
             roots: BTreeMap::new(),
+            disabled: BTreeSet::new(),
+            requested: None,
         }
     }
 
     pub fn parent(&self, layer: Layer) -> ChildOf {
         ChildOf(self.roots[&layer])
+    }
+
+    fn available(&self, layer: Layer) -> bool {
+        self.roots.contains_key(&layer) && !self.disabled.contains(&layer)
+    }
+
+    pub fn set_available(&mut self, layer: Layer, available: bool) {
+        if available {
+            self.disabled.remove(&layer);
+        } else {
+            self.disabled.insert(layer);
+        }
+    }
+
+    pub fn request(&mut self, layer: Layer) {
+        self.requested = Some(layer);
     }
 }
 
@@ -103,17 +131,32 @@ fn switch(
         layers.switched = false;
         layers.incoming = None;
     }
-    for (layer, key) in
-        Layer::ALL
-            .into_iter()
-            .zip([KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4])
+    let keyboard = Layer::ALL
+        .into_iter()
+        .zip([
+            KeyCode::F1,
+            KeyCode::F2,
+            KeyCode::F3,
+            KeyCode::F4,
+            KeyCode::F5,
+        ])
+        .find_map(|(layer, key)| {
+            (keys.just_pressed(key) && layers.available(layer)).then_some(layer)
+        });
+    if let Some(layer) = layers
+        .requested
+        .take()
+        .filter(|&layer| layers.available(layer))
+        .or(keyboard)
     {
-        if keys.just_pressed(key) && layers.roots.contains_key(&layer) {
-            layers.active = layer;
-            break;
-        }
+        layers.active = layer;
     }
-    if target.is_some() && layers.active == previous {
+    if target.is_some_and(|target| {
+        cameras
+            .get(target.0)
+            .is_ok_and(|(_, layer, _)| *layer == layers.active)
+    }) && layers.active == previous
+    {
         return;
     }
     if layers.active != previous {
@@ -124,6 +167,7 @@ fn switch(
                 Layer::Network => crate::scene::selected_agent(world),
                 Layer::Swarm => crate::swarm_scene::selected_agent(world),
                 Layer::World => crate::world_scene::selected_agent(world),
+                Layer::Home => None,
             };
             world.resource_mut::<Layers>().incoming = agent;
         });
@@ -144,12 +188,13 @@ fn switch(
     text.0 = Layer::ALL
         .iter()
         .enumerate()
+        .filter(|&(_, layer)| *layer != Layer::Home || layers.roots.contains_key(layer))
         .map(|(index, layer)| {
             let name = layer.name();
             let key = index + 1;
             if *layer == layers.active {
                 format!("[F{key} {name}]")
-            } else if layers.roots.contains_key(layer) {
+            } else if layers.available(*layer) {
                 format!("F{key} {name}")
             } else {
                 format!("{name} unavailable")

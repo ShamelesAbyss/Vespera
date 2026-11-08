@@ -8,11 +8,13 @@ A local-first AI orchestration and simulation platform written in Rust. Vespera 
 
 ## Native 3D client
 
-The native Bevy/wgpu app opens Machine, Intelligence Network, Swarm, and Living World in one Atlas window. Use **F1–F4** to switch between configured layers. Start with local host measurements and add the broker, journal, or world sources you have configured. [Atlas setup and controls](docs/CLI.md#switch-layers-in-atlas)
+Open `vespera-view.exe` on Windows to see live host measurements, inspect the machine in 3D, and create or resume a persistent local simulation. Home opens without a provider, broker, credentials, or configuration file. From source, launch it with the command below. [Desktop launch and controls](docs/CLI.md#open-the-native-desktop)
 
 ```powershell
-cargo run --locked -p vespera-view --features graphics -- --atlas
+cargo run --locked -p vespera-view --features graphics
 ```
+
+For a configured Atlas session, use `--atlas` and the flags for your broker, journal, or world database. **F1–F4** switch between the available 3D layers. [Atlas setup and controls](docs/CLI.md#switch-layers-in-atlas)
 
 The standalone Intelligence Network renders observed broker tasks and workers in 3D. Use a running loopback broker and the operator signing key in `VESPERA_OPERATOR_TOKEN`.
 

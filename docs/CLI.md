@@ -602,6 +602,24 @@ An optional `message_targets` array on a worker entry grants outbound messaging 
 An optional top-level `"operator_mailbox_receipts": true` publishes acknowledged-message metadata to the operator feed. Enable it once operator clients can read event schema 8. [Receipt compatibility](PROTOCOL.md#worker-messages)
 For live events, use the Rust SDK or a client that implements the signed WebSocket handshake. [Live subscription contract](PROTOCOL.md#live-websocket-subscriptions)
 
+### Open the native desktop
+
+Launch `vespera-view.exe` without arguments, or run the graphics crate from source.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics
+```
+
+Home shows OS CPU and available RAM measurements and the renderer name reported by wgpu. Select **Open Hardware** or press **F1** to inspect the host in 3D. Select **Create or resume world** or press **Enter** to open the local simulation. Vespera creates its SQLite database only when you first open the world and reads the saved state on later launches. In World, **Space** commits one tick and **P** toggles playback. **F5** returns to Home, where playback is paused.
+
+The desktop saves its world in `%LOCALAPPDATA%\Vespera\world.sqlite3` on Windows. On Linux the path is `$XDG_DATA_HOME/Vespera/world.sqlite3` or `~/.local/share/Vespera/world.sqlite3`. On macOS it is `~/Library/Application Support/Vespera/world.sqlite3`. Use a separate directory for a fresh workspace.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --desktop-data ./data/desktop
+```
+
+The Home world uses deterministic simulation rules. Provider-backed decisions, signed broker observation, and inspection of another world database use the explicit CLI or view options described below. The native Home walkthrough has been validated on Windows.
+
 ### Switch layers in Atlas
 
 Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.

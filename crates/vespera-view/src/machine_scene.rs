@@ -80,7 +80,31 @@ fn read_scheduler_sample(path: &Path) -> Option<SchedulerSample> {
 }
 
 #[derive(Resource)]
-struct Telemetry(watch::Receiver<Option<Sample>>);
+pub(super) struct Telemetry(watch::Receiver<Option<Sample>>);
+
+impl Telemetry {
+    pub fn home_summary(&self) -> Option<String> {
+        let sample = self.0.borrow();
+        let sample = sample
+            .as_ref()
+            .filter(|sample| sample.observed.elapsed() < INTERVAL * 3)?;
+        let cpu = sample
+            .cpu
+            .map_or_else(|| "CPU sampling".into(), |value| format!("CPU {value:.1}%"));
+        let ram = sample.memory.map_or_else(
+            || "RAM unavailable".into(),
+            |(total, available)| {
+                const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+                format!(
+                    "RAM {:.1} / {:.1} GiB available",
+                    available as f64 / GIB,
+                    total as f64 / GIB
+                )
+            },
+        );
+        Some(format!("{cpu}  |  {ram}"))
+    }
+}
 
 #[derive(Component, Clone, Copy, Default)]
 enum Device {
