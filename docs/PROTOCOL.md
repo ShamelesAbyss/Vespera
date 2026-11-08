@@ -82,6 +82,28 @@ The broker enables TLS 1.3 when both `--tls-cert` and `--tls-key` are supplied. 
 
 The certificate file accepts a PEM chain of up to sixteen certificates, leaf first. The key file supplies the matching PEM private key. The SDK's `new_tls` constructors take a concrete numeric `SocketAddr` and a PEM bundle of one to sixteen trust roots. The client verifies the server chain and requires an IP subject alternative name matching the address. HTTPS and secure WebSockets use the same explicit trust roots. The SDK leaves certificate provisioning and trust-root distribution to the operator. TLS authenticates the server and request proofs authenticate clients.
 
+### Rehearse a non-loopback TLS deployment
+
+Use a dedicated broker, a new SQLite database, two fixture worker identities and three disposable signing keys. Grant the first worker `text-generation` and a message route to the second. Grant the second worker `text-generation` and leave its message routes empty. Bind the broker to its private network address with `serve --allow-remote --tls-cert <chain.pem> --tls-key <key.pem> --broker-db <fixture.sqlite3> --access-file <fixture.json> --listen <broker-ip:port>`. The certificate's IP subject alternative name must match the address the client uses.
+
+Set these environment variables on the client host. Keep the signing keys in the launch environment.
+
+| Variable | Value |
+| --- | --- |
+| `VESPERA_REHEARSAL_ENDPOINT` | Numeric broker IP and port |
+| `VESPERA_REHEARSAL_CA` | Path to the test trust root PEM |
+| `VESPERA_REHEARSAL_CHECKPOINT` | Path to a new local JSON checkpoint |
+| `VESPERA_REHEARSAL_FIRST`, `VESPERA_REHEARSAL_SECOND` | The worker UUIDs from the access policy |
+| `VESPERA_REHEARSAL_OPERATOR_KEY`, `VESPERA_REHEARSAL_FIRST_KEY`, `VESPERA_REHEARSAL_SECOND_KEY` | Matching 32-byte fixture keys as hexadecimal |
+
+Run the test, restart the broker on the same database and with the same access policy and keys, then run the test again. Update the endpoint if the listening port changes. The first run writes the task, message and event cursor identifiers to the client checkpoint. The second run uses it to verify recovery and acknowledges the pending fixture message.
+
+```sh
+cargo test --locked -p vespera-app --test worker_tls_rehearsal -- --ignored --nocapture
+```
+
+The two phases passed with the Windows SDK and an Ubuntu WSL2 broker over the guest's private non-loopback address. Both ran on the same physical host. A separate physical host remains an open deployment gate.
+
 ### Broker event replay
 
 Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions, all observed task transitions and accepted worker message metadata. Prompts, results and keys stay out of the feed. Task change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.
