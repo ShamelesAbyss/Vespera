@@ -66,9 +66,9 @@ The access policy can grant a worker outgoing routes through its `message_target
 
 Clients supply a non-nil message UUID and up to 2,048 UTF-8 bytes of nonblank content. Inboxes retain 32 pending entries in arrival order and return 503 when full. Reading preserves the entry until acknowledgement. Acknowledgement is idempotent. Retrying the same sender, recipient, message ID and content is idempotent while pending or among the last 64 acknowledgements in that inbox. Changing content under a retained ID returns 409.
 
-Inbox contents and acknowledgement state are process-local, including when the broker database is enabled. Revoking a worker clears messages to and from that worker. Inbox delivery uses polling.
+With `--broker-db`, pending entries and the last 64 acknowledgement fingerprints per recipient survive restart. The stored acknowledgement contains the sender, message ID and a SHA-256 digest. Without a database, inboxes reset on restart. Revocation clears entries and fingerprints to and from that worker. On startup, the broker discards entries and fingerprints that the current access policy no longer authorizes. Restoring a removed grant does not resurrect them. Inbox delivery uses polling.
 
-Each newly accepted enqueue adds an `agent_message_sent` event to the operator feed. It contains `from_agent_id` and `to_agent_id` with the broker's ordinary event envelope and cursor. It records acceptance into the inbox. Worker feeds omit these events. Rejected sends, retained idempotent retries, reads and acknowledgements emit no message event. Message IDs, content and hashes stay out of all feeds. With a broker database, the retained acceptance records survive restart while the inbox starts empty.
+Each newly accepted enqueue adds an `agent_message_sent` event to the operator feed. It contains `from_agent_id` and `to_agent_id` with the broker's ordinary event envelope and cursor. It records acceptance into the inbox. Worker feeds omit these events. Rejected sends, retained idempotent retries, reads and acknowledgements emit no message event. Message IDs, content and hashes stay out of all feeds. With a broker database, the enqueue and its acceptance event commit together before the server returns success.
 
 The service accepts up to 32 connections concurrently, reads headers for up to five seconds and gives each connection up to 15 seconds in total. It closes each connection after a response and accepts JSON bodies up to 512 KiB. Broker limits below apply after decoding. The host can reject malformed HTTP or close an expired connection before returning an application error.
 
@@ -106,9 +106,9 @@ Keep the cursor only after processing its event. Reconnect with that cursor and 
 
 ### Durable broker recovery
 
-With `--broker-db` the server commits task changes, revocations and bounded event feeds in the same SQLite transaction before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts and accepted results are stored in the database without encryption.
+With `--broker-db` the server commits task changes, revocations, bounded event feeds and worker inbox changes in the same SQLite transaction before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities, message routes and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts, accepted results and pending message contents are stored in the database without encryption.
 
-Database schema 2 adds the feed table. Opening a schema 1 broker database upgrades it in place and preserves its tasks and revocations. Earlier in-memory feeds cannot be recovered by the migration.
+Database schema 2 added the feed table. Schema 3 adds the mailbox table. Opening a schema 1 or 2 broker database upgrades it in place and preserves its durable records. In-memory state from earlier processes cannot be recovered by the migration.
 
 On restart, queued work and terminal outcomes keep their task IDs and ordering. Previously active leases are fenced immediately and produce `lease_expired` observations in the new process. An interrupted task returns to the queue only if its deadline and attempt budget allow another claim. That claim uses the next generation and a fresh attempt ID. The broker still recognizes an exact completion retry for an already accepted result when the worker remains authorized.
 

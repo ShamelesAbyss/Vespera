@@ -211,14 +211,19 @@ fn fresh_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-#[tokio::test]
-async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
-    let first = AgentId::new();
-    let second = AgentId::new();
+fn routed_policy(first: AgentId, second: AgentId) -> PathBuf {
     let policy = create_policy(first, second);
     let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
     access["workers"][0]["message_targets"] = json!([second]);
     std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
+    policy
+}
+
+#[tokio::test]
+async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let policy = routed_policy(first, second);
     let db = DatabaseFixture(
         std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
     );
@@ -306,11 +311,149 @@ async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
     assert_eq!(page.entries.len(), 33);
     drop(live);
     drop(process);
-    let (_restarted, base) = launch_with_database(first, second, Some(&db.0));
+    let policy = routed_policy(first, second);
+    let (_restarted, base) = launch_command(server_command(&policy, Some(&db.0)), policy);
     let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
     let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
     let recovered = operator.replay(None, 64).await.unwrap();
     assert_eq!(recovered.entries, page.entries);
+    let recipient =
+        WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    assert!(recipient.inbox().await.unwrap().is_empty());
+    assert!(matches!(
+        sender.inbox().await,
+        Err(ClientError::Rejected { status: 401, .. })
+    ));
+}
+
+#[tokio::test]
+async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let (initial, _) = launch_with_database(first, second, Some(&db.0));
+    drop(initial);
+    rusqlite::Connection::open(&db.0)
+        .unwrap()
+        .execute_batch("DROP TABLE broker_mailbox; PRAGMA user_version = 2;")
+        .unwrap();
+    let start = |grant| {
+        let policy = if grant {
+            routed_policy(first, second)
+        } else {
+            create_policy(first, second)
+        };
+        let (process, base) = launch_command(server_command(&policy, Some(&db.0)), policy);
+        let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+        let operator =
+            OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+        let sender =
+            WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+        let recipient =
+            WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+        (process, operator, sender, recipient)
+    };
+    let acknowledged = Uuid::new_v4();
+    let pending = [Uuid::new_v4(), Uuid::new_v4()];
+    let (process, operator, sender, recipient) = start(true);
+    sender
+        .send_message(second, acknowledged, "private acknowledged content")
+        .await
+        .unwrap();
+    recipient
+        .acknowledge_message(first, acknowledged)
+        .await
+        .unwrap();
+    for id in pending {
+        sender.send_message(second, id, "pending").await.unwrap();
+    }
+    let before = operator.replay(None, 64).await.unwrap();
+    assert_eq!(before.entries.len(), 3);
+    drop(process);
+
+    let (process, operator, sender, recipient) = start(true);
+    let recovered = recipient.inbox().await.unwrap();
+    assert_eq!(
+        recovered
+            .iter()
+            .map(|entry| entry.message_id)
+            .collect::<Vec<_>>(),
+        pending
+    );
+    assert!(
+        recovered
+            .iter()
+            .all(|entry| entry.sender == first && entry.content == "pending")
+    );
+    sender
+        .send_message(second, acknowledged, "private acknowledged content")
+        .await
+        .unwrap();
+    sender
+        .send_message(second, pending[0], "pending")
+        .await
+        .unwrap();
+    assert!(matches!(
+        sender.send_message(second, acknowledged, "changed").await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::MessageConflict),
+            ..
+        })
+    ));
+    assert_eq!(recipient.inbox().await.unwrap().len(), 2);
+    assert_eq!(
+        operator.replay(None, 64).await.unwrap().entries,
+        before.entries
+    );
+    drop(process);
+
+    let (process, _, _, recipient) = start(false);
+    assert!(recipient.inbox().await.unwrap().is_empty());
+    drop(process);
+    let (process, operator, sender, recipient) = start(true);
+    assert!(recipient.inbox().await.unwrap().is_empty());
+    sender
+        .send_message(second, acknowledged, "new after regrant")
+        .await
+        .unwrap();
+    assert_eq!(recipient.inbox().await.unwrap().len(), 1);
+    let committed = operator.replay(None, 64).await.unwrap().entries;
+    drop(process);
+
+    rusqlite::Connection::open(&db.0)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail_mailbox_update BEFORE UPDATE ON broker_mailbox
+             BEGIN SELECT RAISE(ABORT, 'injected mailbox write failure'); END;",
+        )
+        .unwrap();
+    let (process, _, sender, recipient) = start(true);
+    assert!(matches!(
+        sender
+            .send_message(second, Uuid::new_v4(), "must roll back")
+            .await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::StorageUnavailable),
+            ..
+        })
+    ));
+    assert!(matches!(
+        recipient.inbox().await,
+        Err(ClientError::Rejected {
+            code: Some(ErrorCode::StorageUnavailable),
+            ..
+        })
+    ));
+    drop(process);
+
+    let (_process, operator, _, recipient) = start(true);
+    let inbox = recipient.inbox().await.unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].message_id, acknowledged);
+    assert_eq!(operator.replay(None, 64).await.unwrap().entries, committed);
 }
 
 #[tokio::test]

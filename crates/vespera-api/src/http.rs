@@ -1,7 +1,7 @@
 //! Bounded HTTP/1 service for approved workers, with opt-in TLS.
 
 mod auth;
-mod mailbox;
+pub(super) mod mailbox;
 mod subscription;
 mod tls;
 
@@ -155,7 +155,9 @@ impl Service {
 
     fn persist(&mut self, revoked: Option<AgentId>) -> Result<(), HttpError> {
         if let Some(store) = &mut self.store
-            && store.flush(&mut self.broker, revoked, false).is_err()
+            && store
+                .flush(&mut self.broker, &mut self.mailboxes, revoked, false)
+                .is_err()
         {
             self.storage_failed = true;
             return Err(STORAGE_UNAVAILABLE);
@@ -213,10 +215,9 @@ impl Server {
         let mut service = Service::load(access_file.as_ref())?;
         let listener = TcpListener::bind(address).await?;
         if let Some(path) = database {
-            let (store, revoked) = Store::open(path, &mut service.broker)?;
+            let (store, revoked) = Store::open(path, &mut service.broker, &mut service.mailboxes)?;
             for worker in revoked {
                 service.auth.revoke(worker);
-                service.mailboxes.revoke(worker);
             }
             service.store = Some(store);
         }

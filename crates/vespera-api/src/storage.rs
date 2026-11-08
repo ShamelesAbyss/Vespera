@@ -7,13 +7,15 @@ use serde::{Deserialize, Serialize};
 use vespera_core::{AgentId, Task, TaskState};
 
 use crate::events::{EventFeeds, Feed};
+use crate::http::mailbox::Mailboxes;
 use crate::{
     AcceptedResult, ActiveLease, Fence, LeaseBroker, MAX_CAPABILITIES, MAX_LIFETIME, MAX_TASKS,
     MAX_TEXT, MAX_WORKERS, Phase, Record,
 };
 
 const APPLICATION_ID: i64 = 0x56534252;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+const MAX_MAILBOX_BYTES: i64 = 524288;
 const MAX_RECORD_BYTES: usize = 1024 * 1024;
 const MAX_REVOCATIONS: usize = 4096;
 const MAX_FEED_BYTES: i64 = 256 * 1024;
@@ -156,6 +158,7 @@ impl Store {
     pub(super) fn open(
         path: &Path,
         broker: &mut LeaseBroker,
+        mailboxes: &mut Mailboxes,
     ) -> Result<(Self, Vec<AgentId>), StoreError> {
         let mut connection = Connection::open_with_flags(
             path,
@@ -217,12 +220,21 @@ impl Store {
         } else if id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
             return Err(StoreError::Format);
         }
-        if version < SCHEMA_VERSION {
+        if version < 2 {
             tx.execute_batch(
                 "CREATE TABLE broker_feed (
                     owner TEXT PRIMARY KEY NOT NULL CHECK(length(owner) <= 36),
                     payload BLOB NOT NULL CHECK(length(payload) <= 262144)
                  );",
+            )
+            .map_err(db)?;
+        }
+        if version < SCHEMA_VERSION {
+            tx.execute_batch(
+                "CREATE TABLE broker_mailbox (
+                    owner TEXT PRIMARY KEY NOT NULL CHECK(length(owner)=36),
+                    payload BLOB NOT NULL CHECK(length(payload)<=524288)
+                ) STRICT;",
             )
             .map_err(db)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -254,6 +266,7 @@ impl Store {
             revoked
         };
         for worker in &revoked {
+            mailboxes.revoke(*worker);
             if broker.workers.contains_key(worker) {
                 broker
                     .revoke_worker(*worker)
@@ -261,6 +274,7 @@ impl Store {
             }
         }
         restore_feeds(&tx, &mut broker.events)?;
+        restore_mailboxes(&tx, mailboxes)?;
         {
             let mut statement = tx
                 .prepare(
@@ -285,18 +299,20 @@ impl Store {
         tx.commit().map_err(db)?;
         broker.reconcile(Instant::now());
         let mut store = Self(connection);
-        store.flush(broker, None, true)?;
+        store.flush(broker, mailboxes, None, true)?;
         Ok((store, revoked))
     }
 
     pub(super) fn flush(
         &mut self,
         broker: &mut LeaseBroker,
+        mailboxes: &mut Mailboxes,
         revoke: Option<AgentId>,
         startup: bool,
     ) -> Result<(), StoreError> {
         if !startup
             && revoke.is_none()
+            && mailboxes.dirty.is_empty()
             && !broker.tasks.iter().any(|task| task.dirty)
             && !broker.events.operator.dirty
             && !broker.events.workers.values().any(|feed| feed.dirty)
@@ -346,12 +362,14 @@ impl Store {
             }
         }
         save_feeds(&tx, &broker.events)?;
+        save_mailboxes(&tx, mailboxes, startup)?;
         tx.execute(
             "UPDATE broker_meta SET wall_high_water = max(wall_high_water, ?1) WHERE singleton = 1",
             [unix_ms().ok_or(StoreError::Clock)?],
         )
         .map_err(db)?;
         tx.commit().map_err(db)?;
+        mailboxes.dirty.clear();
         for task in &mut broker.tasks {
             task.dirty = false;
         }
@@ -361,6 +379,65 @@ impl Store {
         }
         Ok(())
     }
+}
+
+fn restore_mailboxes(tx: &Transaction<'_>, mailboxes: &mut Mailboxes) -> Result<(), StoreError> {
+    let mut statement = tx
+        .prepare(
+            "SELECT owner, CASE WHEN length(payload)<=?1 THEN payload END
+         FROM broker_mailbox LIMIT ?2",
+        )
+        .map_err(db)?;
+    let mut rows = statement
+        .query(params![MAX_MAILBOX_BYTES, MAX_WORKERS as i64 + 1])
+        .map_err(db)?;
+    let mut count = 0;
+    while let Some(row) = rows.next().map_err(db)? {
+        count += 1;
+        if count > MAX_WORKERS {
+            return Err(StoreError::Format);
+        }
+        let owner: String = row.get(0).map_err(db)?;
+        let owner = owner.parse().map_err(|_| StoreError::Format)?;
+        let bytes: Vec<u8> = row.get(1).map_err(|_| StoreError::Format)?;
+        mailboxes
+            .restore(owner, &bytes)
+            .map_err(|()| StoreError::Format)?;
+    }
+    Ok(())
+}
+
+fn save_mailboxes(
+    tx: &Transaction<'_>,
+    mailboxes: &Mailboxes,
+    startup: bool,
+) -> Result<(), StoreError> {
+    let owners: Vec<_> = if startup {
+        tx.execute("DELETE FROM broker_mailbox", []).map_err(db)?;
+        mailboxes.owners().collect()
+    } else {
+        mailboxes.dirty.iter().copied().collect()
+    };
+    let mut upsert = tx
+        .prepare(
+            "INSERT INTO broker_mailbox(owner,payload) VALUES (?1,?2)
+         ON CONFLICT(owner) DO UPDATE SET payload=excluded.payload",
+        )
+        .map_err(db)?;
+    let mut delete = tx
+        .prepare("DELETE FROM broker_mailbox WHERE owner=?1")
+        .map_err(db)?;
+    for owner in owners {
+        let payload = mailboxes.snapshot(owner).map_err(|_| StoreError::Format)?;
+        if let Some(payload) = payload {
+            upsert
+                .execute(params![owner.to_string(), payload])
+                .map_err(db)?;
+        } else {
+            delete.execute([owner.to_string()]).map_err(db)?;
+        }
+    }
+    Ok(())
 }
 
 fn restore_feeds(tx: &Transaction<'_>, feeds: &mut EventFeeds) -> Result<(), StoreError> {
@@ -501,9 +578,12 @@ mod tests {
         let mut broker = LeaseBroker::default();
         let worker = AgentId::new();
         broker.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
+        let (mut store, _) =
+            Store::open(&database.0, &mut broker, &mut Mailboxes::default()).unwrap();
         let original = submit(&mut broker, worker);
-        store.flush(&mut broker, None, false).unwrap();
+        store
+            .flush(&mut broker, &mut Mailboxes::default(), None, false)
+            .unwrap();
         let previous = broker.replay(None, None, 8).unwrap();
         let previous_worker = broker.replay(Some(worker), None, 8).unwrap().next_cursor;
         broker.cancel(original).unwrap();
@@ -517,14 +597,15 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.flush(&mut broker, Some(worker), false),
+            store.flush(&mut broker, &mut Mailboxes::default(), Some(worker), false),
             Err(StoreError::Database)
         ));
         assert!(broker.tasks.iter().all(|task| task.dirty));
         drop(store);
         let mut restored = LeaseBroker::default();
         restored.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (_store, revocations) = Store::open(&database.0, &mut restored).unwrap();
+        let (_store, revocations) =
+            Store::open(&database.0, &mut restored, &mut Mailboxes::default()).unwrap();
         assert!(revocations.is_empty());
         assert_eq!(restored.state(original).unwrap(), TaskState::Queued);
         assert_eq!(restored.state(next), Err(crate::BrokerError::Missing));
@@ -550,13 +631,18 @@ mod tests {
         for id in [worker, revoked] {
             broker.approve_worker(id, BTreeSet::new()).unwrap();
         }
-        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
+        let (mut store, _) =
+            Store::open(&database.0, &mut broker, &mut Mailboxes::default()).unwrap();
         let task = submit(&mut broker, worker);
         broker.revoke_worker(revoked).unwrap();
-        store.flush(&mut broker, Some(revoked), false).unwrap();
+        store
+            .flush(&mut broker, &mut Mailboxes::default(), Some(revoked), false)
+            .unwrap();
         store
             .0
-            .execute_batch("DROP TABLE broker_feed; PRAGMA user_version = 1;")
+            .execute_batch(
+                "DROP TABLE broker_feed; DROP TABLE broker_mailbox; PRAGMA user_version = 1;",
+            )
             .unwrap();
         drop(store);
 
@@ -564,12 +650,13 @@ mod tests {
         for id in [worker, revoked] {
             restored.approve_worker(id, BTreeSet::new()).unwrap();
         }
-        let (store, revocations) = Store::open(&database.0, &mut restored).unwrap();
+        let (store, revocations) =
+            Store::open(&database.0, &mut restored, &mut Mailboxes::default()).unwrap();
         let version: i64 = store
             .0
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, SCHEMA_VERSION);
         assert_eq!(restored.state(task).unwrap(), TaskState::Queued);
         assert_eq!(revocations, [revoked]);
         assert!(restored.replay(None, None, 8).unwrap().entries.is_empty());
@@ -581,18 +668,27 @@ mod tests {
         let worker = AgentId::new();
         let mut broker = LeaseBroker::default();
         broker.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (mut store, _) = Store::open(&database.0, &mut broker).unwrap();
+        let (mut store, _) =
+            Store::open(&database.0, &mut broker, &mut Mailboxes::default()).unwrap();
         submit(&mut broker, worker);
         broker.claim(worker).unwrap().unwrap();
-        store.flush(&mut broker, None, false).unwrap();
+        store
+            .flush(&mut broker, &mut Mailboxes::default(), None, false)
+            .unwrap();
         let previous = broker.replay(Some(worker), None, 8).unwrap().next_cursor;
         drop(store);
 
-        let (store, _) = Store::open(&database.0, &mut LeaseBroker::default()).unwrap();
+        let (store, _) = Store::open(
+            &database.0,
+            &mut LeaseBroker::default(),
+            &mut Mailboxes::default(),
+        )
+        .unwrap();
         drop(store);
         let mut restored = LeaseBroker::default();
         restored.approve_worker(worker, BTreeSet::new()).unwrap();
-        let (_store, _) = Store::open(&database.0, &mut restored).unwrap();
+        let (_store, _) =
+            Store::open(&database.0, &mut restored, &mut Mailboxes::default()).unwrap();
         assert!(matches!(
             restored.replay(Some(worker), Some(previous), 8),
             Err(crate::BrokerError::ForeignCursor)

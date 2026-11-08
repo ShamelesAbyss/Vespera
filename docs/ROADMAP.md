@@ -15,7 +15,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | 7: agents | Bounded records, permissions, delegation and owned inference are verified. An opt-in task store preserves ownership and outcomes across restart and fences duplicate IDs. Durable agent status, inboxes and autonomous planning remain. See [AGENTS.md](AGENTS.md). |
 | 8: memory | Verified local SQLite namespaces, FTS, lineage, backup and restore. Live inference retrieved memory from a restored database. See [MEMORY.md](MEMORY.md). |
 | 9: events | Verified local SQLite replay, recoverable audit, signed broker delivery and native Windows Swarm live and historical observation. See the [event journal CLI](CLI.md#local-task-outcome-journal). |
-| 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls and scoped events. Optional SQLite recovers work, revocations and feeds. Opt-in TLS 1.3 supports remote binding. Cross-host deployment and broader authorized messaging remain. |
+| 10: interoperability | HTTP v2, WebSockets and a typed Rust SDK cover authenticated task leasing, operator controls, scoped events and directed worker messaging. Optional SQLite recovers work, revocations, feeds and worker inboxes. Opt-in TLS 1.3 supports remote binding. Independent-host deployment still needs validation. |
 | 11: simulation | Persistent deterministic world, native CLI and graphical inspection are integrated. Explicit decisions and bounded resident reasoning use revision fences. World Mode shows preparation and active leases. Retained commits replay without a provider in the CLI and fixed-revision 3D view. |
 | 12: 3D command center | The optional Bevy executable opens an observed broker graph or a persistent simulated world with selection, inspection and controls. Full orchestration telemetry, model-driven world behavior and hardware validation remain release gates. |
 | 13–14: experiments/integration/release | Pending; no production-readiness or benchmark claims. |
@@ -105,7 +105,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 
 ## Milestone 10 — External agent interoperability
 
-The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) support directed, operator-granted external messaging. Cross-host deployment and durable inboxes remain open.
+The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) support directed, operator-granted external messaging. A signed SDK loopback test verifies persistent delivery order, acknowledgement deduplication, revocation and route removal across process restarts. Independent-host TLS deployment remains open.
 
 - An authenticated test agent registers with approved authority, receives a task lease, submits a result, and reads authorized events.
 - Reject invalid credentials, expired/revoked leases, stale attempts, duplicate conflicts, auth replay, and unauthorized identity/namespace/permission changes.
