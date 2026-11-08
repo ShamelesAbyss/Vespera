@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Live Network and Swarm hardware validation
+
+Validated the graphics checkpoint `2b29b4c2df8ce9ae25d02dc0187b0ca4b3a23ccc` with two signed fixture workers and a live SQLite broker. The workers exercised real broker submit, claim, completion, mailbox send and acknowledgement operations. Worker outputs were deterministic fixture content.
+
+The Windows Vulkan debug build on the RTX 4070 Laptop GPU measured 600 updates per layer at 1200×800 after 120 warm-up updates. Intelligence Network measured p50 8.61 ms, p95 9.65 ms and 513,736,704 process resident bytes. Swarm measured p50 8.68 ms, p95 9.47 ms and 535,744,512 process resident bytes. Three Windows samples per layer reported 261,419,008 dedicated and 127,860,736 shared GPU bytes. The timing describes Bevy updates and the memory describes the whole Atlas process.
+
+Network showed the held lease, asked for confirmation and showed the cancellation at sequence 91. A separate signed inspection returned `cancelled`. Swarm showed the sender, recipient and accepted-message sequence. Freezing at sequence 179 held the same 44 observations while the live sequence advanced to 183. This verifies rendering and controls against broker state. Receipt visualization and broader resource visibility remain open.
+
 ## 2026-11-07 — Native Atlas timing and process memory
 
 Verified checkpoint `2b29b4c2df8ce9ae25d02dc0187b0ca4b3a23ccc`, pushed to `main`. The world-scale checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42438908986).
