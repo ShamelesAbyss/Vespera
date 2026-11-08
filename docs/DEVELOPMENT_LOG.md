@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable memory mutation audit
+
+Verified implementation checkpoint `221be81e798f0ae5b23e1a4f2f1d7af074f520ce`, pushed to `main`.
+
+Memory writes, consolidation and actual deletes commit metadata-only events with the record transaction. The CLI can publish them immediately or recover up to 256 at a time using a scoped source cursor. Tests injected journal and source-audit write failures, verified rollback and duplicate-free retry while retained, and checked cursor expiry and restore scoping. Windows formatting, strict Clippy and offline workspace tests passed. The simulation tick checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42434876635).
+
+Live Ollama generated a saved episode. Independent CLI invocations recovered the save event, published deletion, and replayed exactly those two entries after a recovery retry. The model unloaded and final residency was empty. Memory audit retains the latest 4,096 mutations, and restores preserve event UUIDs while assigning new cursor scope. Deletion envelopes require schema version 5. Broader workflow, agent communication and provider audit remain open.
+
 ## 2026-11-07 — Recoverable simulation tick events
 
 Verified implementation checkpoint `082c921c3540a38548acf3215cfe6b3397ede7b4`, pushed to `main`.
