@@ -146,6 +146,7 @@ For a credentialed endpoint, set `credential_env = "VESPERA_PROVIDER_TOKEN"` in 
 | `run-workflow` | Authorized bounded dependent workflow with attempt/results and cleanup reporting |
 | `events` | Initialize, replay or follow a local event journal |
 | `memory` | Explicit offline SQLite initialization, write, retrieval, consolidation and deletion |
+| `memory-admin` | Verified whole-database backup and restore to new files |
 
 Every command supports `--help` and `--json`; the root supports `--version`. All except `doctor` accept `--config PATH`, defaulting to `config/local.toml`. The [complete CLI reference](docs/CLI.md) documents every option, range, default, exit behavior and JSON limitation.
 
@@ -188,7 +189,7 @@ Set-Content -LiteralPath data/observation.txt -Encoding utf8 -Value 'An observat
 .\target\release\vespera.exe @memoryArgs list --json
 ```
 
-These operations run without a model server. The default database is `data/vespera.sqlite3`; inspection uses a read-only open. The [memory CLI reference](docs/CLI.md#offline-durable-memory) covers all eight subcommands, permissions, filtering and protected lineage deletion.
+These operations run without a model server. The default database is `data/vespera.sqlite3` and inspection uses a read-only open. The [memory CLI reference](docs/CLI.md#offline-durable-memory) covers permissions, filtering and protected lineage deletion. Use `memory-admin` for [whole-database backup and restore](docs/CLI.md#memory-backup-and-restore).
 
 Run an operator-authored workflow after explicitly granting its coordinator `delegate` in the private configuration:
 

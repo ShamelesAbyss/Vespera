@@ -89,6 +89,59 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn memory_admin_copies_and_restores_a_snapshot_without_replacing_files() {
+    let mut fixture = Fixture::new("\"memory_read\",\"memory_write\"");
+    fixture.ok(AGENT, &["init"]);
+    fixture.add(AGENT, ID, "retained backup observation");
+    let backup = fixture.dir.join("backup with spaces.sqlite3");
+    let restored = fixture.dir.join("restored.sqlite3");
+    let admin = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_vespera"))
+            .arg("memory-admin")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let backup_args = [
+        "backup",
+        "--database",
+        fixture.database.to_str().unwrap(),
+        "--output",
+        backup.to_str().unwrap(),
+    ];
+    let output = admin(&backup_args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["verified"],
+        true
+    );
+    assert!(!admin(&backup_args).status.success());
+    let restore_args = [
+        "restore",
+        "--backup",
+        backup.to_str().unwrap(),
+        "--database",
+        restored.to_str().unwrap(),
+    ];
+    let output = admin(&restore_args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!admin(&restore_args).status.success());
+    fixture.database = restored;
+    assert_eq!(
+        fixture.ok(AGENT, &["get", "--id", ID])["record"]["record"]["content"],
+        "retained backup observation"
+    );
+}
+
+#[test]
 fn memory_commands_persist_retrieve_filter_and_search_without_provider_initialization() {
     let fixture = Fixture::new("\"memory_read\",\"memory_write\"");
     let original = fs::read(&fixture.config).unwrap();

@@ -70,6 +70,137 @@ fn record(owner: AgentId, content: &str) -> MemoryRecord {
 }
 
 #[test]
+fn snapshot_and_restore_preserve_wal_commits_namespaces_fts_and_lineage() {
+    use vespera_memory::copy_memory_database;
+
+    let database = Database::new();
+    let [a, b] = database.owners;
+    let store = database.open(StorageLimits::default());
+    let wal = rusqlite::Connection::open(database.path()).unwrap();
+    wal.pragma_update(None, "journal_mode", "WAL").unwrap();
+    let first = record(a, "amber source");
+    let private = record(b, "violet private");
+    let summary = record(a, "amber summary");
+    store
+        .insert(a, first.clone(), MemoryOrigin::Observation)
+        .unwrap();
+    store
+        .insert(b, private.clone(), MemoryOrigin::Observation)
+        .unwrap();
+    store
+        .consolidate(a, summary.clone(), &[first.id], "manual")
+        .unwrap();
+    assert!(
+        database
+            .directory
+            .join("memory.sqlite3-wal")
+            .metadata()
+            .unwrap()
+            .len()
+            > 32
+    );
+
+    let backup = database.directory.join("backup.sqlite3");
+    let restored = database.directory.join("restored.sqlite3");
+    copy_memory_database(&database.path(), &backup).unwrap();
+    let after = record(a, "later amber observation");
+    store
+        .insert(a, after.clone(), MemoryOrigin::Observation)
+        .unwrap();
+    copy_memory_database(&backup, &restored).unwrap();
+
+    let restored_store = MemoryStore::open_existing(
+        &restored,
+        StorageLimits::default(),
+        database.authority.clone(),
+    )
+    .unwrap();
+    assert!(restored_store.get(a, a, after.id).unwrap().is_none());
+    assert_eq!(
+        restored_store.get(a, b, private.id),
+        Err(StorageError::Denied)
+    );
+    assert_eq!(
+        restored_store
+            .get(b, b, private.id)
+            .unwrap()
+            .unwrap()
+            .record,
+        private
+    );
+    assert_eq!(
+        restored_store
+            .get(a, a, summary.id)
+            .unwrap()
+            .unwrap()
+            .source_memories,
+        vec![first.id]
+    );
+    assert_eq!(
+        restored_store
+            .search(a, a, "amber", &MemoryQuery::default())
+            .unwrap()
+            .records
+            .len(),
+        2
+    );
+    assert_eq!(
+        restored_store
+            .insert(a, record(a, "new record"), MemoryOrigin::Observation)
+            .unwrap()
+            .sequence,
+        3
+    );
+}
+
+#[test]
+fn snapshot_refuses_existing_targets_sidecars_and_corrupt_search_index() {
+    use vespera_memory::copy_memory_database;
+
+    let database = Database::new();
+    let [owner, _] = database.owners;
+    database
+        .open(StorageLimits::default())
+        .insert(
+            owner,
+            record(owner, "searchable"),
+            MemoryOrigin::Observation,
+        )
+        .unwrap();
+    let destination = database.directory.join("snapshot.sqlite3");
+    std::fs::write(&destination, b"keep").unwrap();
+    assert_eq!(
+        copy_memory_database(&database.path(), &destination),
+        Err(StorageError::SnapshotTargetExists)
+    );
+    assert_eq!(std::fs::read(&destination).unwrap(), b"keep");
+    std::fs::remove_file(&destination).unwrap();
+    let sidecar = database.directory.join("snapshot.sqlite3-wal");
+    std::fs::write(&sidecar, b"keep sidecar").unwrap();
+    assert_eq!(
+        copy_memory_database(&database.path(), &destination),
+        Err(StorageError::SnapshotTargetExists)
+    );
+    assert_eq!(std::fs::read(&sidecar).unwrap(), b"keep sidecar");
+    std::fs::remove_file(&sidecar).unwrap();
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    connection
+        .execute(
+            "INSERT INTO memory_fts(memory_fts) VALUES('delete-all')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        copy_memory_database(&database.path(), &destination),
+        Err(StorageError::SnapshotInvalid)
+    );
+    assert!(!destination.exists());
+    assert_eq!(std::fs::read_dir(&database.directory).unwrap().count(), 1);
+}
+
+#[test]
 fn committed_namespaces_and_text_search_survive_reopen_without_inference() {
     let database = Database::new();
     let [a, b] = database.owners;

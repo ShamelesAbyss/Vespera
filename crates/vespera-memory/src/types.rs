@@ -31,6 +31,12 @@ pub enum StorageError {
     Busy,
     #[error("memory store was opened read-only")]
     ReadOnly,
+    #[error("memory copy destination or one of its SQLite sidecars already exists")]
+    SnapshotTargetExists,
+    #[error("memory copy failed its SQLite, index or lineage integrity check")]
+    SnapshotInvalid,
+    #[error("memory copy could not be staged or published on this filesystem")]
+    SnapshotIo,
     #[error("memory database operation failed; raw SQL and private values suppressed")]
     Database,
 }

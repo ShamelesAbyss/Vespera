@@ -59,7 +59,25 @@ Foreign keys are enabled, synchronous mode is `FULL`, and trusted schema executi
 
 Tests inject migration failure after schema creation and lineage failure after record/index insertion, verify transaction rollback, and abruptly exit a child writer without running transaction destructors. Reopening recovers previously committed content and removes uncommitted record/FTS writes. This verifies process-exit recovery on the tested filesystem; it does not establish resilience to every power-loss, disk-full, filesystem or hardware failure. Lock contention returns a bounded busy error; synchronous OS I/O is not subject to a hard operation deadline.
 
-There is no dedicated backup/restore, secure erase, bulk export, physical compaction, event outbox or migration administration command yet. Logical deletion does not guarantee removal from free pages, journals, OS snapshots, exports or backups. Durable event coordination and workflow/task history remain separate required work. Do not store credentials or private hidden reasoning as ordinary memory.
+Logical deletion does not guarantee removal from free pages, journals, OS snapshots, exports or earlier backups. Durable event coordination and workflow/task history use separate storage. Keep credentials and private hidden reasoning out of ordinary memory.
+
+## Backup and restore
+
+`memory-admin backup` and `memory-admin restore` use the same SQLite
+snapshot operation. It reads a consistent view that includes committed WAL
+transactions. It stages the copy beside the destination and verifies
+SQLite structure, foreign keys, owner counters, lineage and the FTS index
+against the content table. It syncs the staged file before publishing it
+with a hard link. [SQLite snapshot semantics](https://sqlite.org/lang_vacuum.html)
+
+Use existing private directories and a filesystem with hard-link support.
+The operation rejects an existing destination or SQLite sidecar. To adopt a
+restore, point the application at the newly published database. A process
+interruption can leave a private staging directory with the prefix
+`.vespera-memory-copy-`. The application uses the destination only after
+publication. A snapshot contains all memory namespaces but covers only this
+database, so preserve the separate task ledger when keeping source results.
+See [CLI examples](CLI.md#memory-backup-and-restore).
 
 ## Verification
 
@@ -69,6 +87,6 @@ cargo test -p vespera-agents --test agents --locked
 cargo test -p vespera-memory -p vespera-agents --release --locked
 ```
 
-Storage tests exercise namespace/reopen isolation, literal/structured queries, byte/count pagination, source validation, current grants, consolidation/deletion, rollback, concurrent initialization/admission, foreign/future file preservation, lock failure and abrupt-writer recovery. The real agent adapter test rebinds a model and reopens the same two namespaces under a new runtime. No model/server is needed. One child-only crash helper is ignored as a standalone test and explicitly invoked by its parent test; it must not be run manually against user data.
+Storage tests exercise namespace/reopen isolation, literal/structured queries, byte/count pagination, source validation, current grants, consolidation/deletion, rollback, concurrent initialization/admission, foreign/future file preservation, lock failure and abrupt-writer recovery. Snapshot tests restore two namespaces with FTS, lineage and owner sequence continuity, and reject a corrupt search index. The agent adapter test rebinds a model and reopens the same two namespaces under a new runtime.
 
 See [agents](AGENTS.md), [architecture](ARCHITECTURE.md), [dependency decisions](DEPENDENCIES.md), [roadmap](ROADMAP.md) and [development log](DEVELOPMENT_LOG.md).

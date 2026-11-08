@@ -26,6 +26,39 @@ pub(crate) struct MemoryArgs {
     #[command(subcommand)]
     action: MemoryCommand,
 }
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum MemoryAdminAction {
+    /// Create a verified snapshot of all namespaces at a new path.
+    Backup {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Restore a verified snapshot to a new database path.
+    Restore {
+        #[arg(long)]
+        backup: PathBuf,
+        #[arg(long)]
+        database: PathBuf,
+    },
+}
+
+pub(crate) async fn run_admin(action: MemoryAdminAction) -> Result<(), AppError> {
+    let (operation, source, destination) = match action {
+        MemoryAdminAction::Backup { database, output } => ("backup", database, output),
+        MemoryAdminAction::Restore { backup, database } => ("restore", backup, database),
+    };
+    tokio::task::spawn_blocking(move || {
+        vespera_memory::copy_memory_database(&source, &destination)
+    })
+    .await
+    .map_err(|_| AppError::MemoryWorker)??;
+    println!("{}", json!({"operation": operation, "verified": true}));
+    Ok(())
+}
+
 #[derive(Debug, Subcommand)]
 enum MemoryCommand {
     /// Explicitly create/validate a database and parent directories; requires memory_write.

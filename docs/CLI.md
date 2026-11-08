@@ -328,6 +328,24 @@ leaves the prior record intact.
 
 Only `init` can create storage. Read operations open SQLite read-only; existing-file write operations do not create or migrate a missing or empty database. Denied permissions are checked before content/database access. JSON output carries `agent_id` and the relevant `record`, `page`, `usage`, `database_ready`/`sqlite_version`, or `memory_absent` fields. Ordinary failures are nonzero with sanitized stderr; no private path, content excerpt or raw SQL is included. File/database work uses a blocking worker and is outside inference timeout flags. See [MEMORY.md](MEMORY.md) for schema, quotas and recovery limits.
 
+## Memory backup and restore
+
+```powershell
+.\target\release\vespera.exe memory-admin backup --database data/vespera.sqlite3 --output data/vespera-backup.sqlite3
+.\target\release\vespera.exe memory-admin restore --backup data/vespera-backup.sqlite3 --database data/vespera-restored.sqlite3
+```
+
+Both commands report verified completion in JSON. The destination must be a
+new file in an existing private directory on a filesystem that supports hard
+links. Existing files and SQLite sidecars are rejected. To use the restored
+copy, point the usual memory commands or inference memory options at the new
+database path.
+
+These commands copy every namespace. They are intended for a trusted filesystem
+operator and use no agent configuration or provider. Keep backup files private.
+Back up the separate agent task and workflow databases independently when
+preserving their provenance. [Snapshot behavior and limits](MEMORY.md#backup-and-restore)
+
 ## Opt-in memory during inference
 
 Use these options on `run-agent` after initializing a database with `memory init`.

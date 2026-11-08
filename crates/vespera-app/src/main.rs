@@ -115,6 +115,11 @@ enum Command {
     Catalog(catalog_commands::CatalogArgs),
     /// Explicit offline durable memory operations; never start model providers.
     Memory(memory_commands::MemoryArgs),
+    /// Copy a whole private memory database as a trusted filesystem operator.
+    MemoryAdmin {
+        #[command(subcommand)]
+        action: memory_commands::MemoryAdminAction,
+    },
     /// Initialize, replay or follow a local event journal.
     Events(event_commands::EventArgs),
     /// Initialize, inspect and advance a persistent simulated world.
@@ -480,6 +485,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Command::Catalog(args) => catalog_commands::run(args)?,
         Command::Memory(args) => memory_commands::run(args).await?,
+        Command::MemoryAdmin { action } => memory_commands::run_admin(action).await?,
         Command::Events(args) => event_commands::run(args).await?,
         Command::World(args) => world_commands::run(args).await?,
         Command::Serve {
