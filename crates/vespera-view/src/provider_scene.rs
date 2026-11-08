@@ -7,9 +7,11 @@ use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
 use vespera_app::runtime::{RuntimeError, configured_registry};
+use vespera_config::ProviderConfig;
 use vespera_core::{AgentId, Permission, ProviderKind};
 use vespera_providers::{
-    CancellationToken, DiscoveredModel, ProviderHealthReport, ProviderLifecycleSupport,
+    CancellationToken, DiscoveredModel, ProviderError, ProviderHealthReport,
+    ProviderLifecycleSupport,
 };
 
 use crate::atlas::{self, Layer, Layers};
@@ -28,6 +30,7 @@ enum Action {
     Ollama,
     Compatible,
     Edit,
+    Credential,
     Discover,
     Previous,
     Next,
@@ -58,6 +61,7 @@ type ProbeResult = Result<Discovery, &'static str>;
 
 enum Edit {
     Endpoint(String),
+    Credential(String),
     Registration {
         model: Box<DiscoveredModel>,
         fields: [String; 4],
@@ -101,6 +105,7 @@ struct History {
 struct Panel {
     kind: ProviderKind,
     endpoint: String,
+    credential: Option<String>,
     draft: Option<Edit>,
     pending: Option<Mutex<Receiver<ProbeResult>>>,
     outcome: Option<ProbeResult>,
@@ -121,16 +126,23 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         Ok(roster) => (roster, String::new()),
         Err(error) => (None, error.into()),
     };
-    let (kind, endpoint) = roster
+    let (kind, endpoint, credential) = roster
         .as_ref()
         .and_then(|roster| roster.selection(0))
         .map_or_else(
-            || (ProviderKind::Ollama, OLLAMA.into()),
-            |(_, _, provider)| (provider.kind, provider.endpoint.clone()),
+            || (ProviderKind::Ollama, OLLAMA.into(), None),
+            |(_, _, provider)| {
+                (
+                    provider.kind,
+                    provider.endpoint.clone(),
+                    provider.credential_env.clone(),
+                )
+            },
         );
     app.insert_resource(Panel {
         kind,
         endpoint,
+        credential,
         draft: None,
         pending: None,
         outcome: None,
@@ -192,6 +204,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Ollama, "Ollama"),
                         button(Action::Compatible, "OpenAI-compatible"),
                         button(Action::Edit, "Edit endpoint"),
+                        button(Action::Credential, "Credential reference"),
                         button(Action::Discover, "Test & discover"),
                     ]
                 ),
@@ -272,14 +285,25 @@ fn apply(action: Action, panel: &mut Panel) {
     }
     match action {
         Action::Ollama | Action::Compatible => {
-            (panel.kind, panel.endpoint) = match action {
-                Action::Ollama => (ProviderKind::Ollama, OLLAMA.into()),
-                _ => (ProviderKind::OpenAiCompatible, COMPATIBLE.into()),
+            let (kind, endpoint) = match action {
+                Action::Ollama => (ProviderKind::Ollama, OLLAMA),
+                _ => (ProviderKind::OpenAiCompatible, COMPATIBLE),
             };
+            if panel.kind != kind || panel.endpoint != endpoint {
+                panel.credential = None;
+            }
+            panel.kind = kind;
+            panel.endpoint = endpoint.into();
             panel.outcome = None;
             panel.page = 0;
         }
         Action::Edit => panel.draft = Some(Edit::Endpoint(panel.endpoint.clone())),
+        Action::Credential => {
+            panel.feedback.clear();
+            panel.draft = Some(Edit::Credential(
+                panel.credential.clone().unwrap_or_default(),
+            ));
+        }
         Action::Prompt => {
             if panel.roster.is_some() {
                 panel.draft = Some(Edit::Prompt(String::new()));
@@ -374,16 +398,19 @@ fn apply(action: Action, panel: &mut Panel) {
         }
         Action::Discover => {
             let (sender, receiver) = mpsc::sync_channel(1);
-            let kind = panel.kind;
-            let endpoint = panel.endpoint.clone();
+            let declaration = panel_provider(panel);
             std::thread::spawn(move || {
                 let outcome = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|_| "Could not start the provider request.")
                     .and_then(|runtime| {
-                        runtime.block_on(discover(kind, endpoint)).map_err(|error| match error {
+                        runtime.block_on(discover(declaration)).map_err(|error| match error {
                             RuntimeError::Config(_) => "Endpoint rejected. Enter a loopback HTTP or HTTPS URL.",
+                            RuntimeError::Provider(ProviderError::SecretResolutionFailed { .. }) =>
+                                "Credential reference unavailable. Check the variable in the launch environment.",
+                            RuntimeError::Provider(ProviderError::AuthenticationFailed { .. }) =>
+                                "Provider authentication failed. Check the configured credential reference.",
                             _ => "Could not verify provider health. Check the endpoint and server.",
                         })
                     });
@@ -418,8 +445,13 @@ fn apply(action: Action, panel: &mut Panel) {
     }
 }
 
-async fn discover(kind: ProviderKind, endpoint: String) -> Result<Discovery, RuntimeError> {
-    let mut declaration = desktop_agent::provider(kind, endpoint);
+fn panel_provider(panel: &Panel) -> ProviderConfig {
+    let mut provider = desktop_agent::provider(panel.kind, panel.endpoint.clone());
+    provider.credential_env = panel.credential.clone();
+    provider
+}
+
+async fn discover(mut declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
     declaration.request_timeout_seconds = 5;
     let id = declaration.id;
     let config = desktop_agent::config(declaration);
@@ -572,6 +604,7 @@ fn select_model(panel: &mut Panel, index: usize) {
             && saved.identifier == model.provider_model_name
             && provider.kind == panel.kind
             && provider.endpoint == panel.endpoint
+            && provider.credential_env == panel.credential
         {
             fields[2] = saved
                 .resources
@@ -592,9 +625,13 @@ fn select_model(panel: &mut Panel, index: usize) {
 }
 
 fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
+    let credential = matches!(edit, Edit::Credential(_));
     let (field, limit, accepts): (&mut String, usize, fn(char) -> bool) = match edit {
         Edit::Endpoint(value) => (value, ENDPOINT_LIMIT, |c| {
             c.is_ascii_alphanumeric() || ":/.[_-]".contains(c)
+        }),
+        Edit::Credential(value) => (value, 128, |c| {
+            c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
         }),
         Edit::Registration {
             fields,
@@ -617,6 +654,13 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
             if let Some(text) = &event.text {
                 field.extend(
                     text.chars()
+                        .map(|c| {
+                            if credential {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            }
+                        })
                         .filter(|&c| accepts(c))
                         .take(limit.saturating_sub(field.chars().count())),
                 );
@@ -631,9 +675,24 @@ fn submit(panel: &mut Panel) {
     };
     match edit {
         Edit::Endpoint(endpoint) => {
+            if panel.endpoint != endpoint {
+                panel.credential = None;
+            }
             panel.endpoint = endpoint;
             panel.outcome = None;
             panel.page = 0;
+        }
+        Edit::Credential(name) => {
+            if !name.is_empty() && !desktop_agent::credential_name(&name) {
+                panel.feedback =
+                    "Enter a VESPERA_ environment variable name or clear the field.".into();
+                panel.draft = Some(Edit::Credential(name));
+                return;
+            }
+            panel.credential = (!name.is_empty()).then_some(name);
+            panel.outcome = None;
+            panel.page = 0;
+            panel.feedback.clear();
         }
         Edit::Registration {
             model,
@@ -664,7 +723,7 @@ fn submit(panel: &mut Panel) {
             if let Some(dir) = panel.dir.clone() {
                 let [agent_name, role, ram, vram] = fields;
                 let registration = Registration {
-                    provider: desktop_agent::provider(panel.kind, panel.endpoint.clone()),
+                    provider: panel_provider(panel),
                     model: *model,
                     agent_name,
                     role,
@@ -964,7 +1023,10 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         Some(Edit::Endpoint(endpoint)) => endpoint,
         _ => &panel.endpoint,
     };
-    let mut content = format!("Adapter  |  {adapter}\nEndpoint  |  {endpoint}\n");
+    let credential = panel.credential.as_deref().unwrap_or("None");
+    let mut content = format!(
+        "Adapter  |  {adapter}\nEndpoint  |  {endpoint}\nCredential variable  |  {credential}\n"
+    );
     if let Some(roster) = &panel.roster
         && let Some((agent, model, provider)) = roster.selection(panel.selected)
     {
@@ -983,6 +1045,9 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
             model.identifier.chars().take(90).collect::<String>(),
             provider.endpoint
         );
+        if let Some(name) = &provider.credential_env {
+            let _ = writeln!(content, "Task credential variable  |  {name}");
+        }
     }
     if !panel.feedback.is_empty() {
         let _ = writeln!(content, "\n{}", panel.feedback);
@@ -990,6 +1055,12 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     if let Some(edit) = &panel.draft {
         match edit {
             Edit::Endpoint(_) => content.push_str("\nEnter saves the endpoint."),
+            Edit::Credential(name) => {
+                let _ = write!(
+                    content,
+                    "\nEnvironment variable name  |  {name}_\nUse a VESPERA_ variable name. Enter saves. Delete clears."
+                );
+            }
             Edit::Registration {
                 model,
                 fields,
@@ -1090,9 +1161,9 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         && !panel.feedback.starts_with("Workflow ")
     {
         match &panel.outcome {
-            None => content.push_str(
-                "\nLoopback servers without authentication. Select Test & discover or press Enter.",
-            ),
+            None => {
+                content.push_str("\nLoopback servers only. Select Test & discover or press Enter.")
+            }
             Some(Err(error)) => content.push_str(error),
             Some(Ok(result)) => {
                 let support = result.support;
@@ -1148,7 +1219,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
     use vespera_providers::{LifecycleCapabilityState, ProviderHealthStatus};
 
@@ -1178,10 +1249,10 @@ mod tests {
                 stream.write_all(response.as_bytes()).await.unwrap();
             }
         });
-        let result = discover(
+        let result = discover(desktop_agent::provider(
             ProviderKind::OpenAiCompatible,
             format!("http://{address}/v1"),
-        )
+        ))
         .await
         .unwrap();
         assert_eq!(result.health.status, ProviderHealthStatus::Healthy);
@@ -1203,9 +1274,175 @@ mod tests {
             "http://user:password@127.0.0.1:1234/v1",
         ] {
             assert!(matches!(
-                discover(ProviderKind::OpenAiCompatible, endpoint.into()).await,
+                discover(desktop_agent::provider(
+                    ProviderKind::OpenAiCompatible,
+                    endpoint.into()
+                ))
+                .await,
                 Err(RuntimeError::Config(_))
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn missing_credential_reference_fails_before_any_provider_request() {
+        let mut provider =
+            desktop_agent::provider(ProviderKind::OpenAiCompatible, COMPATIBLE.into());
+        provider.credential_env = Some(format!(
+            "VESPERA_MISSING_{}",
+            vespera_core::TaskId::new()
+                .to_string()
+                .replace('-', "")
+                .to_ascii_uppercase()
+        ));
+        assert!(matches!(
+            discover(provider).await,
+            Err(RuntimeError::Provider(
+                ProviderError::SecretResolutionFailed { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn authenticated_discovery_and_saved_task_use_launch_environment() {
+        const ENDPOINT: &str = "VESPERA_INTERNAL_TEST_AUTH_ENDPOINT";
+        const CREDENTIAL: &str = "VESPERA_TEST_DESKTOP_AUTH";
+        const ANSWER: &str = "Authenticated fixture answer";
+        if let Ok(endpoint) = std::env::var(ENDPOINT) {
+            let mut provider = desktop_agent::provider(ProviderKind::OpenAiCompatible, endpoint);
+            assert!(matches!(
+                discover(provider.clone()).await,
+                Err(RuntimeError::Provider(
+                    ProviderError::AuthenticationFailed { .. }
+                ))
+            ));
+            provider.credential_env = Some(CREDENTIAL.into());
+            let model = discover(provider.clone())
+                .await
+                .unwrap()
+                .models
+                .unwrap()
+                .remove(0);
+            assert_eq!(model.provider_model_name, "fixture-authenticated-model");
+            let dir =
+                std::env::temp_dir().join(format!("vespera-auth-{}", vespera_core::TaskId::new()));
+            desktop_agent::register(
+                &dir,
+                None,
+                Registration {
+                    provider,
+                    model,
+                    agent_name: "Authenticated fixture".into(),
+                    role: "Fixture".into(),
+                    rebind: None,
+                    ram_mib: 1,
+                    vram_mib: 0,
+                },
+            )
+            .await
+            .unwrap();
+            let roster = desktop_agent::load(&dir).unwrap().unwrap();
+            let (agent, _, provider) = roster.selection(0).unwrap();
+            let owner = agent.identity.id;
+            assert_eq!(provider.credential_env.as_deref(), Some(CREDENTIAL));
+            let finished = desktop_agent::run(
+                &dir,
+                roster,
+                0,
+                "Fixture prompt".into(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(finished.response, ANSWER);
+            let tasks = dir.join("desktop-tasks.sqlite3");
+            let stored = AgentTaskStore::inspect(&tasks, finished.id).unwrap();
+            assert_eq!(stored.owner, owner);
+            assert_eq!(stored.task.state, vespera_core::TaskState::Completed);
+            let token = std::env::var(CREDENTIAL).unwrap();
+            for file in [dir.join("desktop.sqlite3"), tasks] {
+                let bytes = std::fs::read(&file).unwrap();
+                assert!(
+                    !bytes
+                        .windows(token.len())
+                        .any(|window| window == token.as_bytes())
+                );
+                std::fs::remove_file(file).unwrap();
+            }
+            std::fs::remove_dir(dir).unwrap();
+            return;
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let token = vespera_core::TaskId::new().to_string();
+        let expected_header = format!("Bearer {token}");
+        let child = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "provider_scene::tests::authenticated_discovery_and_saved_task_use_launch_environment"])
+                .env(ENDPOINT, endpoint)
+                .env(CREDENTIAL, token)
+                .status()
+                .unwrap()
+        });
+        let server = async {
+            for (method, authorized) in [
+                ("GET /v1/models HTTP/1.1", false),
+                ("GET /v1/models HTTP/1.1", true),
+                ("GET /v1/models HTTP/1.1", true),
+                ("GET /v1/models HTTP/1.1", true),
+                ("POST /v1/chat/completions HTTP/1.1", true),
+            ] {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                assert_eq!(line.trim_end(), method);
+                let mut has_auth = false;
+                let mut content_length = 0;
+                loop {
+                    line.clear();
+                    assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    if let Some((header, value)) = line.split_once(':') {
+                        if header.eq_ignore_ascii_case("authorization") {
+                            assert!(value.trim() == expected_header);
+                            has_auth = true;
+                        } else if header.eq_ignore_ascii_case("content-length") {
+                            content_length = value.trim().parse().unwrap();
+                        }
+                    }
+                }
+                assert_eq!(has_auth, authorized);
+                stream
+                    .read_exact(&mut vec![0; content_length])
+                    .await
+                    .unwrap();
+                let (status, body) = if !authorized {
+                    ("401 Unauthorized", r#"{"error":"authentication required"}"#)
+                } else if method.starts_with("GET") {
+                    (
+                        "200 OK",
+                        r#"{"data":[{"id":"fixture-authenticated-model"}]}"#,
+                    )
+                } else {
+                    (
+                        "200 OK",
+                        r#"{"choices":[{"message":{"role":"assistant","content":"Authenticated fixture answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":3}}"#,
+                    )
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(15), server)
+            .await
+            .unwrap();
+        assert!(child.await.unwrap().success());
     }
 }

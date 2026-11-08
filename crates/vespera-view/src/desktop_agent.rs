@@ -123,7 +123,8 @@ fn read(db: &Connection) -> Result<Option<Roster>, Failure> {
         || config
             .providers
             .iter()
-            .any(|provider| provider.credential_env.is_some())
+            .filter_map(|provider| provider.credential_env.as_deref())
+            .any(|name| !credential_name(name))
         || config
             .agents
             .iter()
@@ -159,6 +160,16 @@ pub(super) fn config(provider: ProviderConfig) -> AppConfig {
     }
 }
 
+pub(super) fn credential_name(name: &str) -> bool {
+    name.len() <= 128
+        && name.strip_prefix("VESPERA_").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        })
+}
+
 pub(super) async fn register(
     dir: &Path,
     previous: Option<&Roster>,
@@ -176,13 +187,20 @@ pub(super) async fn register(
     if ram_mib == 0 {
         return Err("Enter a positive model RAM estimate.");
     }
+    if provider
+        .credential_env
+        .as_deref()
+        .is_some_and(|name| !credential_name(name))
+    {
+        return Err("Invalid Vespera credential environment variable name.");
+    }
     let native = provider.kind == ProviderKind::Ollama;
     let mut inventory = previous.map_or_else(|| config(provider.clone()), |old| old.config.clone());
-    if let Some(existing) = inventory
-        .providers
-        .iter()
-        .find(|existing| existing.kind == provider.kind && existing.endpoint == provider.endpoint)
-    {
+    if let Some(existing) = inventory.providers.iter().find(|existing| {
+        existing.kind == provider.kind
+            && existing.endpoint == provider.endpoint
+            && existing.credential_env == provider.credential_env
+    }) {
         provider.id = existing.id;
     } else {
         inventory.providers.push(provider.clone());
@@ -615,6 +633,24 @@ mod tests {
         let (revoked, _) = set_delegation(&dir, granted, 0, false).unwrap();
         assert!(revoked.selection(0).unwrap().0.permissions.is_empty());
         fs::remove_file(tasks).unwrap();
+        fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn credential_references_are_saved_without_resolving_secret_values() {
+        let dir = std::env::temp_dir().join(format!("vespera-credential-{}", TaskId::new()));
+        let mut configured = registration("fixture");
+        configured.provider.credential_env = Some("VESPERA_TEST_PROVIDER_TOKEN".into());
+        register(&dir, None, configured).await.unwrap();
+        let roster = load(&dir).unwrap().unwrap();
+        assert_eq!(
+            roster.selection(0).unwrap().2.credential_env.as_deref(),
+            Some("VESPERA_TEST_PROVIDER_TOKEN")
+        );
+        assert!(!credential_name("PATH"));
+        assert!(!credential_name("VESPERA_"));
+        assert!(!credential_name("VESPERA_invalid"));
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
         fs::remove_dir(dir).unwrap();
     }
