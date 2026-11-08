@@ -511,6 +511,16 @@ cargo run --locked -p vespera-app -- experiment-models --config config/local.pri
 
 The baseline runs without memory. The candidate adds bounded, untrusted context from literal phrase retrieval within the agent’s own namespace. Retrieval completes before provider work and reads the database without writing. Use a stable private copy of the database if other processes may change the source during preparation. The report includes retrieval duration separately from execution time and counts records actually included in successful requests. A miss can include zero records. The report and journal omit memory text, queries, record IDs and the database path. The candidate sends the authorized context to the configured local Ollama provider.
 
+### Compare two live workflow plans
+
+```powershell
+cargo run --locked -p vespera-app -- experiment-workflows --config config/local.private.toml --baseline-plan data/baseline-workflow.json --candidate-plan data/candidate-workflow.json --workload data/model-cases.json --evidence-dir target/workflow-comparison --resume > target/workflow-comparison.json
+```
+
+Use two authored workflow JSON files and the same private `prompt` and `expected` workload format as [the live model comparison](#compare-two-live-model-bindings). Each case replaces the root prompt of both plans and receives a fresh root task ID per arm. The plans retain their own coordinator, candidates, dependencies, output policy and limits. The normal delegation and scheduling rules apply. Each arm runs in a fresh runtime, and arm order alternates by case. Models in scope must use native loopback Ollama. `--config` defaults to `config/local.toml`. Optional `--model-catalog <PATH>` supplies registrations. `--resume` enables activation for the trial. The outer timeout defaults to 60 seconds and accepts 1–120 seconds through `--timeout-seconds`.
+
+The report scores the output selected by each plan using case-sensitive exact comparison after trimming outer whitespace. It reports planned and attempted trials, failures, timings, actual attempts and provider observations. Plan shape is exported using numbered steps. Prompts, expected answers, output text, step names and endpoint details stay private. Post-workflow residency is a point sample, and a model unloaded earlier in the workflow can have no residency observation. Backend execution remains nondeterministic. Use a fresh evidence directory. Its `events.sqlite3` stores observed attempt, dependency and terminal events and can be opened in Swarm. A deadline, interruption or unconfirmed cleanup stops subsequent trials and returns the partial report with a nonzero exit code.
+
 ## External worker service
 
 `vespera serve --access-file <path> [--listen <address:port>] [--broker-db <path>]` starts the broker until Ctrl+C or process exit. It prints the bound URL to stdout. The default address is `127.0.0.1:8765`. Use brackets for IPv6, for example `[::1]:8765`. Port `0` asks the OS to select a port. Workers connect with their own credentials and execute claimed tasks in their own process.

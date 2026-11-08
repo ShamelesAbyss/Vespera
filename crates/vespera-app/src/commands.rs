@@ -192,20 +192,12 @@ pub(crate) async fn agent_inbox(
 
 pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> {
     let config = crate::catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
-    let mut input = String::new();
     let path = args
         .workflow_file
         .as_ref()
         .or(args.decomposition_file.as_ref())
         .ok_or(AppError::InvalidWorkflow)?;
-    File::open(path)
-        .map_err(|_| AppError::WorkflowIo)?
-        .take(1_048_577)
-        .read_to_string(&mut input)
-        .map_err(|_| AppError::WorkflowIo)?;
-    if input.len() > 1_048_576 {
-        return Err(AppError::InvalidWorkflow);
-    }
+    let input = read_workflow_document(path)?;
     let input = if args.workflow_file.is_some() {
         let workflow: Workflow =
             serde_json::from_str(&input).map_err(|_| AppError::InvalidWorkflow)?;
@@ -517,6 +509,19 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         return Err(AppError::CleanupFailed);
     }
     telemetry
+}
+
+pub(crate) fn read_workflow_document(path: &std::path::Path) -> Result<String, AppError> {
+    let mut input = String::new();
+    File::open(path)
+        .map_err(|_| AppError::WorkflowIo)?
+        .take(1_048_577)
+        .read_to_string(&mut input)
+        .map_err(|_| AppError::WorkflowIo)?;
+    if input.len() > 1_048_576 {
+        return Err(AppError::InvalidWorkflow);
+    }
+    Ok(input)
 }
 
 pub(crate) async fn cancellable<T>(

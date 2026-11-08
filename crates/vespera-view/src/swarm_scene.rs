@@ -90,7 +90,10 @@ impl Evidence {
 
     fn push(&mut self, sequence: u64, event: EventEnvelope) {
         self.head = self.head.max(sequence);
-        let workflow_evidence = matches!(event.source.as_str(), "run-workflow" | "workflow-store");
+        let workflow_evidence = matches!(
+            event.source.as_str(),
+            "run-workflow" | "workflow-store" | "experiment-workflows"
+        );
         match event.kind {
             EventKind::AgentRegistered { agent_id, status }
             | EventKind::AgentStatusChanged {
@@ -943,7 +946,7 @@ mod tests {
         live.push(
             3,
             EventEnvelope::new(
-                "run-workflow",
+                "experiment-workflows",
                 0,
                 EventKind::WorkflowAttemptAccepted {
                     task_id: task,
@@ -960,7 +963,7 @@ mod tests {
         live.push(
             7,
             EventEnvelope::new(
-                "run-workflow",
+                "experiment-workflows",
                 0,
                 EventKind::WorkflowAttemptFinished {
                     task_id: task,

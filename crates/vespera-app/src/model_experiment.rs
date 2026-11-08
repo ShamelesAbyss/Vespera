@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -56,9 +56,9 @@ pub(super) struct Args {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Case {
-    prompt: String,
-    expected: String,
+pub(super) struct Case {
+    pub prompt: String,
+    pub expected: String,
     memory_query: Option<String>,
 }
 
@@ -69,7 +69,7 @@ struct PreparedCase {
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Outcome {
+pub(super) enum Outcome {
     Match,
     Mismatch,
     Failed,
@@ -93,7 +93,7 @@ struct Trial {
 }
 
 #[derive(Default, Serialize)]
-struct ProviderEvidence {
+pub(super) struct ProviderEvidence {
     version: Option<String>,
     model_digest: Option<String>,
     resident_ram_bytes: Option<u64>,
@@ -101,7 +101,7 @@ struct ProviderEvidence {
 }
 
 #[derive(Default, Serialize)]
-struct Summary {
+pub(super) struct Summary {
     attempted: usize,
     matches: usize,
     mismatches: usize,
@@ -110,8 +110,21 @@ struct Summary {
     interrupted: usize,
 }
 
+impl Summary {
+    pub fn record(&mut self, outcome: Outcome) {
+        self.attempted += 1;
+        match outcome {
+            Outcome::Match => self.matches += 1,
+            Outcome::Mismatch => self.mismatches += 1,
+            Outcome::Failed => self.failed += 1,
+            Outcome::Deadline => self.deadlines += 1,
+            Outcome::Interrupted => self.interrupted += 1,
+        }
+    }
+}
+
 pub(super) async fn run(args: Args) -> Result<(), AppError> {
-    let cases = load_cases(&args)?;
+    let cases = load_cases(&args.workload, args.memory_database.is_some())?;
     let config = catalog_commands::load(&args.config, args.model_catalog.as_deref())?;
     let models = select_models(&config, &args)?;
     let workload = prepare_cases(&args, &config, cases).await?;
@@ -142,15 +155,7 @@ pub(super) async fn run(args: Args) -> Result<(), AppError> {
             let trial = runner
                 .run(index + 1, &case.case, memory, &mut journal)
                 .await?;
-            let summary = &mut summaries[arm];
-            summary.attempted += 1;
-            match trial.outcome {
-                Outcome::Match => summary.matches += 1,
-                Outcome::Mismatch => summary.mismatches += 1,
-                Outcome::Failed => summary.failed += 1,
-                Outcome::Deadline => summary.deadlines += 1,
-                Outcome::Interrupted => summary.interrupted += 1,
-            }
+            summaries[arm].record(trial.outcome);
             stopped = !trial.cleanup_confirmed
                 || matches!(trial.outcome, Outcome::Interrupted | Outcome::Deadline);
             trials.push(trial);
@@ -208,10 +213,10 @@ pub(super) async fn run(args: Args) -> Result<(), AppError> {
     }
 }
 
-fn load_cases(args: &Args) -> Result<Vec<Case>, AppError> {
+pub(super) fn load_cases(path: &Path, memory: bool) -> Result<Vec<Case>, AppError> {
     const LIMIT: u64 = 128 * 1024;
     let mut bytes = Vec::new();
-    File::open(&args.workload)
+    File::open(path)
         .and_then(|file| file.take(LIMIT + 1).read_to_end(&mut bytes))
         .map_err(|_| AppError::ModelExperimentInput("could not read workload"))?;
     if bytes.len() as u64 > LIMIT {
@@ -231,13 +236,11 @@ fn load_cases(args: &Args) -> Result<Vec<Case>, AppError> {
             "expected 1–16 cases with nonblank prompts up to 16 KiB and expected text up to 4 KiB",
         ));
     }
-    if cases.iter().any(
-        |case| match (&case.memory_query, args.memory_database.is_some()) {
-            (Some(query), true) => query.trim().is_empty() || query.len() > 256,
-            (None, false) => false,
-            _ => true,
-        },
-    ) {
+    if cases.iter().any(|case| match (&case.memory_query, memory) {
+        (Some(query), true) => query.trim().is_empty() || query.len() > 256,
+        (None, false) => false,
+        _ => true,
+    }) {
         return Err(AppError::ModelExperimentInput(
             "memory mode requires a nonblank memory_query up to 256 bytes in each case; model mode omits it",
         ));
@@ -311,19 +314,7 @@ fn select_models<'a>(
         ));
     }
     for model in models {
-        let provider = config
-            .providers
-            .iter()
-            .find(|provider| provider.id == model.provider_id)
-            .ok_or(AppError::ModelExperimentInput("model provider is missing"))?;
-        if provider.kind != ProviderKind::Ollama
-            || !ValidatedEndpoint::parse(provider.id, &provider.endpoint, EndpointPolicy::default())
-                .is_ok_and(|endpoint| endpoint.is_loopback())
-        {
-            return Err(AppError::ModelExperimentInput(
-                "models must use native loopback Ollama providers",
-            ));
-        }
+        require_local_ollama(config, model.provider_id)?;
         if model.availability == vespera_core::ModelAvailability::Unavailable {
             return Err(AppError::ModelExperimentInput(
                 "selected model is marked unavailable",
@@ -331,6 +322,26 @@ fn select_models<'a>(
         }
     }
     Ok(models)
+}
+
+pub(super) fn require_local_ollama(
+    config: &AppConfig,
+    id: vespera_core::ProviderId,
+) -> Result<(), AppError> {
+    let provider = config
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .ok_or(AppError::ModelExperimentInput("model provider is missing"))?;
+    if provider.kind != ProviderKind::Ollama
+        || !ValidatedEndpoint::parse(provider.id, &provider.endpoint, EndpointPolicy::default())
+            .is_ok_and(|endpoint| endpoint.is_loopback())
+    {
+        return Err(AppError::ModelExperimentInput(
+            "models must use native loopback Ollama providers",
+        ));
+    }
+    Ok(())
 }
 
 struct TrialRunner<'a> {
@@ -468,7 +479,7 @@ impl TrialRunner<'_> {
     }
 }
 
-async fn observe_provider(
+pub(super) async fn observe_provider(
     provider: &dyn InferenceProvider,
     model: &str,
     executed: bool,

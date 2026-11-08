@@ -2577,6 +2577,112 @@ fn workflow_value() -> serde_json::Value {
 }
 
 #[test]
+fn live_workflow_experiment_compares_authored_pipelines_and_replays_dependencies() {
+    use serde_json::{Value, json};
+    use vespera_core::EventKind;
+    let provider = HttpFixture::with_ollama_answer(false, "private expected answer");
+    let scratch = ScratchDirectory::new();
+    let config = runtime_config(&provider, false, true);
+    let config_path = scratch.write_config(&config);
+    let candidate = workflow_value();
+    let mut baseline = candidate.clone();
+    baseline["steps"].as_array_mut().unwrap().truncate(1);
+    baseline["output"] = json!({"kind": "step", "step": "contribute"});
+    baseline["max_total_attempts"] = 1.into();
+    let left = scratch.0.join("baseline.json");
+    let right = scratch.0.join("candidate.json");
+    fs::write(&left, baseline.to_string()).unwrap();
+    fs::write(&right, candidate.to_string()).unwrap();
+    let cases = scratch.0.join("cases.json");
+    fs::write(
+        &cases,
+        r#"[{"prompt":"private experiment input","expected":"private expected answer"}]"#,
+    )
+    .unwrap();
+    let evidence = scratch.0.join("evidence");
+    let flags = [
+        "experiment-workflows",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--baseline-plan",
+        left.to_str().unwrap(),
+        "--candidate-plan",
+        right.to_str().unwrap(),
+        "--workload",
+        cases.to_str().unwrap(),
+        "--evidence-dir",
+        evidence.to_str().unwrap(),
+        "--resume",
+    ];
+    assert!(!execute(&flags).status.success());
+    assert!(!evidence.exists());
+    assert!(provider.captured().is_empty());
+    fs::write(
+        &config_path,
+        config.replace("permissions = []", "permissions = [\"delegate\"]"),
+    )
+    .unwrap();
+    let output = execute(&flags);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    for arm in ["baseline", "candidate"] {
+        assert_eq!(report["summary"][arm]["matches"], 1);
+    }
+    assert_eq!(
+        report["configuration"]["candidate"]["steps"][1]["dependencies"],
+        json!([1])
+    );
+    let [first, second] = report["trials"].as_array().unwrap().as_slice() else {
+        panic!("expected two trials")
+    };
+    assert_ne!(first["task_id"], second["task_id"]);
+    assert_eq!(first["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(second["attempts"].as_array().unwrap().len(), 2);
+    assert_eq!(first["cleanup_confirmed"], true);
+    assert_eq!(second["cleanup_confirmed"], true);
+    let journal = vespera_events::Journal::open_reader(&evidence.join("events.sqlite3"))
+        .unwrap()
+        .replay(None, 32)
+        .unwrap();
+    assert_eq!(journal.entries.len(), 8);
+    assert_eq!(
+        second["event_cursor"],
+        serde_json::to_value(journal.entries.last().unwrap().cursor).unwrap()
+    );
+    assert!(journal.entries.iter().any(|entry| matches!(&entry.event.kind,
+        EventKind::WorkflowAttemptAccepted { dependencies, .. }
+        if dependencies.len() == 1 && second["attempts"][0]["task_id"] == dependencies[0].task_id.to_string()
+    )));
+    let requests = provider.captured();
+    let chats = requests
+        .iter()
+        .filter(|request| request.path == "/api/chat")
+        .collect::<Vec<_>>();
+    assert_eq!(chats.len(), 3);
+    assert!(
+        chats
+            .iter()
+            .all(|request| request.body.contains("private experiment input"))
+    );
+    assert!(chats[2].body.contains("private expected answer"));
+    let export =
+        String::from_utf8(output.stdout).unwrap() + &serde_json::to_string(&journal).unwrap();
+    for private in [
+        "private experiment input",
+        "private expected answer",
+        "contribute",
+        "summarize",
+        &provider.endpoint,
+    ] {
+        assert!(!export.contains(private));
+    }
+}
+
+#[test]
 fn shipped_workflow_example_validates_and_help_requires_a_workflow_file() {
     let workflow: vespera_orchestrator::Workflow = serde_json::from_str(
         &fs::read_to_string(workspace().join("config/workflow.example.json")).unwrap(),

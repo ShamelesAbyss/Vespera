@@ -8,6 +8,7 @@ mod experiment;
 mod memory_commands;
 mod model_experiment;
 mod scheduler_telemetry;
+mod workflow_experiment;
 mod world_commands;
 
 use std::net::SocketAddr;
@@ -133,6 +134,8 @@ enum Command {
     ExperimentWorld(experiment::Args),
     /// Compare fixed local Ollama bindings or memory policies on a private workload.
     ExperimentModels(model_experiment::Args),
+    /// Compare two authored workflow plans on paired private cases.
+    ExperimentWorkflows(workflow_experiment::Args),
     /// Serve the external worker task broker over loopback HTTP or TLS.
     Serve {
         /// Strict JSON access policy with environment variable references.
@@ -362,10 +365,10 @@ enum AppError {
     World(#[from] vespera_world::WorldError),
     #[error("cannot create a fresh experiment evidence directory: {0}")]
     ExperimentDirectory(std::io::Error),
-    #[error("invalid model experiment: {0}")]
+    #[error("invalid live experiment: {0}")]
     ModelExperimentInput(&'static str),
     #[error(
-        "model experiment timed out, was interrupted, or could not confirm cleanup; inspect its report"
+        "experiment timed out, was interrupted, or could not confirm cleanup; inspect its report"
     )]
     ModelExperimentStopped,
     #[error("world revision {revision} committed but event publication failed: {source}")]
@@ -538,6 +541,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Command::World(args) => world_commands::run(args).await?,
         Command::ExperimentWorld(args) => experiment::run(args)?,
         Command::ExperimentModels(args) => model_experiment::run(args).await?,
+        Command::ExperimentWorkflows(args) => workflow_experiment::run(args).await?,
         Command::Serve {
             access_file,
             listen,
