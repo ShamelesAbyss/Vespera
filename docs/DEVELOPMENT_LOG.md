@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Bounded automatic workflow decomposition
+
+Verified implementation checkpoint `73c68698289f2f62e63fe59393efbae8c5ac4706` was pushed to `main`. Workflow resume passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42430453474).
+
+`run-workflow --decomposition-file` makes one bounded coordinator planning call and validates the resulting steps against the operator roster, configured capability policies and supplied bounds. The subprocess fixture verified two dependent steps on an authorized worker and no worker traffic for proposals with an extra candidate field, an unsupported capability or a disconnected step. Formatting, strict workspace Clippy and Windows offline workspace tests passed.
+
+On Ollama 0.40.13, `hermes3:8b` proposed a description step and a dependent summary step. Both completed, `workflow-history` reopened two attempts, and acknowledged unload left residency empty. Execution JSON records the planning call identity. The durable store keeps the accepted plan and worker lineage. The bounded native Milestone 6 gates are verified. Milestone 7 proceeds with persistent agent state and task ownership.
+
 ## 2026-11-07 — Resume from a committed workflow step
 
 Verified implementation checkpoint `1dea00ddb0a6e6e48be84ceaf6485314f3e4f9df` was pushed to `main`. Durable workflow lineage passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42429802294).
