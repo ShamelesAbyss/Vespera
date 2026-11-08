@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use tokio::sync::mpsc;
@@ -264,6 +264,7 @@ fn setup(
             },
             Camera3d::default(),
             Tonemapping::None,
+            DebandDither::Disabled,
             Orbit {
                 focus: focus.home_point,
                 ..Orbit::with_distance(focus.home_distance)

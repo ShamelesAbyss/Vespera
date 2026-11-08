@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
@@ -322,6 +322,7 @@ fn setup(
             },
             Camera3d::default(),
             Tonemapping::None,
+            DebandDither::Disabled,
             Orbit::at_home(&focus),
             Transform::from_xyz(1.6, 10.0, 13.0).looking_at(focus.home_point, Vec3::Y),
         ))

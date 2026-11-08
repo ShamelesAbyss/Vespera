@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver};
 
@@ -31,6 +31,7 @@ enum Action {
     Providers,
     Swarm,
     Workflows,
+    Motion,
 }
 
 #[derive(Component)]
@@ -39,8 +40,94 @@ struct WorldStatus;
 #[derive(Component)]
 struct HardwareStatus;
 
+#[derive(Component)]
+struct MotionStatus;
+
+#[derive(Resource)]
+struct MotionPreference {
+    path: Option<PathBuf>,
+    enabled: bool,
+    forced: bool,
+    requested: bool,
+    issue: Option<&'static str>,
+}
+
+impl MotionPreference {
+    fn load(path: Option<PathBuf>, forced: bool) -> Self {
+        let saved = path.as_deref().map(read_motion).transpose();
+        Self {
+            path,
+            enabled: forced || matches!(saved, Ok(Some(true))),
+            forced,
+            requested: false,
+            issue: saved
+                .err()
+                .map(|_| "Could not read the reduced-motion preference."),
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        if self.forced {
+            "Reduced motion on for this launch (--reduced-motion)"
+        } else if let Some(issue) = self.issue {
+            issue
+        } else if self.path.is_none() {
+            "Reduced-motion settings require a local data directory."
+        } else if self.enabled {
+            "Reduced motion on"
+        } else {
+            "Reduced motion off"
+        }
+    }
+}
+
+fn read_motion(path: &Path) -> io::Result<bool> {
+    match path.symlink_metadata() {
+        Ok(info) if info.is_file() && info.len() == 0 => Ok(true),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unrecognized motion preference",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn save_motion(path: &Path, enabled: bool) -> io::Result<()> {
+    if read_motion(path)? == enabled {
+        return Ok(());
+    }
+    if enabled {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && read_motion(path)? => {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        match fs::remove_file(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+}
+
 pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
     let data_dir = data_dir.or_else(default_data_dir);
+    let motion = MotionPreference::load(
+        data_dir
+            .as_ref()
+            .map(|dir| dir.join("reduced-motion.enabled")),
+        reduced_motion,
+    );
+    let reduced_motion = motion.enabled;
     let path = data_dir.as_ref().map(|dir| dir.join("world.sqlite3"));
     let status = if path.is_some() {
         "Create the starter world or reopen its saved state."
@@ -70,9 +157,13 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
         open_requested: false,
         status,
     })
+    .insert_resource(motion)
     .add_systems(Startup, setup)
     .add_systems(Update, highlight)
-    .add_systems(Update, (actions, finish_open, readouts).chain());
+    .add_systems(
+        Update,
+        (actions, finish_open, readouts, update_motion).chain(),
+    );
     app.run();
 }
 
@@ -95,6 +186,7 @@ fn setup(
     mut commands: Commands,
     layers: Res<Layers>,
     local: Res<LocalWorld>,
+    motion: Res<MotionPreference>,
     brand: Res<crate::branding::Brand>,
 ) {
     let camera = commands
@@ -172,7 +264,8 @@ fn setup(
                         button(Action::World, "Create or resume world  [Enter]"),
                         button(Action::Providers, "Models & Providers  [F6]"),
                         button(Action::Swarm, "Open Swarm  [F3]"),
-                        button(Action::Workflows, "Workflow history  [F7]")
+                        button(Action::Workflows, "Workflow history  [F7]"),
+                        button(Action::Motion, "Reduced motion  [M]")
                     ]
                 ),
                 (
@@ -194,13 +287,19 @@ fn setup(
                     TextFont::from_font_size(14.0),
                     TextColor(Color::srgb(0.69, 0.77, 0.85))
                 ),
+                (
+                    MotionStatus,
+                    Text::new(motion.label()),
+                    TextFont::from_font_size(14.0)
+                ),
             ],
         ))
         .observe(
             |event: On<PointerClick>,
              actions: Query<&Action>,
              mut layers: ResMut<Layers>,
-             mut local: ResMut<LocalWorld>| {
+             mut local: ResMut<LocalWorld>,
+             mut motion: ResMut<MotionPreference>| {
                 if layers.active == Layer::Home && event.button == PointerButton::Primary {
                     match actions.get(event.original_event_target()) {
                         Ok(Action::Machine) => layers.request(Layer::Machine),
@@ -208,11 +307,45 @@ fn setup(
                         Ok(Action::Providers) => layers.request(Layer::Providers),
                         Ok(Action::Swarm) => layers.request(Layer::Swarm),
                         Ok(Action::Workflows) => layers.request(Layer::Workflows),
+                        Ok(Action::Motion) => motion.requested = true,
                         Err(_) => {}
                     }
                 }
             },
         );
+}
+
+fn update_motion(
+    keys: Res<ButtonInput<KeyCode>>,
+    layers: Res<Layers>,
+    mut motion: ResMut<MotionPreference>,
+    mut machine: ResMut<scene::CameraFocus<{ Layer::Machine as usize }>>,
+    mut world: ResMut<scene::CameraFocus<{ Layer::World as usize }>>,
+    swarm: Option<ResMut<scene::CameraFocus<{ Layer::Swarm as usize }>>>,
+    mut label: Single<&mut Text, With<MotionStatus>>,
+) {
+    if layers.active != Layer::Home
+        || !(std::mem::take(&mut motion.requested) || keys.just_pressed(KeyCode::KeyM))
+        || motion.forced
+    {
+        return;
+    }
+    if let Some(path) = &motion.path {
+        let next = !motion.enabled;
+        match save_motion(path, next) {
+            Ok(()) => {
+                motion.enabled = next;
+                motion.issue = None;
+                machine.reduced_motion = next;
+                world.reduced_motion = next;
+                if let Some(mut swarm) = swarm {
+                    swarm.reduced_motion = next;
+                }
+            }
+            Err(_) => motion.issue = Some("Could not save the reduced-motion preference."),
+        }
+    }
+    label.0 = motion.label().into();
 }
 
 pub(super) fn button(action: impl Component, label: &'static str) -> impl Bundle {
@@ -362,6 +495,26 @@ mod tests {
     use super::*;
     use vespera_world::{WorldChange, WorldFence};
 
+    #[test]
+    fn home_motion_preference_survives_restart_and_preserves_unknown_files() {
+        let dir =
+            std::env::temp_dir().join(format!("vespera-motion-{}", vespera_core::TaskId::new()));
+        let path = dir.join("reduced-motion.enabled");
+        assert!(!MotionPreference::load(Some(path.clone()), false).enabled);
+        save_motion(&path, true).unwrap();
+        save_motion(&path, true).unwrap();
+        assert!(MotionPreference::load(Some(path.clone()), false).enabled);
+        save_motion(&path, false).unwrap();
+        assert!(!MotionPreference::load(Some(path.clone()), false).enabled);
+        assert!(MotionPreference::load(Some(path.clone()), true).enabled);
+        assert!(!path.exists());
+        fs::write(&path, b"Existing user data").unwrap();
+        assert!(save_motion(&path, true).is_err());
+        assert!(save_motion(&path, false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"Existing user data");
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
     #[test]
     fn home_creates_a_world_and_reopens_its_committed_revision() {
         let dir =

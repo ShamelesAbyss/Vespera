@@ -612,6 +612,8 @@ cargo run --locked -p vespera-view --features graphics
 
 Home shows OS CPU and available RAM measurements and the renderer name reported by wgpu. Select **Open Hardware** or press **F1** to inspect the host in 3D. Select **Create or resume world** or press **Enter** to open the local simulation. Vespera creates its SQLite database only when you first open the world and reads the saved state on later launches. In World, **Space** commits one tick and **P** toggles playback. **F5** returns to Home, where playback is paused.
 
+Select **Reduced motion** on Home or press **M** to toggle the preference. It applies to camera transitions and Living World poses in the desktop and is saved in the selected desktop data directory. The `--reduced-motion` launch flag enables it for that session independently of the saved preference.
+
 The desktop saves its world in `%LOCALAPPDATA%\Vespera\world.sqlite3` on Windows. On Linux the path is `$XDG_DATA_HOME/Vespera/world.sqlite3` or `~/.local/share/Vespera/world.sqlite3`. On macOS it is `~/Library/Application Support/Vespera/world.sqlite3`. Use a separate directory for a fresh workspace.
 
 ```powershell

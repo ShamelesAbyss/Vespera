@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use tokio::sync::{mpsc, watch};
 use vespera_core::{AgentId, AgentStatus, EventEnvelope, EventKind, TaskId, TaskState};
@@ -553,6 +553,7 @@ fn setup(
             },
             Camera3d::default(),
             Tonemapping::None,
+            DebandDither::Disabled,
             Orbit::at_home(&focus),
         ))
         .id();
