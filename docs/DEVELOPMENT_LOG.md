@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Durable agent operator suspension
+
+Verified implementation checkpoint `3b61707120f85133a71e86ec5041a9c9188c0c49`, pushed to `main`.
+
+`agent-state suspend`, `inspect` and `release` work offline against the private task database. Migration preserves version 1 task history. Independent processes verified that a hold defeats `--resume` for direct execution and coordinator activation before provider traffic. An authored workflow completed using an eligible alternate when another candidate was held. The runtime independently enforces the hold after attachment. Windows formatting, strict workspace Clippy and offline workspace tests passed. The preceding task ownership checkpoint also passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42431748791).
+
+With live Ollama and `hermes3:8b`, the held agent was denied, then completed after release and an explicit invocation resume. Acknowledged unload left zero resident models. Holds are scoped to the shared private task database, and control changes are issued between runs. Configuration still supplies identity, grants and model policy. Durable authorized inboxes and bounded autonomous planning remain open for Milestone 7.
+
 ## 2026-11-07 — Durable agent task ownership
 
 Verified implementation checkpoint `ad458955821fae77629c8e01307668a893991dcf` was pushed to `main`. Automatic decomposition passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42431100527).
