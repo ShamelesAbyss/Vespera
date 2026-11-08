@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-07 — Integrated agent recovery acceptance
+
+Verified against `921301e` on `main`. Independent Windows CLI processes recorded relationship memory, completed a task on Ollama `hermes3:8b`, and linked an incoming message to the task. A durable hold remained in effect after the configuration switched the same agent UUID to `igorls/gemma-4-12B-it-heretic-GGUF:latest`. After release, a new process used the retained relationship record in a successful inference on the replacement model. Separate history and inbox reads returned the original owner, original model and task-linked message. Both models acknowledged unload and final residency was empty.
+
+The original bounded Milestone 7 gates are verified. Configuration remains the authority for model binding and grants. Task and inbox durability require the private task store, and relationship observations use the separate memory store. Next is Milestone 8 backup, restore and durable memory lineage.
+
 ## 2026-11-07 — Bounded agent planning and durable provenance
 
 Verified implementation checkpoint `dba89a21de6e142c1ddd5d7f0eb3061e5152c48a`, pushed to `main`.
