@@ -2,6 +2,16 @@
 
 The initial Milestone 1 foundation used seven direct third-party libraries shared through the root Cargo workspace. The current runtime also uses Tokio, Reqwest, Futures and Bytes. `Cargo.lock` records the current exact dependency graph; historical metadata/license artifacts may describe the initial foundation and must be regenerated for a release audit.
 
+For a local Windows x64 candidate with Atlas, inventory the resolved runtime and build dependencies from the workspace root.
+
+```powershell
+cargo tree --locked -p vespera-app -p vespera-view --features vespera-view/graphics --target x86_64-pc-windows-msvc --edges normal,build --prefix none --format '{p}|{l}'
+```
+
+For a headless candidate, omit `-p vespera-view --features vespera-view/graphics`. On Linux, use the target triple for the build. The tree reports declared license expressions, including build dependencies. Review license files and required notices for the actual artifact before distribution.
+
+The Windows x64 Atlas candidate inventory contained 419 distinct package/version rows after removing repeated nodes, including 14 workspace packages. All 405 third-party rows declared a license expression. This check records Cargo declarations and does not establish that distribution notices are complete.
+
 ## Introduced dependencies
 
 **Serde 1.0.229** provides typed serialization and deserialization, with its `derive` feature enabled. Its design supports using the same domain types with multiple data formats [1]. This fits a model-independent core and strict input schemas. The declared license is `MIT OR Apache-2.0`.

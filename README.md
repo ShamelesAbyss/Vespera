@@ -105,6 +105,8 @@ cargo build --release --locked -p vespera-app
 
 On POSIX shells, use `cd Vespera` and `./target/release/vespera`. All commands can also run as `cargo run --locked -p vespera-app -- <command>`. See the [dependency record](docs/DEPENDENCIES.md) for dependency decisions and licenses.
 
+For an internal build containing the CLI and Atlas executables, use the [local release walkthrough](docs/RELEASE.md).
+
 ## Configure providers and models
 
 `config/local.toml` is a safe, offline-valid **placeholder inventory**, not a runnable model installation. Copy it to `config/local.private.toml`. Replace `example-local-model` with an installed provider-native identifier, set accurate capabilities/context/resources and enable the model with `availability = "available"`. The sample agent remains suspended until explicitly resumed for an invocation.
