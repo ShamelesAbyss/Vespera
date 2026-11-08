@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — Reproducible world policy experiments
+
+Verified implementation checkpoint `a07d129c9408abd6c1cff7eac811107161627c6f`, pushed to `main`. The scheduler admission checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42440745533).
+
+`experiment-world` compares paired roster policies, alternates trial order and exports redacted configuration, outcome denominators, timings, resource readings and durable advance event references. Formatting, strict workspace Clippy and the offline workspace suite passed. The integration test independently reopened each trial at its reported revision, matched its event ID and replayed the exported configuration. It also verified resident identity redaction and refusal of a preexisting evidence directory.
+
+In the bundled 60-tick world on seeds 42–44, the baseline built six shelters in every trial. Suspending one forager left one active forager and one builder and yielded three shelters per trial. With a five-shelter target, the baseline met 3/3 and the intervention met 0/3. A separate invocation reproduced the metrics from the exported configuration, and the CLI replayed the intervention at revision 61. One run sampled 13,250,560 resident process bytes after all trials. Timings include policy and tick commits and vary by run. This checkpoint covers offline simulation comparisons. Live model and orchestration policy comparisons remain open.
+
 ## 2026-11-07 — Scheduler admission evidence in Machine
 
 Verified implementation checkpoint `8d830750c9e23478e969e2c9213db004e4c26d2f`, pushed to `main`. The NVIDIA telemetry checkpoint passed [Ubuntu CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42440299752).
