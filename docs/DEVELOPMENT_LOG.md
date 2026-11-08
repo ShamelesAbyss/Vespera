@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-07 — GitHub landing page and live desktop Swarm
+
+The README redesign checkpoint `6e221b590f264a1bbd607bc00274a266e48503cf` was published and checked in GitHub's Preview. It includes the official icon and two unmodified native Windows captures. Both Mermaid diagrams rendered, all 50 local links and asset references resolved, and local previews at 1280 and 390 pixels had no page overflow. The documented diagnostics, inventory, provider health, world replay, and paired deterministic experiment ran successfully. A private rehearsal also completed a bounded Ollama agent task and both authored workflow steps. Linux shell syntax is included for the common Cargo entry points. The visual and live provider checks used Windows.
+
+Verified implementation checkpoint `4354c23406b32ea78fb90dfcbaf8859480fbcd72`, pushed to `main`. Desktop workflows now publish committed audit envelopes to the Swarm journal and recover them from workflow storage on startup. The first native run rebuilt five previously retained observations from a profile without a desktop journal. A new live Ollama workflow advanced Swarm from sequence 5 to 6 during execution and to sequence 10 after completion. All ten entries matched the authoritative audit in order. A restart reopened sequence 10 without duplicates. The official header remained visible in Swarm, and frozen replay displayed sequence 9 alongside live sequence 10.
+
+Workspace tests, graphics tests, strict Clippy, the graphics build and the portable packager test passed. The next desktop work is retained workflow browsing, richer authoring and authenticated provider setup.
+
 ## 2026-11-07 — Delegated desktop workflow
 
 Verified implementation checkpoint `39da56489b03636d51fd3341cc7541429a5e90d0`, pushed to `main`. The desktop can submit a bounded two-step draft and review to distinct saved agents on the same provider. The coordinator must have the delegation grant and neither agent may be held. The workflow uses the existing orchestrator, scheduler, durable workflow store, and per-agent task store.
