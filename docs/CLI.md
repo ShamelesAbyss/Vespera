@@ -670,6 +670,12 @@ The orchestrator runs the draft first and sends its accepted output to the revie
 
 Press **F3** during the run to follow committed desktop workflow observations in Swarm, or use **Open Swarm** from Home. The desktop projects the retained audit into `desktop-events.sqlite3` without copying prompts or responses. On startup it restores missing observations from the workflow store. **T** freezes the display or returns live. While frozen, **[** and **]** step through captured observations. The workflow store remains the recovery source if the journal cannot be written.
 
+### Author a sequential desktop workflow
+
+In **Models & Providers**, select a saved coordinator, grant it **Allow delegation**, and choose **Build workflow** or press **C**. Enter a count from two to six. The selected coordinator owns the first step. For every later step, select a saved agent on the same provider and enter its prompt. The same agent can own more than one step.
+
+Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. Each step receives the preceding result as untrusted input. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
+
 ### Browse retained desktop workflows
 
 Open **Workflow history** from Home or press **F7**. Use **Newer workflow** and **Older workflow**, or **Up** and **Down**, to inspect retained checkpoints in acceptance order. The panel shows the root ID, status, coordinator, step owners, and a preview of the selected response. Nonterminal records are marked interrupted after the writer exits. If the database is busy, use **Refresh** or **R** after the writer finishes. The history reader does not start providers.

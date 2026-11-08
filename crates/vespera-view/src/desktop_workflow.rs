@@ -14,13 +14,12 @@ use crate::desktop_evidence::{self, Projection};
 
 const STEP_OUTPUT_TOKENS: u32 = 128;
 const STEP_TIMEOUT_MS: u64 = 50_000;
-const WORKFLOW_TIMEOUT_MS: u64 = 100_000;
+pub(super) const MAX_CHAIN_STEPS: usize = 6;
 
-pub(super) struct WorkflowRequest {
-    pub coordinator: usize,
-    pub reviewer: usize,
-    pub draft_prompt: String,
-    pub review_prompt: String,
+pub(super) struct StepRequest {
+    pub name: String,
+    pub agent: usize,
+    pub prompt: String,
 }
 
 pub(super) struct FinishedWorkflow {
@@ -29,42 +28,42 @@ pub(super) struct FinishedWorkflow {
     pub observation_error: Option<String>,
 }
 
-fn plan(coordinator: AgentId, reviewer: AgentId, request: WorkflowRequest) -> Workflow {
+fn plan(steps: Vec<(AgentId, StepRequest)>) -> Workflow {
     let text = Capability::new("text-generation").expect("static capability is valid");
-    let step = |name: &str, prompt, agent, dependencies| Step {
-        name: name.into(),
-        prompt,
-        required_capabilities: [text.clone()].into(),
-        candidates: vec![agent],
-        dependencies,
-        max_attempts: 1,
-        max_output_tokens: STEP_OUTPUT_TOKENS,
-        context_tokens: None,
-        timeout_ms: STEP_TIMEOUT_MS,
-        temperature: None,
-    };
+    let (coordinator, first) = &steps[0];
+    let coordinator = *coordinator;
+    let prompt = first.prompt.clone();
+    let step_count = steps.len() as u32;
+    let mut previous = None;
+    let steps = steps
+        .into_iter()
+        .map(|(agent, request)| Step {
+            dependencies: previous.replace(request.name.clone()).into_iter().collect(),
+            name: request.name,
+            prompt: request.prompt,
+            required_capabilities: [text.clone()].into(),
+            candidates: vec![agent],
+            max_attempts: 1,
+            max_output_tokens: STEP_OUTPUT_TOKENS,
+            context_tokens: None,
+            timeout_ms: STEP_TIMEOUT_MS,
+            temperature: None,
+        })
+        .collect();
     Workflow {
         task: Task {
             id: TaskId::new(),
-            prompt: request.draft_prompt.clone(),
+            prompt,
             required_capabilities: [text.clone()].into(),
             state: TaskState::Queued,
         },
         coordinator,
-        steps: vec![
-            step("draft", request.draft_prompt, coordinator, vec![]),
-            step(
-                "review",
-                request.review_prompt,
-                reviewer,
-                vec!["draft".into()],
-            ),
-        ],
-        max_total_attempts: 2,
-        max_total_output_tokens: u64::from(STEP_OUTPUT_TOKENS) * 2,
-        timeout_ms: WORKFLOW_TIMEOUT_MS,
+        steps,
+        max_total_attempts: step_count,
+        max_total_output_tokens: u64::from(STEP_OUTPUT_TOKENS) * u64::from(step_count),
+        timeout_ms: STEP_TIMEOUT_MS * u64::from(step_count),
         output: OutputPolicy::Step {
-            step: "review".into(),
+            step: previous.expect("desktop workflow has at least two steps"),
         },
     }
 }
@@ -72,49 +71,62 @@ fn plan(coordinator: AgentId, reviewer: AgentId, request: WorkflowRequest) -> Wo
 pub(super) async fn run(
     dir: &Path,
     roster: Roster,
-    request: WorkflowRequest,
+    steps: Vec<StepRequest>,
     cancel: CancellationToken,
 ) -> Result<FinishedWorkflow, String> {
-    if request.coordinator == request.reviewer {
-        return Err("Choose a different saved agent for review.".into());
+    if !(2..=MAX_CHAIN_STEPS).contains(&steps.len()) {
+        return Err("Choose between two and six steps.".into());
     }
-    let (coordinator, draft, provider) = roster
-        .selection(request.coordinator)
+    let (coordinator, _, provider) = roster
+        .selection(steps[0].agent)
         .ok_or("Select a coordinator.")?;
-    let (reviewer, review, review_provider) = roster
-        .selection(request.reviewer)
-        .ok_or("Select a reviewer.")?;
     if !coordinator.permissions.contains(&Permission::Delegate) {
         return Err("Allow delegation for the coordinator before starting a workflow.".into());
     }
-    if provider.id != review_provider.id {
-        return Err("This workflow requires two agents on the same saved provider.".into());
-    }
-    let tasks = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
-        .map_err(|error| error.to_string())?;
     if desktop_agent::load(dir)?.is_none_or(|current| current.revision != roster.revision) {
         return Err("The saved roster changed. Reopen the application.".into());
     }
+    let tasks = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
+        .map_err(|error| error.to_string())?;
     let suspended = tasks.suspensions().map_err(|error| error.to_string())?;
-    if [coordinator.identity.id, reviewer.identity.id]
-        .iter()
-        .any(|id| suspended.contains(id))
-    {
-        return Err("Resume both agents before starting the workflow.".into());
+    let mut ram = 0;
+    let mut vram = 0;
+    let mut assigned = Vec::with_capacity(steps.len());
+    for step in steps {
+        let (agent, model, binding) = roster
+            .selection(step.agent)
+            .ok_or("Choose a saved agent for each step.")?;
+        if binding.id != provider.id {
+            return Err("All workflow agents must use the same saved provider.".into());
+        }
+        if suspended.contains(&agent.identity.id) {
+            return Err("Resume all assigned agents before starting the workflow.".into());
+        }
+        ram = ram.max(
+            model
+                .resources
+                .ram_bytes
+                .ok_or("All models need RAM estimates.")?,
+        );
+        vram = vram.max(
+            model
+                .resources
+                .vram_bytes
+                .ok_or("All models need VRAM estimates.")?,
+        );
+        assigned.push((agent.identity.id, step));
     }
-    let memory_limit = |draft: Option<u64>, review: Option<u64>| Some(draft?.max(review?));
+    let workflow = plan(assigned);
+    workflow.validate().map_err(|error| error.to_string())?;
     let native = provider.kind == ProviderKind::Ollama;
     let mut config = roster.config().clone();
     config.resources = ResourceBudget {
-        ram_bytes: memory_limit(draft.resources.ram_bytes, review.resources.ram_bytes)
-            .ok_or("Both models need RAM estimates.")?,
-        vram_bytes: memory_limit(draft.resources.vram_bytes, review.resources.vram_bytes)
-            .ok_or("Both models need VRAM estimates.")?,
+        ram_bytes: ram,
+        vram_bytes: vram,
         ..ResourceBudget::default()
     };
     config.scheduling.local_host_limits = true;
     config.scheduling.keep_alive_seconds = native.then_some(60);
-    let workflow = plan(coordinator.identity.id, reviewer.identity.id, request);
     let runtime = VesperaRuntime::from_config_for_workflow_with_suspensions(
         &config, &workflow, false, &suspended,
     )
@@ -154,29 +166,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn authored_workflow_assigns_distinct_agents_and_fences_review_on_the_draft() {
+    fn authored_workflow_fences_each_assignee_on_the_previous_step() {
         let coordinator = AgentId::new();
         let reviewer = AgentId::new();
-        let workflow = plan(
-            coordinator,
-            reviewer,
-            WorkflowRequest {
-                coordinator: 0,
-                reviewer: 1,
-                draft_prompt: "Draft a sentence.".into(),
-                review_prompt: "Shorten the draft.".into(),
-            },
-        );
+        let step = |name: &str, agent, prompt: &str| StepRequest {
+            name: name.into(),
+            agent,
+            prompt: prompt.into(),
+        };
+        let workflow = plan(vec![
+            (coordinator, step("draft", 0, "Draft a sentence.")),
+            (reviewer, step("review", 1, "Shorten the draft.")),
+            (coordinator, step("final", 0, "Return the shortened draft.")),
+        ]);
         workflow.validate().unwrap();
         assert_eq!(workflow.steps[0].candidates, [coordinator]);
         assert_eq!(workflow.steps[1].candidates, [reviewer]);
         assert_eq!(workflow.steps[1].dependencies, ["draft"]);
+        assert_eq!(workflow.steps[2].candidates, [coordinator]);
+        assert_eq!(workflow.steps[2].dependencies, ["review"]);
         assert_eq!(
             workflow.output,
             OutputPolicy::Step {
-                step: "review".into()
+                step: "final".into()
             }
         );
-        assert_eq!(workflow.max_total_attempts, 2);
+        assert_eq!(workflow.max_total_attempts, 3);
+        assert_eq!(workflow.max_total_output_tokens, 384);
+        assert_eq!(workflow.timeout_ms, 150_000);
     }
 }

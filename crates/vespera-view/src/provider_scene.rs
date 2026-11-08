@@ -17,7 +17,7 @@ use vespera_providers::{
 
 use crate::atlas::{self, Layer, Layers};
 use crate::desktop_agent::{self, FinishedTask, Registration, Roster};
-use crate::desktop_workflow::{self, FinishedWorkflow, WorkflowRequest};
+use crate::desktop_workflow::{self, FinishedWorkflow, MAX_CHAIN_STEPS, StepRequest};
 use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
@@ -47,6 +47,7 @@ enum Action {
     Suspend,
     Resume,
     Workflow,
+    Chain,
 }
 
 #[derive(Component)]
@@ -74,6 +75,15 @@ enum Edit {
         fields: [String; 3],
         index: usize,
     },
+    Chain(ChainDraft),
+}
+
+#[derive(Default)]
+struct ChainDraft {
+    count: Option<usize>,
+    steps: Vec<StepRequest>,
+    assignee: Option<usize>,
+    input: String,
 }
 
 enum Work {
@@ -194,7 +204,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  Esc  Cancel  |  F5  Home"),
+                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  C  Build workflow  |  Esc  Cancel  |  F5  Home"),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -243,6 +253,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Previous, "Previous page"),
                         button(Action::Next, "Next page"),
                         button(Action::Prompt, "Run agent task"),
+                        button(Action::Chain, "Build workflow"),
                         button(Action::Cancel, "Cancel work"),
                     ]
                 ),
@@ -326,20 +337,23 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Cancel => {}
-        Action::Workflow => {
+        Action::Workflow | Action::Chain => {
             let Some(roster) = &panel.roster else {
                 return;
             };
-            if roster.len() < 2 {
+            if matches!(action, Action::Workflow) && roster.len() < 2 {
                 panel.feedback = "Create two agents before starting a workflow.".into();
             } else if roster
                 .selection(panel.selected)
                 .is_some_and(|(agent, _, _)| agent.permissions.contains(&Permission::Delegate))
             {
                 panel.feedback.clear();
-                panel.draft = Some(Edit::Workflow {
-                    fields: Default::default(),
-                    index: 0,
+                panel.draft = Some(match action {
+                    Action::Workflow => Edit::Workflow {
+                        fields: Default::default(),
+                        index: 0,
+                    },
+                    _ => Edit::Chain(ChainDraft::default()),
                 });
             } else {
                 panel.feedback = "Allow delegation for the selected coordinator first.".into();
@@ -509,6 +523,8 @@ fn keyboard(
                     apply(Action::Prompt, &mut panel);
                 } else if event.key_code == KeyCode::KeyG {
                     apply(Action::Workflow, &mut panel);
+                } else if event.key_code == KeyCode::KeyC {
+                    apply(Action::Chain, &mut panel);
                 } else if let Some(index) = [
                     KeyCode::Digit1,
                     KeyCode::Digit2,
@@ -665,6 +681,11 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
         Edit::Prompt(value) => (value, 1200, |c| !c.is_control()),
         Edit::Workflow { fields, index: 0 } => (&mut fields[0], 2, |c| c.is_ascii_digit()),
         Edit::Workflow { fields, index } => (&mut fields[*index], 1200, |c| !c.is_control()),
+        Edit::Chain(draft) if draft.count == Some(draft.steps.len()) => return,
+        Edit::Chain(draft) if draft.assignee.is_none() => {
+            (&mut draft.input, 2, |c| c.is_ascii_digit())
+        }
+        Edit::Chain(draft) => (&mut draft.input, 1200, |c| !c.is_control()),
     };
     match event.key_code {
         KeyCode::Backspace => {
@@ -789,11 +810,12 @@ fn submit(panel: &mut Panel) {
             }
         }
         Edit::Workflow { fields, index } => submit_workflow(panel, fields, index),
+        Edit::Chain(draft) => submit_chain(panel, draft),
     }
 }
 
 fn submit_workflow(panel: &mut Panel, fields: [String; 3], mut index: usize) {
-    let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
+    let Some(roster) = &panel.roster else {
         return;
     };
     let reviewer = fields[0]
@@ -817,24 +839,90 @@ fn submit_workflow(panel: &mut Panel, fields: [String; 3], mut index: usize) {
         return;
     }
     let [_, draft_prompt, review_prompt] = fields;
-    let request = WorkflowRequest {
-        coordinator: panel.selected,
-        reviewer: reviewer.expect("validated reviewer index"),
-        draft_prompt,
-        review_prompt,
+    start_workflow(
+        panel,
+        vec![
+            StepRequest {
+                name: "draft".into(),
+                agent: panel.selected,
+                prompt: draft_prompt,
+            },
+            StepRequest {
+                name: "review".into(),
+                agent: reviewer.expect("validated reviewer index"),
+                prompt: review_prompt,
+            },
+        ],
+    );
+}
+
+fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
+    let Some(roster) = &panel.roster else {
+        return;
+    };
+    if draft.count == Some(draft.steps.len()) {
+        start_workflow(panel, draft.steps);
+        return;
+    }
+    let error = match (draft.count, draft.assignee) {
+        (None, _) => match draft.input.parse::<usize>() {
+            Ok(count) if (2..=MAX_CHAIN_STEPS).contains(&count) => {
+                draft.count = Some(count);
+                draft.assignee = Some(panel.selected);
+                None
+            }
+            _ => Some("Enter a step count from 2 to 6."),
+        },
+        (Some(_), None) => {
+            let candidate = draft
+                .input
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1));
+            let coordinator_provider = roster
+                .selection(panel.selected)
+                .map(|(_, _, provider)| provider.id);
+            match candidate.and_then(|index| {
+                roster
+                    .selection(index)
+                    .map(|(_, _, provider)| (index, provider.id))
+            }) {
+                Some((index, provider)) if Some(provider) == coordinator_provider => {
+                    draft.assignee = Some(index);
+                    None
+                }
+                _ => Some("Choose a saved agent on the coordinator's provider."),
+            }
+        }
+        (Some(_), Some(agent)) if !draft.input.trim().is_empty() => {
+            draft.steps.push(StepRequest {
+                name: format!("step-{}", draft.steps.len() + 1),
+                agent,
+                prompt: std::mem::take(&mut draft.input),
+            });
+            draft.assignee = None;
+            None
+        }
+        _ => Some("Enter a prompt for this step."),
+    };
+    if error.is_none() {
+        draft.input.clear();
+    }
+    panel.feedback = error.unwrap_or_default().into();
+    panel.draft = Some(Edit::Chain(draft));
+}
+
+fn start_workflow(panel: &mut Panel, steps: Vec<StepRequest>) {
+    let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
+        return;
     };
     let cancel = CancellationToken::new();
     let workflow_cancel = cancel.clone();
     let result = background(move |runtime| {
-        runtime.block_on(desktop_workflow::run(
-            &dir,
-            roster,
-            request,
-            workflow_cancel,
-        ))
+        runtime.block_on(desktop_workflow::run(&dir, roster, steps, workflow_cancel))
     });
     panel.work = Some(Work::Workflow { result, cancel });
-    panel.feedback = "Workflow in progress. Draft runs before the delegated review.".into();
+    panel.feedback = "Workflow in progress. Each step waits for the previous result.".into();
 }
 
 fn background<T: Send + 'static>(
@@ -1014,7 +1102,7 @@ fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> Stri
     if let Some(result) = report.selected_result() {
         let _ = write!(
             summary,
-            "\nReview: {}",
+            "\nResult: {}",
             preview(&result.response.content, 420)
         );
     }
@@ -1150,6 +1238,72 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                         "Enter continues."
                     }
                 );
+            }
+            Edit::Chain(draft) => {
+                if draft.count == Some(draft.steps.len()) {
+                    content.push_str("\nReview this workflow before running it.\n");
+                    for step in &draft.steps {
+                        let owner = panel
+                            .roster
+                            .as_ref()
+                            .and_then(|roster| roster.selection(step.agent))
+                            .map_or("Unknown agent", |(agent, _, _)| {
+                                agent.identity.name.as_str()
+                            });
+                        let _ = writeln!(
+                            content,
+                            "{} | {owner} | {}",
+                            step.name,
+                            preview(&step.prompt, 58)
+                        );
+                    }
+                    content.push_str("Enter runs the workflow. Each step receives the preceding result as untrusted input.");
+                } else if let Some(count) = draft.count {
+                    let _ = writeln!(content, "\nStep {} of {count}", draft.steps.len() + 1);
+                    if let Some(index) = draft.assignee {
+                        let owner = panel
+                            .roster
+                            .as_ref()
+                            .and_then(|roster| roster.selection(index))
+                            .map_or("Unknown agent", |(agent, _, _)| {
+                                agent.identity.name.as_str()
+                            });
+                        let _ = write!(
+                            content,
+                            "Prompt for {owner}: {}_\nEnter continues.",
+                            draft.input
+                        );
+                    } else {
+                        if let Some(roster) = &panel.roster
+                            && let Some((_, _, provider)) = roster.selection(panel.selected)
+                        {
+                            for (index, agent) in roster.config().agents.iter().enumerate() {
+                                if roster
+                                    .selection(index)
+                                    .is_some_and(|(_, _, binding)| binding.id == provider.id)
+                                {
+                                    let _ = write!(
+                                        content,
+                                        "{}. {}   ",
+                                        index + 1,
+                                        agent.identity.name
+                                    );
+                                }
+                            }
+                        }
+                        let _ = write!(
+                            content,
+                            "\nAgent number: {}_\nEnter continues.",
+                            draft.input
+                        );
+                    }
+                } else {
+                    let _ = write!(
+                        content,
+                        "\nNumber of steps (2 to {MAX_CHAIN_STEPS}): {}_\nThe selected coordinator runs the first step. Enter continues.",
+                        draft.input
+                    );
+                }
             }
             Edit::Prompt(prompt) => {
                 let _ = write!(
