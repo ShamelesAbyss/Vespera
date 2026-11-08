@@ -1,6 +1,7 @@
 mod atlas;
 mod machine_scene;
 mod scene;
+mod scene_measurement;
 mod swarm_scene;
 mod task_timeline;
 mod world_scene;
@@ -32,6 +33,9 @@ struct Options {
     /// Switch between configured layers in a single desktop window.
     #[arg(long, conflicts_with_all = ["machine", "swarm_broker"])]
     atlas: bool,
+    /// Print a bounded frame-interval sample for each focused Atlas layer.
+    #[arg(long, requires = "atlas", value_parser = clap::value_parser!(u32).range(60..=3600))]
+    measure_frames: Option<u32>,
     /// Open the local hardware view without a broker or credentials.
     #[arg(long, conflicts_with_all = ["broker", "allow_cancel", "world"])]
     machine: bool,
@@ -192,6 +196,9 @@ fn run_atlas(options: &mut Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     atlas::navigation(&mut app);
+    if let Some(frames) = options.measure_frames {
+        scene_measurement::install(&mut app, frames as usize);
+    }
     app.run();
     Ok(())
 }

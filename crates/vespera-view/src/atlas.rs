@@ -15,7 +15,7 @@ pub(super) enum Layer {
 impl Layer {
     const ALL: [Self; 4] = [Self::Machine, Self::Network, Self::Swarm, Self::World];
 
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::Machine => "Machine",
             Self::Network => "Intelligence Network",

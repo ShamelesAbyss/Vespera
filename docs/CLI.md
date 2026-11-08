@@ -556,6 +556,12 @@ cargo run --locked -p vespera-view --features graphics -- --atlas --broker 127.0
 
 The footer marks the active and unavailable layers. Each configured layer keeps its camera, filter and replay position. A selected worker, Swarm participant or world resident transfers to the destination when the same UUID is visible there. Each layer keeps its selection when the destination has no matching identity.
 
+For a local responsiveness sample, add `--measure-frames <60..3600>` to Atlas. After 120 warm-up updates at the current layer and physical window size, it writes one JSON record to stdout. Changing layers, resizing or losing focus restarts the sample. The report includes the adapter, backend, resolution, requested present mode, update interval percentiles and process resident memory when the OS exposes it. Update intervals measure the time between Bevy application updates. Process resident memory covers the whole view process. GPU frame time, input-to-display latency and GPU memory require separate measurements.
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --atlas --world data/world.sqlite3 --measure-frames 600
+```
+
 Machine shares the selected task's agent UUID with other layers. Switching back from another layer selects a Machine task when exactly one displayed lease belongs to that agent.
 
 The window observes configured sources in the background. Leaving World pauses window-driven playback, and leaving Intelligence Network dismisses any cancellation confirmation that has yet to be sent. Controls are read-only by default. Use `--allow-cancel` with `--broker` or `--allow-world-control` with `--world` to enable the corresponding live controls. `--world-revision` opens the World layer at a retained revision with read-only controls.
