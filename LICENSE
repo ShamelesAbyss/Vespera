@@ -1,23 +1,23 @@
 Vespera Proprietary Freeware License v1.0
-PROVISIONAL DRAFT — PENDING OWNER AND LEGAL APPROVAL
+OWNER-APPROVED PROJECT LICENSING POLICY
 
-Proposed copyright notice: Copyright © 2026 Christopher Dodd, solely
-for original Vespera material that he owns. Other rights holders retain
-their respective rights. Ownership and authority to license remain
-subject to confirmation.
+Copyright © 2026 Christopher Dodd, solely for original Vespera
+material he owns. Third-party contributors and dependency authors
+retain their respective rights.
 
 Status and scope
 
-This draft describes the intended terms for official Vespera software.
-It takes effect only if the authorized rights holders approve it and
-expressly apply it to an official release. Posting this draft or making
-source visible grants no additional permission and authorizes no public
-distribution. Existing separate licenses and statutory rights continue
-to apply.
+Christopher Dodd approved version 1.0 as Vespera's software licensing
+policy. It applies to authorized official copies expressly released
+under these terms. Making source visible grants no additional
+permission to use, modify, or distribute that source. Existing
+separate licenses and statutory rights continue to apply. Owner
+approval records adoption of this policy. Independent attorney review
+or certification is not claimed.
 
 1. Permitted use
 
-Under the approved terms, you may download an authorized official copy
+Under these terms, you may download an authorized official copy
 free of charge, install and run it, and make a reasonable backup for
 your own use. Personal, educational, research, and commercial use are
 permitted, including using Vespera in a business and building and
@@ -81,3 +81,25 @@ data, profits, or business arising from use of or inability to use the
 software. Nothing here excludes or limits liability, remedies, or
 consumer protections that applicable law does not allow to be excluded
 or limited.
+
+8. User-Controlled Artificial Intelligence and Third-Party Models
+
+Vespera is a general-purpose, local-first platform for AI orchestration
+and simulation. You independently choose, install, configure, and
+operate the AI models you connect, including unrestricted or uncensored
+third-party models. Vespera does not require model-level content
+filtering or endorse, certify, supervise, or guarantee the behavior of
+third-party models.
+
+You are responsible for the models you select, the tools and
+permissions you enable, the workflows and actions you authorize, and
+the outputs generated in your deployment. You are responsible for
+complying with applicable laws and third-party terms. The developer
+does not assume responsibility for independently selected models or
+user-directed activities solely because Vespera facilitates their
+execution.
+
+The warranty disclaimers and limitations of liability in Section 7
+apply to these activities to the maximum extent permitted by applicable
+law. Nothing in this section excludes non-waivable legal obligations
+or grants immunity for the developer's own unlawful conduct.

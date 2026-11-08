@@ -1,6 +1,6 @@
 # Local release validation
 
-Vespera has an internal release candidate workflow. Public distribution requires rights-holder and legal approval of the provisional Proprietary Freeware License v1.0, artifact-specific third-party notice review, and Windows signing. The draft does not authorize release. Keep the provisional license and third-party notices with internal packages. [Provisional license](../LICENSE) · [Third-party notices](../THIRD_PARTY_NOTICES.md)
+Vespera has an internal release candidate workflow. Christopher Dodd approved the Proprietary Freeware License v1.0 as the project's software licensing policy. Public distribution still requires independent legal review, third-party rights verification, artifact-specific notices, and Windows signing. Keep the owner-approved license and third-party notices with internal packages. [License](../LICENSE) · [Third-party notices](../THIRD_PARTY_NOTICES.md)
 
 ## Build and stage
 
@@ -99,7 +99,7 @@ The Windows runner installed a per-user MSI fixture at `0.1.0`, upgraded to `0.1
 
 The final optimized archive opened all four Atlas views. At 1200×800 on an RTX 4070 Laptop GPU with Vulkan and FIFO presentation, p95 application update intervals were 7.81 ms for Machine, 7.50 ms for Intelligence Network, 7.32 ms for Swarm, and 7.35 ms for Living World. Each sample used 120 focused updates after 120 warmup updates. Living World committed revision 97, displayed revision 96 in replay, and reopened the live revision through the packaged CLI. These measurements cover steady views on one adapter.
 
-The Windows walkthrough also covered local model discovery and registration, a live Ollama task, delegated workflow execution, and retained workflow history. Additional graphics environments, deployment between separate physical hosts, signing, approval of the provisional license, and artifact-specific distribution notices remain release gates. [Development log](DEVELOPMENT_LOG.md)
+The Windows walkthrough also covered local model discovery and registration, a live Ollama task, delegated workflow execution, and retained workflow history. Additional graphics environments, deployment between separate physical hosts, signing, independent legal review, and artifact-specific distribution notices remain release gates. [Development log](DEVELOPMENT_LOG.md)
 
 ### Linux desktop validation
 

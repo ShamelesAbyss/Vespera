@@ -12,7 +12,7 @@
   <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.99.1-7357D9?logo=rust" alt="Rust 1.99.1"></a>
   <a href="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml"><img src="https://github.com/ShamelesAbyss/Vespera/actions/workflows/ci.yml/badge.svg?branch=main" alt="Rust foundation CI"></a>
   <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/desktop-Windows%20verified-2563A5" alt="Windows desktop verified"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-proprietary%20freeware%20draft-654A87" alt="Provisional proprietary freeware license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-proprietary%20freeware%20v1.0-654A87" alt="Vespera Proprietary Freeware License v1.0"></a>
 </p>
 
 <p align="center">
@@ -349,10 +349,16 @@ The rebuilt Living World was exercised from Home and Atlas on Windows. At 1200×
 | --- | --- |
 | **Desktop and Atlas** | Broader workflow authoring, OS-backed credential management, and persistent settings |
 | **Hardware and interoperability** | Broader GPU and operating-system coverage, independent-machine TLS validation, and wider provider qualification |
-| **Release** | Signing, a supported production installer toolchain, macOS packaging, and approval of the provisional license and distribution notices |
+| **Release** | Legal review for public distribution, third-party rights and notices, signing, a supported production installer toolchain, and macOS packaging |
 
 [Milestone ledger](docs/MILESTONE_LEDGER.md) · [Roadmap](docs/ROADMAP.md) · [Verified checkpoints](docs/DEVELOPMENT_LOG.md)
 
 For contributions, start with the architecture and relevant contract, preserve the headless and native entry points, and include scoped validation evidence. Keep credentials, private TOML, model outputs and user databases out of commits. Development lands on `main`. The original baseline is retained on [old-dead-code](https://github.com/ShamelesAbyss/Vespera/tree/old-dead-code).
 
-**License.** The provisional Vespera Proprietary Freeware License v1.0 proposes free personal, educational, research, and commercial use of official builds, including monetizing independent projects and integrations. Users retain their rights in their data and work. The draft reserves redistribution and modification rights for Vespera itself, subject to applicable law and separate component licenses. The proposed terms require owner and legal approval before they apply to an official release. [Provisional license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release scope](docs/RELEASE.md)
+**License.** Christopher Dodd approved the Vespera Proprietary Freeware License v1.0 as the project’s software licensing policy. It permits free personal, educational, research, and commercial use of authorized official builds released under its terms, including monetizing independent projects and integrations. Users retain their rights in their data and work. Vespera’s modification and redistribution rights remain reserved, subject to applicable law and separate component licenses. Public distribution remains subject to the release gates. [License](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release scope](docs/RELEASE.md)
+
+### User-Controlled AI and Responsibility
+
+Vespera is a general-purpose, local-first AI orchestration and simulation platform. Users choose, install, configure, and operate their models, including unrestricted third-party models, and control the tools, permissions, and workflows they authorize.
+
+Vespera does not require model-level content filtering or endorse the behavior of connected models. Users are responsible for their deployments, authorized actions, generated outputs, and compliance with applicable law and third-party terms. The license sets out the applicable warranties and liability limits and preserves non-waivable legal obligations. [Vespera Proprietary Freeware License v1.0](LICENSE)
