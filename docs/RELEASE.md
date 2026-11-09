@@ -189,6 +189,23 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Windows x64 candidate with workflow recovery
+
+The unsigned `0.1.2` candidate from `8adfe1c5acafe4a5770e94adab6e57005dc0daac` passed verification of 49 portable manifest files, 13 administrative MSI payload files, and the exact MSI embedded in Setup. Windows reports both installer files as unsigned.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `72e230862ff9f25ddfee841b4ae067724007d2a758ac548eb55b0f950aa51da6` |
+| Standalone MSI | `1f13692e44bb40e5859c178f462f14b3a76d66acf0f507f3f889eba08c997ede` |
+| Setup EXE | `1ae203a54b923807f27400bd2326baba7748eb8274b17eac8305a92af0e46092` |
+| Internal review bundle | `b39396e7d70c39aecfd05b17252e1140b73c770b5b5011e414ebde7cec8dbcf9` |
+
+The extracted launcher started from a different working directory. The saved Living World survived a clean restart byte for byte. The extracted viewer also recovered a two-agent workflow after a process interruption against a controlled provider fixture. The workflow retained its ID and first committed attempt and issued only the remaining request. The native compact-window acceptance build covered scroll input and controls separately.
+
+The packaged viewer rendered Machine, Intelligence Network, Swarm and Living World. Intelligence Network correlated an authenticated broker attempt with an admitted local Ollama task. The task completed with 1,200 reported output tokens and the runtime drained. The 1200×800 Vulkan walkthrough recorded a 7.50 ms p95 update interval across 600 Network updates after 120 warmup updates on an RTX 4070 Laptop GPU. The Swarm branch-and-join capture used a labeled fixture journal.
+
+The refreshed CycloneDX 1.6 SBOM passed schema validation. The OSV query found zero matches for the 429 exact crates.io versions queried. The internal review bundle contains the inventory, compliance review and retained notices. The hosted installer lifecycle below applies to the specific older revisions it names.
+
 ### Windows x64 candidate with desktop agent memory
 
 The unsigned `0.1.2` candidate from `146dfb04ebe8f2912597400d24c32c4fbfd0b166` passed verification of 49 portable manifest files, 13 administrative MSI payload files and the exact MSI embedded in Setup. Windows reports both installers as unsigned.

@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Qualify the unsigned workflow recovery package
+
+Source checkpoint `8adfe1c5acafe4a5770e94adab6e57005dc0daac` produced the verified Windows x64 portable, MSI and Setup payloads. The extracted launcher preserved the Living World across restart, and the extracted viewer continued an interrupted workflow from its committed prefix against a controlled provider fixture. All four Atlas modes rendered. Intelligence Network showed a signed broker attempt matched to live Ollama scheduler evidence before the 1,200-output-token task completed and drained. The candidate has a refreshed CycloneDX SBOM, an exact-version OSV lookup and an internal compliance review bundle. [Package checksums and evidence](RELEASE.md#windows-x64-candidate-with-workflow-recovery)
+
 ## Milestones 3 and 12 — Qualify standalone llama.cpp on Windows
 
 The official llama.cpp Windows CPU archive for build `b12230` matched SHA-256 `a787fb94d48e6d93aa5809133f5f984360a5713b20d2f9ee1ccc4b22cd9cce56`. Its version output identified commit `a4d4f2fd4`. The local server used an already installed Gemma 4 12B Q4_K_S GGUF, a 1,024-token context and CPU inference. The live OpenAI-compatible smoke test passed discovery, bounded chat, two streamed text chunks, a terminal stream event and local cancellation. The CLI separately completed a durable agent task with 20 reported completion tokens. The Windows viewer from `8210064` discovered the alias, registered an agent and persisted a completed response in an isolated profile. The desktop first rejected an estimate above available host RAM. The successful run used a 1 GiB incremental RAM estimate for requests against the already loaded server. [Provider setup and scope](PROVIDERS.md#standalone-llamacpp)
