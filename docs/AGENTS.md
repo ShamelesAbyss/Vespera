@@ -106,11 +106,14 @@ unknown. A completed inference does not certify that generated claims are correc
 or that a broader objective was achieved. Length-limited output retains its
 reported finish reason.
 
-Only the task prompt is currently supplied as a user message. Personality, goals
-and stored memory are not automatically injected. Output is returned to the
-caller, not automatically stored as memory or executed as actions. Persistent
-result history, bounded memory context assembly, tool execution and autonomous
-multi-step behavior remain integration work.
+By default, execution supplies the task prompt as a user message. Personality
+and goals are not automatically injected. Explicit authorized memory context
+can precede the prompt, and opt-in CLI memory options can retain an accepted
+response with task provenance. Durable task history preserves accepted results
+when a task store is configured. See [inference memory options](CLI.md#opt-in-memory-during-inference)
+and [task history](#durable-task-ownership). Bounded multi-step planning is
+implemented through the orchestrator; arbitrary tool execution and an open-ended
+autonomous loop are not implemented.
 
 ## Cancellation, failure and ownership
 
@@ -148,9 +151,9 @@ check the corresponding grant. The `world decide` command requires
 revision-fenced world action. There is no tool executor or OS sandbox in this runtime.
 
 These Rust library methods assume a trusted caller supplies the correct actor ID.
-They are not a remotely authenticated principal boundary. Future API/external
-agent composition must derive actor identity from authenticated authority, never
-accept an arbitrary agent UUID as proof of identity. Provider network authorization
+They are not a remotely authenticated principal boundary. The separate [worker broker](PROTOCOL.md#implemented-loopback-worker-api)
+derives authority from signed operator or worker requests and fenced leases;
+an arbitrary agent UUID is not proof of identity. Provider network authorization
 is operator configuration, not authority conferred by model text.
 
 ## Memory and communication limits
@@ -170,9 +173,9 @@ tasks are charged once when later dispatched. Memory IDs cannot be reused across
 namespaces. A memory task source must be a known task assigned to that owner;
 a message task correlation must belong to its sender or recipient. A valid
 reference does not certify the generated content or imply task completion.
-No pruning/retention worker is implemented yet. Durable isolated storage remains
-required work. See
-[MEMORY.md](MEMORY.md) and [ROADMAP.md](ROADMAP.md).
+No automatic pruning worker is implemented. Explicit durable isolated storage,
+retrieval, consolidation and deletion are available through the separate
+[memory store](MEMORY.md); these in-process buffers are not automatically migrated.
 
 ## Verification
 
@@ -190,6 +193,6 @@ particular installed model/server. See [CLI.md](CLI.md) for actual operation.
 
 Managed execution validates the selected model name, input and output/context bounds before scheduler admission can load a model. Accepted invalid requests become failed history records with no load/reservation. Scheduler request admission fences the validated native name and pins context; current inventory and resource limits are rechecked before lifecycle I/O. Manual preparation remains a lower-level trusted API.
 
-The [orchestrator library](ORCHESTRATION.md) now drives actual authorized dependent workflows. It preserves failure states, never implicitly resumes failed/suspended candidates and uses a synchronous owner-checked queued-task cancellation operation for drop cleanup. CLI workflow submission is integrated; autonomous planning remains pending.
+The [orchestrator library](ORCHESTRATION.md) now drives actual authorized dependent workflows. It preserves failure states, never implicitly resumes failed/suspended candidates and uses a synchronous owner-checked queued-task cancellation operation for drop cleanup. CLI workflow submission and [bounded automatic decomposition](ORCHESTRATION.md#automatic-decomposition) are integrated. A generated plan must pass validation against the authorized roster and bounds before execution.
 
 Explicit durable stores can use `memory_authorizer()` to consult current agent grants and accepted task assignments. The storage adapter never assigns ownership to a model/provider; a regression rebinds a model and reopens both namespaces under a fresh runtime. Existing `write_memory`/`read_memory` buffers remain separate and are not automatically persisted. See [MEMORY.md](MEMORY.md).
