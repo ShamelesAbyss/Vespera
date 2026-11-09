@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-08 — Failed workflow branches preserve partial history
+
+Checkpoint `0a359c882350fbbaef075c4797b99092b2d40d51` adds a real HTTP adapter regression for a failed branch in a four-step dependency graph. The seed and left branch complete, the right branch returns HTTP 500, and no join request or attempt is created. Reopening the SQLite workflow store preserves both successful task states, the failed branch, the original join dependencies and a terminal failed root rather than an interrupted or successful result.
+
+All 15 workflow integration tests and strict workflow-test Clippy passed on Windows and Ubuntu WSL2. Formatting and diff checks passed. Hosted CI also completed successfully for the package verifier source ([run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42570085336)), including its new Linux and Windows regression steps. Native graphical branch authoring remains unverified because of the recorded computer-use initialization failure; this test does not close that gate.
 ## 2026-11-08 — Live desktop branch/join and independent checkpoint read
 
 Checkpoint `dc0b42ded70421a55a9001402d95e8b32e068de3` adds a documented opt-in rehearsal of the desktop workflow execution path. A fresh scratch directory received only a copy of the earlier test roster. The first attempt correctly failed provider reconciliation because Ollama was stopped. After starting the installed local Ollama 0.40.15 server, four steps completed in 41.43 seconds including preparation and cleanup. The run reopened its saved plan, confirmed seed-to-left/right and left/right-to-join dependencies, and replayed durable event evidence. Strict graphics Clippy and formatting passed.
