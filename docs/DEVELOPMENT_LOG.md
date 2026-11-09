@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 10 — Broker live-feed capacity isolation
+
+The signed event service reserves two operator streams and six worker streams, with at most two streams per worker. Closing a stream releases both its pool and worker permits. Windows tests verified that saturating one worker leaves a second worker and the operator able to receive ready frames, that ordinary HTTP remains available, and that a full worker pool cannot consume operator slots. The 13 worker HTTP integration tests, 13 API and SDK unit tests, SDK doctest, formatting, and strict Clippy passed.
+
 ## Windows visual acceptance for Swarm and Intelligence Network
 
 Intelligence Network reuses the Foundry's UUID-derived worker geometry. A separate beacon describes retained broker task evidence and dims when the broker is unavailable. During live Atlas operation, model and provider identifiers appear only when a current scheduler lease matches both the running broker task and its assigned worker. The Windows walkthrough verified a matching native Ollama run, a broker deadline failure, disconnection, and replay of a retained claim. It also switched through all four Atlas views in one window.

@@ -248,7 +248,7 @@ impl Server {
     pub async fn serve(self) -> Result<(), ServerError> {
         let mut connections = JoinSet::new();
         let mut peer_slots = BTreeMap::new();
-        let live_slots = Arc::new(Semaphore::new(8));
+        let live_slots = Arc::new(subscription::Slots::new());
         let changed = Arc::new(Notify::new());
         loop {
             tokio::select! {
@@ -288,7 +288,7 @@ impl Server {
 async fn serve_peer(
     stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
     state: &Mutex<Service>,
-    slots: &Arc<Semaphore>,
+    slots: &subscription::Slots,
     changed: &Notify,
 ) {
     let (upgrade_tx, mut upgrade_rx) = mpsc::channel(1);
@@ -368,7 +368,7 @@ enum WorkerRequest {
 async fn dispatch(
     state: &Mutex<Service>,
     request: Request<Incoming>,
-    slots: &Arc<Semaphore>,
+    slots: &subscription::Slots,
     changed: &Notify,
     upgrade: &mpsc::Sender<subscription::Subscription>,
 ) -> Result<Reply, Infallible> {

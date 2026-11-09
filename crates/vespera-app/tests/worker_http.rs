@@ -1454,19 +1454,34 @@ async fn websocket_delivers_scoped_events_resumes_and_observes_revocation() {
 }
 
 #[tokio::test]
-async fn subscription_quota_keeps_http_actions_available() {
+async fn subscription_quota_preserves_other_workers_and_the_operator() {
     let first = AgentId::new();
     let second = AgentId::new();
     let (_process, base) = launch(first, second);
     let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
     let worker = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let other = WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
     let mut subscriptions = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..2 {
         subscriptions.push(worker.subscribe(None).await.unwrap());
     }
     assert!(matches!(
         worker.subscribe(None).await,
-        Err(ClientError::Rejected { status: 503, .. })
+        Err(ClientError::Rejected {
+            status: 503,
+            code: Some(ErrorCode::SubscriptionCapacity)
+        })
+    ));
+    let mut other_feed = other.subscribe(None).await.unwrap();
+    let mut operator_feed = operator.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut other_feed).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    assert!(matches!(
+        live_frame(&mut operator_feed).await,
+        BrokerStreamFrame::Ready { .. }
     ));
     assert!(worker.claim().await.unwrap().is_none());
     drop(subscriptions.pop());

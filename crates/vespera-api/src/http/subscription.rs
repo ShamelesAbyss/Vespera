@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex as SlotMutex, Weak};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -24,12 +25,63 @@ const LIFETIME: Duration = Duration::from_secs(60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const INVALID_CURSOR: HttpError = HttpError(StatusCode::BAD_REQUEST, "invalid_cursor");
+const CAPACITY: HttpError = HttpError(StatusCode::SERVICE_UNAVAILABLE, "subscription_capacity");
 
 type Socket = WebSocketStream<TokioIo<Upgraded>>;
 
+pub(super) struct Slots {
+    operator: Arc<Semaphore>,
+    workers: Arc<Semaphore>,
+    by_worker: SlotMutex<BTreeMap<AgentId, Weak<Semaphore>>>,
+}
+
+impl Slots {
+    pub(super) fn new() -> Self {
+        Self {
+            operator: Arc::new(Semaphore::new(2)),
+            workers: Arc::new(Semaphore::new(6)),
+            by_worker: SlotMutex::default(),
+        }
+    }
+
+    fn acquire(&self, worker: Option<AgentId>) -> Result<StreamPermit, HttpError> {
+        let Some(worker) = worker else {
+            return Ok(StreamPermit {
+                _pool: Arc::clone(&self.operator)
+                    .try_acquire_owned()
+                    .map_err(|_| CAPACITY)?,
+                _worker: None,
+            });
+        };
+        let pool = Arc::clone(&self.workers)
+            .try_acquire_owned()
+            .map_err(|_| CAPACITY)?;
+        let mut workers = self
+            .by_worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        workers.retain(|_, slots| slots.strong_count() > 0);
+        let entry = workers.entry(worker).or_default();
+        let limit = entry.upgrade().unwrap_or_else(|| {
+            let limit = Arc::new(Semaphore::new(2));
+            *entry = Arc::downgrade(&limit);
+            limit
+        });
+        Ok(StreamPermit {
+            _pool: pool,
+            _worker: Some(limit.try_acquire_owned().map_err(|_| CAPACITY)?),
+        })
+    }
+}
+
+struct StreamPermit {
+    _pool: OwnedSemaphorePermit,
+    _worker: Option<OwnedSemaphorePermit>,
+}
+
 pub(super) struct Subscription {
     upgrade: OnUpgrade,
-    _slot: OwnedSemaphorePermit,
+    _slot: StreamPermit,
     worker: Option<AgentId>,
     cursor: BrokerEventCursor,
     discarded_through: u64,
@@ -38,7 +90,7 @@ pub(super) struct Subscription {
 pub(super) async fn open(
     state: &Mutex<Service>,
     mut request: Request<Incoming>,
-    slots: &Arc<Semaphore>,
+    slots: &Slots,
     sender: &mpsc::Sender<Subscription>,
 ) -> Result<Reply, HttpError> {
     if request.method() != Method::GET {
@@ -64,9 +116,7 @@ pub(super) async fn open(
     };
     let mut service = state.lock().await;
     service.auth.verify_upgrade(proof, target)?;
-    let slot = Arc::clone(slots)
-        .try_acquire_owned()
-        .map_err(|_| HttpError(StatusCode::SERVICE_UNAVAILABLE, "subscription_capacity"))?;
+    let slot = slots.acquire(worker)?;
     let initial = replay(&mut service, worker, after)?;
     let cursor = after.unwrap_or(BrokerEventCursor {
         stream_id: initial.next_cursor.stream_id,
@@ -80,7 +130,7 @@ pub(super) async fn open(
             cursor,
             discarded_through: initial.discarded_through,
         })
-        .map_err(|_| HttpError(StatusCode::SERVICE_UNAVAILABLE, "subscription_capacity"))?;
+        .map_err(|_| CAPACITY)?;
     Ok(response)
 }
 
@@ -201,4 +251,38 @@ async fn send(socket: &mut Socket, frame: &BrokerStreamFrame) -> bool {
         timeout(WRITE_TIMEOUT, socket.send(Message::Text(text.into()))).await,
         Ok(Ok(()))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_worker_pool_preserves_operator_slots() {
+        let slots = Slots::new();
+        let mut permits = Vec::new();
+        for worker in [AgentId::new(), AgentId::new(), AgentId::new()] {
+            for _ in 0..2 {
+                permits.push(
+                    slots
+                        .acquire(Some(worker))
+                        .unwrap_or_else(|_| panic!("worker slot unavailable")),
+                );
+            }
+        }
+        let additional = AgentId::new();
+        assert!(slots.acquire(Some(additional)).is_err());
+        let operator = slots
+            .acquire(None)
+            .unwrap_or_else(|_| panic!("reserved operator slot unavailable"));
+        let second_operator = slots
+            .acquire(None)
+            .unwrap_or_else(|_| panic!("second operator slot unavailable"));
+        assert!(slots.acquire(None).is_err());
+        drop(permits.pop());
+        assert!(slots.acquire(Some(additional)).is_ok());
+        drop(operator);
+        assert!(slots.acquire(None).is_ok());
+        drop(second_operator);
+    }
 }
