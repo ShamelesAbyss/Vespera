@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Pin CI action revisions
+
+The Linux and Windows jobs use full commit SHAs for checkout and Rust toolchain setup. The pins match the then-current upstream `v4` and `master` refs. Both upstream action manifests resolved at those revisions, all six references passed a full-SHA check, and the workflow diff changes only action references.
+
 ## Milestone 14 — Safe CLI rendering of provider text
 
 Human-readable agent and workflow output escapes terminal control characters from providers. Memory output applies the same rule when displaying persisted content. Line feeds, tabs and ordinary Unicode remain readable. JSON values and stored content are preserved. The control-character regression, all 95 default app tests and strict app Clippy passed on Windows. The separate Windows credential and non-loopback TLS rehearsals are opt-in.
