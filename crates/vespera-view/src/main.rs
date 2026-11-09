@@ -15,8 +15,9 @@ mod workflow_history_scene;
 mod world_art;
 mod world_scene;
 
+use std::io::Read;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -37,6 +38,9 @@ struct Options {
     /// Signed broker address. Standalone broker views default to 127.0.0.1:8765.
     #[arg(long)]
     broker: Option<SocketAddr>,
+    /// Trust this PEM certificate bundle and require TLS for the explicit broker.
+    #[arg(long, requires = "broker")]
+    broker_tls_ca: Option<PathBuf>,
     #[arg(long)]
     allow_cancel: bool,
     /// Disable animated camera focus and task lane transitions.
@@ -146,7 +150,7 @@ fn main() -> ExitCode {
     let address = options
         .broker
         .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 8765)));
-    let (receiver, control) = match start_broker(address, None) {
+    let (receiver, control) = match start_broker(address, options.broker_tls_ca.as_deref(), None) {
         Ok(channels) => channels,
         Err(error) => {
             eprintln!("{error}");
@@ -237,7 +241,7 @@ fn run_atlas(options: &mut Options) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             (None, None)
         };
-        let (updates, control) = start_broker(address, mirror)?;
+        let (updates, control) = start_broker(address, options.broker_tls_ca.as_deref(), mirror)?;
         scene::install(
             &mut app,
             updates,
@@ -272,11 +276,12 @@ impl Feeds {
 
 fn start_broker(
     address: SocketAddr,
+    roots: Option<&Path>,
     mirror: Option<mpsc::Sender<Update>>,
 ) -> Result<(mpsc::Receiver<Update>, mpsc::Sender<CancelRequest>), Box<dyn std::error::Error>> {
     let key = std::env::var("VESPERA_OPERATOR_TOKEN")
         .map_err(|_| "Set VESPERA_OPERATOR_TOKEN to the broker operator signing key.")?;
-    let client = OperatorClient::new(address, SigningKey::from_hex(&key)?)?;
+    let client = broker_client(address, SigningKey::from_hex(&key)?, roots)?;
     let (primary, observations) = mpsc::channel(64);
     let (control, actions) = mpsc::channel(4);
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -286,6 +291,23 @@ fn start_broker(
         runtime.block_on(observe(client, Feeds { primary, mirror }, actions))
     });
     Ok((observations, control))
+}
+
+fn broker_client(
+    address: SocketAddr,
+    key: SigningKey,
+    roots: Option<&Path>,
+) -> Result<OperatorClient, Box<dyn std::error::Error>> {
+    match roots {
+        Some(path) => {
+            let mut pem = Vec::new();
+            std::fs::File::open(path)?
+                .take(128 * 1024 + 1)
+                .read_to_end(&mut pem)?;
+            Ok(OperatorClient::new_tls(address, key, &pem)?)
+        }
+        None => Ok(OperatorClient::new(address, key)?),
+    }
 }
 
 async fn observe(
@@ -376,6 +398,91 @@ async fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broker_tls_requires_an_explicit_broker_and_preserves_mode_conflicts() {
+        assert!(Options::try_parse_from(["vespera-view", "--broker-tls-ca", "ca.pem"]).is_err());
+        for mode in ["--atlas", "--swarm-broker"] {
+            let options = Options::try_parse_from([
+                "vespera-view",
+                mode,
+                "--broker",
+                "192.0.2.1:8765",
+                "--broker-tls-ca",
+                "ca.pem",
+            ])
+            .unwrap();
+            assert!(!options.opens_home());
+            assert!(options.conflict().is_none());
+        }
+        assert!(
+            Options::try_parse_from([
+                "vespera-view",
+                "--machine",
+                "--broker",
+                "192.0.2.1:8765",
+                "--broker-tls-ca",
+                "ca.pem",
+            ])
+            .is_err()
+        );
+        let key = SigningKey::from_hex(&"42".repeat(32)).unwrap();
+        assert!(broker_client("192.0.2.1:8765".parse().unwrap(), key, None).is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated TLS broker and VESPERA_REHEARSAL_* environment"]
+    async fn desktop_tls_feed_observes_and_cancels_its_own_fixture_task() {
+        let address = std::env::var("VESPERA_REHEARSAL_ENDPOINT")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let roots = PathBuf::from(std::env::var_os("VESPERA_REHEARSAL_CA").unwrap());
+        let key = std::env::var("VESPERA_REHEARSAL_OPERATOR_KEY").unwrap();
+        let client =
+            || broker_client(address, SigningKey::from_hex(&key).unwrap(), Some(&roots)).unwrap();
+        let operator = client();
+        let (primary, mut updates) = mpsc::channel(64);
+        let (actions, receiver) = mpsc::channel(4);
+        let observer = tokio::spawn(observe(
+            client(),
+            Feeds {
+                primary,
+                mirror: None,
+            },
+            receiver,
+        ));
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let Some(Update::Ready { session, .. }) = updates.recv().await else { panic!("TLS feed did not become ready"); };
+            let task = TaskId::new();
+            operator.submit(&vespera_sdk::Submission {
+                task_id: task,
+                prompt: "Desktop TLS transport fixture".into(),
+                required_capabilities: ["text-generation".parse().unwrap()].into(),
+                eligible_workers: [std::env::var("VESPERA_REHEARSAL_FIRST").unwrap().parse().unwrap()].into(),
+                lifetime_seconds: 60,
+                max_attempts: 1,
+            }).await.unwrap();
+            loop {
+                match updates.recv().await {
+                    Some(Update::Observation(entry)) if matches!(entry.event.kind, vespera_core::EventKind::ExternalTaskChanged { task_id, .. } if task_id == task) => break,
+                    Some(Update::Observation(_)) => {},
+                    _ => panic!("feed interrupted before observing the submitted task"),
+                }
+            }
+            actions.send(CancelRequest { task, session }).await.unwrap();
+            loop {
+                match updates.recv().await {
+                    Some(Update::Cancelled(id, TaskState::Cancelled)) if id == task => break,
+                    Some(Update::Observation(_)) => {},
+                    _ => panic!("fixture cancellation failed"),
+                }
+            }
+            assert_eq!(operator.inspect(task).await.unwrap().state, TaskState::Cancelled);
+            drop(updates);
+            observer.await.unwrap();
+        }).await.unwrap();
+    }
 
     #[test]
     fn home_is_the_default_and_explicit_modes_still_select_their_views() {

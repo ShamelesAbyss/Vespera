@@ -104,6 +104,19 @@ cargo test --locked -p vespera-app --test worker_tls_rehearsal -- --ignored --no
 
 The two phases passed with the Windows SDK and an Ubuntu WSL2 broker over the guest's private non-loopback address. Both ran on the same physical host. A separate physical host remains an open deployment gate.
 
+The desktop transport can be rehearsed without opening a graphical window using
+the same isolated broker, endpoint, trust bundle, operator key and first worker
+variables above. This test creates and cancels one uniquely identified fixture
+task through the desktop event-feed loop, then checks the broker's terminal state.
+It does not need the rehearsal checkpoint or worker signing keys in the client.
+
+```sh
+cargo test --locked -p vespera-view --features graphics --bin vespera-view desktop_tls_feed_observes_and_cancels_its_own_fixture_task -- --ignored --nocapture
+```
+
+This path passed from Windows to the WSL2 TLS broker. It verifies transport and
+control integration, not rendered graphics or separate physical-host deployment.
+
 ### Broker event replay
 
 Replay reads a bounded page over the same signed operator or worker endpoint. A worker sees only transitions for its assigned attempts. The operator sees task submissions, all observed task transitions and accepted worker message metadata. Prompts, results and keys stay out of the feed. Task change values are `submitted`, `claimed`, `lease_expired`, `worker_revoked`, `completed`, `cancelled` and `deadline_exceeded`. Expiry is observed during broker operations and replay. An exact completion retry or repeated cancellation returns its existing outcome without adding another event.

@@ -211,7 +211,7 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view -- --m
 cargo run --locked -p vespera-app -- experiment-world --spec config/world.example.json --evidence-dir target/world-policy-evidence --ticks 60 --seeds 3 --suspend-role forager --target-shelters 5
 ```
 
-Use a fresh experiment evidence directory. **F1–F4** select configured Atlas layers. Add `--broker 127.0.0.1:8765` for Intelligence Network with a running broker and privately supplied `VESPERA_OPERATOR_TOKEN`. A local journal can be opened with `--swarm <PATH>`. [Atlas sources](docs/CLI.md#switch-layers-in-atlas) · [Experiment scope](docs/CLI.md#compare-two-world-policies)
+Use a fresh experiment evidence directory. **F1–F4** select configured Atlas layers. Add `--broker 127.0.0.1:8765` for Intelligence Network with a running broker and privately supplied `VESPERA_OPERATOR_TOKEN`. For a TLS broker, add `--broker-tls-ca <PEM>` with an explicit broker IP and port; certificate verification remains required. A local journal can be opened with `--swarm <PATH>`. [Atlas sources](docs/CLI.md#switch-layers-in-atlas) · [Experiment scope](docs/CLI.md#compare-two-world-policies)
 
 </details>
 

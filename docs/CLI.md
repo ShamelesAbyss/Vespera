@@ -738,6 +738,20 @@ The view is read-only by default. In live mode, `--allow-cancel` enables the C c
 
 ### TLS worker transport
 
+Atlas, Intelligence Network and broker-backed Swarm can use the same verified
+TLS transport. Supply an explicit numeric broker address and a PEM trust bundle:
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --atlas --broker "${interfaceIp}:8765" --broker-tls-ca $certificatePath
+```
+
+In a POSIX shell, use `"${interfaceIp}:8765"` and `"$certificatePath"` after setting
+those variables. Keep the operator signing key in `VESPERA_OPERATOR_TOKEN`.
+The bundle is limited to 128 KiB and 16 certificates. Certificate identity must
+match the broker IP. Omitting `--broker-tls-ca` retains loopback-only HTTP;
+TLS failures never fall back to plaintext. The view remains read-only unless
+`--allow-cancel` is supplied. `--swarm-broker` selects the standalone message view.
+
 Use `--tls-cert <chain.pem> --tls-key <key.pem>` together to enable HTTPS and secure WebSockets. Use a PEM chain in leaf-first order and protect the corresponding private key file. A non-loopback address additionally requires `--allow-remote`. For example, with a certificate valid for the configured interface address, run the following command using that address and the paths to your PEM files.
 
 ```powershell
