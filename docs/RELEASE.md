@@ -199,7 +199,9 @@ The unsigned `0.1.2` build from `7defb68` verified 49 manifest files, 13 files f
 | Standalone MSI | `1fbeb0691db7f34ad2110809af8141ca950e35882b41b84d25f2f6d3904b278b` |
 | Setup EXE | `da5c121f8fa92a3916525269219820c7f4abcd63cbf545d1bf8a49c8cc7ac6e2` |
 
-The portable launcher opened the native app from an unrelated working directory. A Living World commit survived a restart byte for byte. The packaged desktop saved discovery from an empty settings file, restored it after restart, discovered models through Ollama, and rejected a remote endpoint. The identity editor reopened the same agent's retained tasks after changing its name and role. The 53 default optimized graphics tests, strict graphics Clippy and formatting passed. The internal SBOM matches the locked inventory and passed CycloneDX schema validation. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42662227600)
+The portable launcher opened the native app from an unrelated working directory. A Living World commit survived a restart byte for byte. The packaged desktop saved discovery from an empty settings file, restored it after restart, discovered models through Ollama, and rejected a remote endpoint. The identity editor reopened the same agent's retained tasks after changing its name and role. The same extraction completed an edited four-step workflow and a new two-step workflow through Ollama. It also repeated the broker database migration and backup rollback against the prior packaged binary.
+
+Windows passed 289 workspace tests and doctests, 53 default optimized graphics tests, formatting, strict workspace and graphics Clippy, and strict workspace rustdoc. The internal SBOM matches the locked inventory and passed CycloneDX schema validation. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42662227600)
 
 All four Atlas views opened from the extraction. Intelligence Network matched a signed broker attempt to the live Ollama scheduler task and worker. The 1200×800 Network sample measured a 7.43 ms p95 update interval across 600 Vulkan updates after 120 warmup updates on an RTX 4070 Laptop GPU.
 
