@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-09 — First Windows x64 release candidate staged
+
+Rebuilt source `f818bb187f1b759b846bd6bb611e3c4f232aafad` from a fresh clone with locked Rust dependencies and WiX 5.0.2. Hosted CI passed. A fresh portable extraction verified 47 manifest entries, administrative MSI extraction matched 13 payload files, and the Setup bundle contained the exact standalone MSI. The unsigned Setup installed `0.1.2` per user. The installed CLI, native launcher, desktop and Start Menu shortcuts, and retained profile hashes passed local checks.
+
+The GitHub `v0.1.2` draft contains the unsigned development artifacts, checksums, and internal review archive. GitHub's upload digests matched local hashes. Immutable releases are enabled for future publication. The review archive contains a schema-validated CycloneDX SBOM, the 429-package third-party Cargo inventory, collected notice texts and a license review queue. The OSV query returned no matches for those exact Cargo versions. The scan does not cover native or installer advisories. Public distribution remains pending independent review, attribution and rights clearance, and trusted Windows signing.
+
 ## 2026-11-09 — Revised Swarm silhouettes under concurrent inference
 
 The Windows debug build at `fa8b26a` rendered the three-agent synthetic journal while isolated Ollama 0.40.15 generated 1,400 tokens with `hermes3:8b` at 2,048 context. The first streamed token arrived at `08:26:12.261Z`. Swarm launched at `08:26:12.424Z` and reported the sample by `08:26:22.114Z`, before the final provider packet at `08:26:49.695Z`. The provider reported 37.440 seconds of evaluation and 4,750,049,279 bytes of fully GPU-resident model allocation. The model was unloaded and the isolated server stopped after the run.
