@@ -25,6 +25,12 @@ bundle as the exact versioned asset in a stable immutable GitHub release.
 An unsigned internal rehearsal is rejected by the updater. Distribution
 review and a production upgrade rehearsal are still required.
 
+For the first deployment, install an approved build containing the updater
+through the standard Setup program. Then test **Check for updates** from that
+baseline against a later software version in an isolated Windows profile.
+Verify the signer and release asset digest after signing. The unsigned bundle
+hash from a rehearsal does not apply to the final signed bytes.
+
 ## Build and stage
 
 Use the pinned Rust toolchain, Git and the platform build tools. Start from a commit with a clean tracked worktree. Run the packager from the workspace root. [Build requirements](../README.md#requirements)
@@ -155,6 +161,32 @@ over 60 focused samples after 120 warmup updates at 1200×800 on the RTX 4070
 Laptop GPU via Vulkan. These are update intervals. Interactive acceptance for
 the remaining Atlas views and workflow authoring, an installation lifecycle for
 these exact artifacts, and signing remain open.
+
+### Swarm and updater Windows x64 packaging rehearsal
+
+Source `14bbca4fd9fd415d7f78ce87d702f79b60b7d652` built offline as optimized
+Windows x64 version `0.1.2`. The fresh portable extraction verified all 47
+manifest entries, including both native Swarm images. WiX 5.0.2 built the MSI
+and Setup. Administrative extraction matched all 13 MSI payloads, and the
+Setup bundle contained the exact standalone MSI.
+
+| Local rehearsal artifact | SHA-256 |
+| --- | --- |
+| `vespera-desktop-14bbca4.zip` | `ED64273F7BFA23BE40BA7D766DEA222195B44F099C9C42D5911DB921C8C372F5` |
+| `vespera-0.1.2.msi` | `B127128145B1A387319342299796814932D5676629F4332003C17F33644DE54C` |
+| `Vespera-Setup-0.1.2.exe` | `60F947F314B642323CCB7F566700BA9B57CA1A10193F80BD06D1E55ED0910706` |
+
+The extracted launcher opened Home from a separate working directory using
+a scratch data location. **Check for updates** reported the empty release
+channel. The extracted Swarm build sampled 600 focused updates after 120 warmup
+updates with the three-agent synthetic journal. At 1200×800 on the RTX 4070
+Laptop GPU via Vulkan, it reported 6.95 ms median, 7.34 ms p95, 7.59 ms p99,
+and 13.25 ms maximum update intervals. This run used the renderer alone.
+
+Windows reports the rehearsal Setup as `NotSigned`. The official latest-release
+endpoint returned 404 during rehearsal, and the local user and machine certificate
+stores had no code-signing certificate. An approved signing route, an immutable
+published release, and a production upgrade rehearsal remain open.
 
 ### Validated Windows x64 candidate
 
