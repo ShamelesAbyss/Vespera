@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-09 — Windows Setup lifecycle in hosted CI
+
+Checkpoint `0d11cad` uses the actual WiX Setup bundle for the successful upgrade and removal phases on a disposable Windows runner. The rehearsal passed initial per-user MSI installation, rollback after an injected MSI failure, Setup upgrade, downgrade rejection, Setup removal, and restore of the previous installation. It verified the saved world's bytes and revision. Local WiX extraction also matched the embedded MSI byte for byte. The bundle was unsigned, and this rehearsal did not exercise Home's download and signature gate against a production release. [Hosted validation](https://github.com/ShamelesAbyss/Vespera/actions/runs/42583645819)
+
 ## 2026-11-09 — Windows installer signing handoff
 
 On source checkpoint `14bbca4`, WiX 5.0.2 detached and reattached the unsigned Burn engine in scratch storage. The reassembled bundle yielded one payload whose SHA-256 matched the previously qualified MSI. Windows still reported `NotSigned`. This verifies the bundle mechanics through extraction, with signed execution and updater handoff still pending. The installed `0.1.0` on the qualification host predates the updater and needs a manual bootstrap once an approved signed build is available. [Release signing sequence](RELEASE.md#sign-the-windows-installer)

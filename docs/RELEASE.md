@@ -110,6 +110,12 @@ Start-Process -FilePath (Resolve-Path target/Vespera-Setup.exe).Path -Wait
 
 Use a higher three-component product version for each MSI upgrade. The `0.1.2` candidate supersedes `0.1.1`. Old-product removal is part of the Windows Installer transaction. Use the same committed candidate for both the MSI and its Setup bundle.
 
+The disposable Windows CI rehearsal upgrades through the actual Setup
+executable, checks downgrade rejection, then removes the candidate through
+Setup and restores the previous MSI. It verifies the saved world's bytes and
+revision after recovery. The rehearsal uses an unsigned bundle and runs
+independently of the production update channel. [Hosted validation](https://github.com/ShamelesAbyss/Vespera/actions/runs/42583645819)
+
 ### Sign the Windows installer
 
 Use a fresh output directory and the approved signing service. If the MSI is
