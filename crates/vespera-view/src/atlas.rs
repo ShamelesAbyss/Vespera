@@ -15,10 +15,11 @@ pub(super) enum Layer {
     Home,
     Providers,
     Workflows,
+    Experiments,
 }
 
 impl Layer {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Machine,
         Self::Network,
         Self::Swarm,
@@ -26,6 +27,7 @@ impl Layer {
         Self::Home,
         Self::Providers,
         Self::Workflows,
+        Self::Experiments,
     ];
 
     pub(super) fn name(self) -> &'static str {
@@ -37,6 +39,7 @@ impl Layer {
             Self::Home => "Home",
             Self::Providers => "Providers",
             Self::Workflows => "Workflows",
+            Self::Experiments => "Experiments",
         }
     }
 }
@@ -205,6 +208,7 @@ fn switch(
             KeyCode::F5,
             KeyCode::F6,
             KeyCode::F7,
+            KeyCode::F8,
         ])
         .find_map(|(layer, key)| {
             (keys.just_pressed(key) && layers.available(layer)).then_some(layer)
@@ -233,7 +237,7 @@ fn switch(
                 Layer::Network => crate::scene::selected_agent(world),
                 Layer::Swarm => crate::swarm_scene::selected_agent(world),
                 Layer::World => crate::world_scene::selected_agent(world),
-                Layer::Home | Layer::Providers | Layer::Workflows => None,
+                Layer::Home | Layer::Providers | Layer::Workflows | Layer::Experiments => None,
             };
             world.resource_mut::<Layers>().incoming = agent;
         });
@@ -246,7 +250,10 @@ fn switch(
     for (camera_entity, layer, mut camera) in &mut cameras {
         camera.is_active = *layer == layers.active;
         // Bevy's UI picker can hit nodes on an inactive camera.
-        if matches!(layer, Layer::Home | Layer::Providers | Layer::Workflows) {
+        if matches!(
+            layer,
+            Layer::Home | Layer::Providers | Layer::Workflows | Layer::Experiments
+        ) {
             let mut camera_entity = commands.entity(camera_entity);
             if camera.is_active {
                 camera_entity.insert(UiPickingCamera);
@@ -264,8 +271,10 @@ fn switch(
         .iter()
         .enumerate()
         .filter(|&(_, layer)| {
-            !matches!(layer, Layer::Home | Layer::Providers | Layer::Workflows)
-                || layers.roots.contains_key(layer)
+            !matches!(
+                layer,
+                Layer::Home | Layer::Providers | Layer::Workflows | Layer::Experiments
+            ) || layers.roots.contains_key(layer)
         })
         .map(|(index, layer)| {
             let name = layer.name();

@@ -1,5 +1,11 @@
 # Development log
 
+## Milestones 12 and 13 — Run starter-world comparisons from the desktop
+
+Home opens the World Experiments panel with F8. Forager and builder suspension use the same paired-world runner as the CLI. Each run stores a versioned report and six replay databases under a new directory. The panel reopens the newest completed report, and partial directories without a published report stay available for inspection.
+
+The CLI reproducibility regression passed after the runner moved into the shared library. The Bevy regression ran the builder comparison through the worker, verified the generated readout, reopened the report, replayed all six recorded outcomes, and confirmed the live world database stayed byte-identical. The optimized graphics suite passed 56 tests. Formatting and strict graphics Clippy passed. The Windows viewer launched, but the foreground helper could not activate the window for F8 navigation. [Experiment controls](CLI.md#compare-two-world-policies)
+
 ## Milestones 13 and 14 — Repeat world experiments and verify the messaging package
 
 The packaged CLI repeated the 60-tick world policy comparison with three seeds. All six arms matched the repeated run on deterministic outcomes. Replaying each first-run database reproduced its recorded revision, tick, shelter count and shared stock. All three baseline arms reached five shelters, and none of the three suspension arms did. The paired shelter difference was −3 for each seed.

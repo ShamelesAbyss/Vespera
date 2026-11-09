@@ -5,6 +5,7 @@ mod desktop_evidence;
 mod desktop_settings;
 mod desktop_update;
 mod desktop_workflow;
+mod experiment_scene;
 mod gpu_telemetry;
 mod home_scene;
 mod machine_scene;

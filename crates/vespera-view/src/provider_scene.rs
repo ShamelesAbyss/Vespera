@@ -1709,17 +1709,19 @@ fn close_after_provider_work(
     mut requests: MessageReader<WindowCloseRequested>,
     mut primary: Single<(Entity, &mut Window), With<PrimaryWindow>>,
     mut panel: ResMut<Panel>,
+    experiments: Option<Res<crate::experiment_scene::ExperimentPanel>>,
 ) {
+    let experiment_pending = experiments.is_some_and(|panel| panel.busy());
     let requested = requests.read().any(|request| request.window == primary.0);
     if requested && !panel.closing {
         apply(Action::Cancel, &mut panel);
         panel.closing = true;
         panel.draft = None;
-        if panel.work.is_some() {
+        if panel.work.is_some() || experiment_pending {
             primary.1.title = "Vespera | Finishing local work…".into();
         }
     }
-    if panel.closing && panel.work.is_none() {
+    if panel.closing && panel.work.is_none() && !experiment_pending {
         commands.entity(primary.0).despawn();
     }
 }

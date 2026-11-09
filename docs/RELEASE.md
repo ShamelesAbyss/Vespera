@@ -200,7 +200,7 @@ The unsigned `0.1.2` build from `33ab12bfc3532b1a695600b6f7efeca950475306` verif
 | Setup EXE | `673db910f79c8ed95ed028a67cbf765c13ee9f1d7f0ad5d2d0fcda0671d965d4` |
 | Internal review bundle | `6ccf85ca10200252f47cd59dbc64ec9068d0d670d0eb95f6dd139387d65eeddb` |
 
-The packaged CLI wrote and reopened a private inbox message. The journal recorded only its sender and recipient. The desktop regression verified permission checks, profile reopen, and recovery after a failed journal write. Native foreground input could not activate the viewer, and both native Swarm capture attempts timed out. The prior candidate below carries the full Atlas and restart evidence. The refreshed CycloneDX SBOM passed schema validation, and OSV returned zero matches for the 429 exact crates.io versions queried. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42684347057)
+The packaged CLI wrote and reopened a private inbox message. The journal recorded only its sender and recipient. The desktop regression verified permission checks, profile reopen, and recovery after a failed journal write. Native foreground input could not activate the viewer, and both native Swarm capture attempts timed out. The prior candidate below carries the full Atlas and restart evidence. The refreshed CycloneDX SBOM passed schema validation, and OSV returned zero matches for the 429 exact crates.io versions queried. Foundation, Linux native and Windows native source CI passed. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42684347057)
 
 ### Windows x64 candidate with workflow recovery
 

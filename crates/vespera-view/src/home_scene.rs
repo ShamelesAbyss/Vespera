@@ -15,7 +15,7 @@ use crate::atlas::{self, Layer, Layers};
 use crate::desktop_update::Updates;
 use crate::{machine_scene, provider_scene, scene, swarm_scene, world_scene};
 
-const PRESET: &str = include_str!("../../../config/world.example.json");
+pub(super) const PRESET: &str = include_str!("../../../config/world.example.json");
 
 #[derive(Resource)]
 struct LocalWorld {
@@ -33,6 +33,7 @@ enum Action {
     Providers,
     Swarm,
     Workflows,
+    Experiments,
     Motion,
     CheckUpdates,
     InstallUpdate,
@@ -152,6 +153,7 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) -> std::proce
     world_scene::install_scene(&mut app, reduced_motion);
     if let Some(dir) = data_dir.clone() {
         swarm_scene::install_desktop(&mut app, dir.clone(), reduced_motion);
+        crate::experiment_scene::install(&mut app, &dir);
         crate::workflow_history_scene::install(&mut app, dir);
     }
     provider_scene::install(&mut app, data_dir);
@@ -293,6 +295,7 @@ fn setup(
                         button(Action::Providers, "Models & Providers  [F6]"),
                         button(Action::Swarm, "Open Swarm  [F3]"),
                         button(Action::Workflows, "Workflow history  [F7]"),
+                        button(Action::Experiments, "World experiments  [F8]"),
                         button(Action::Motion, "Reduced motion  [M]"),
                         button(Action::CheckUpdates, "Check for updates")
                     ]
@@ -356,6 +359,7 @@ fn setup(
                         Ok(Action::Providers) => layers.request(Layer::Providers),
                         Ok(Action::Swarm) => layers.request(Layer::Swarm),
                         Ok(Action::Workflows) => layers.request(Layer::Workflows),
+                        Ok(Action::Experiments) => layers.request(Layer::Experiments),
                         Ok(Action::Motion) => motion.requested = true,
                         Ok(Action::CheckUpdates) => updates.check(),
                         Ok(Action::InstallUpdate) => {
