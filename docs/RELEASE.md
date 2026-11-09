@@ -313,6 +313,14 @@ The hosted lifecycle also passed for the desktop hold source `50a73a819ad232f546
 | Candidate MSI | `dac571436393030d0062a53723496fe2989f804345771e71ba7e69ff5c48ebf8` |
 | Candidate Setup | `55ab709edb74d07c529bd352440549c86d6f70992d83aa5d3cef4ce3da9520d5` |
 
+The disposable Windows runner passed the same lifecycle for the desktop world experiment revision `353857889c989ef0d02033d1d9cf438e24839230`. Both manifests and the embedded candidate MSI were verified. The clean install, injected rollback, upgrade, downgrade rejection, uninstall and restoration preserved the committed world. [Passing installer run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42687091668/job/129396701080)
+
+| Desktop experiments hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `b143d3f58f0bdea896bd3697c0d78b60b160cbfe4f3bca58d24ffeac958a5e5a` |
+| Candidate MSI | `799afe82f3758c626d096be2ac04e53a251f8e534e0c8d23ed67a2a259df6672` |
+| Candidate Setup | `7d141ea6bc7d7fe450342d57bf7f59fab316eebe648c4e3fcb0414961f252c9d` |
+
 ### Windows x64 candidate with workflow editing and durable task audit
 
 The unsigned `0.1.2` build from `35ead88` verified 49 files after portable ZIP extraction, 13 MSI payloads and the exact MSI recovered from Setup. The MSI identifies Vespera 0.1.2 and records branded Start Menu and desktop shortcuts to the launcher. Windows icon extraction produced matching bitmaps from Setup, the launcher and the desktop executable. The MSI and Setup report `NotSigned`.
