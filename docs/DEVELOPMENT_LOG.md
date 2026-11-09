@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Swarm workflow focus and native close-up measurement
+
+Checkpoint `f64f1614c67dcc54e27351237cc558d0d3de222b` lets an operator focus the selected agent's latest linked workflow with G in live Swarm. Standalone startup supports repeatable UUID selection and a focused timing sample. Windows strict graphics Clippy, the desktop suite (38 passed, three opt-in skips) and the expanded workflow focus regression passed.
+
+The three-agent synthetic journal produced native overview and selected-agent captures at `target/swarm-measured-overview.png` and `target/swarm-measured-close.png`. The close-up visibly identifies the selected agent, its runtime and assigned attempt sequences, and the peer receipt. The capture runs showed 280–292 ms maximum update intervals. A separate overview run without screenshot capture sampled 600 updates after 120 warmup updates at 1200×800 via Vulkan on the RTX 4070 Laptop GPU. It measured 8.24 ms median, 8.76 ms p95, 9.10 ms p99, and 9.60 ms maximum with 495 MiB process resident memory. Device-wide VRAM sampled 1,313 MiB before launch and 1,856 MiB during the sample out of 8,188 MiB. These are single-host observations. Concurrent inference, interactive workflow focus and replay, visual verification of transits, and the main-menu updater remain open.
+
 ## 2026-11-08 — Swarm evidence beacons and three-agent layout
 
 Checkpoint `ce79942f18aaf580479d516648427fbe17f75d98` adds distinct runtime and latest-attempt beacons to Swarm. An accepted attempt without a terminal observation stays amber. Frozen replay projects the same beacons from the selected evidence prefix. The live view can animate up to eight short transits for newly observed delegations, message enqueues or receipts. Reduced motion and frozen replay suppress transits.
