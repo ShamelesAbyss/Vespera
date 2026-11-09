@@ -169,6 +169,71 @@ pub(super) async fn run(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    #[ignore = "requires an isolated saved desktop roster and its running model provider"]
+    async fn live_desktop_branch_join_reopens_committed_plan_and_evidence() {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("VESPERA_TEST_BRANCH_DATA")
+                .expect("set isolated desktop data directory"),
+        );
+        let roster = desktop_agent::load(&dir).unwrap().unwrap();
+        let coordinator = (0..roster.len())
+            .find(|&index| {
+                roster
+                    .selection(index)
+                    .unwrap()
+                    .0
+                    .permissions
+                    .contains(&Permission::Delegate)
+            })
+            .expect("roster needs a delegation grant");
+        let steps = [
+            (
+                "seed",
+                "Name one benefit of testing software in one sentence.",
+                vec![],
+            ),
+            (
+                "left",
+                "Restate the supplied benefit in five words.",
+                vec!["seed".into()],
+            ),
+            (
+                "right",
+                "Give one limitation of the supplied benefit in one sentence.",
+                vec!["seed".into()],
+            ),
+            (
+                "join",
+                "Combine both supplied observations in one short sentence.",
+                vec!["left".into(), "right".into()],
+            ),
+        ]
+        .into_iter()
+        .map(|(name, prompt, dependencies)| StepRequest {
+            name: name.into(),
+            agent: coordinator,
+            prompt: prompt.into(),
+            dependencies,
+        })
+        .collect();
+        let result = run(&dir, roster, steps, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(result.report.task.state, TaskState::Completed);
+        assert!(result.cleanup_confirmed);
+        assert!(result.observation_error.is_none());
+        let task = result.report.task.id;
+        let saved = WorkflowStore::inspect(&desktop_evidence::workflow_path(&dir), task).unwrap();
+        assert!(!saved.interrupted);
+        assert_eq!(saved.report.task.state, TaskState::Completed);
+        assert_eq!(saved.plan.steps[2].dependencies, ["seed"]);
+        assert_eq!(saved.plan.steps[3].dependencies, ["left", "right"]);
+        let store = WorkflowStore::open(&desktop_evidence::workflow_path(&dir)).unwrap();
+        desktop_evidence::replay(&dir, &store).unwrap();
+        println!("Verified live desktop branch/join and reopened checkpoint {task}");
+    }
+
     #[test]
     fn authored_workflow_fences_each_assignee_on_the_previous_step() {
         let coordinator = AgentId::new();

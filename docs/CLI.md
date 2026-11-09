@@ -692,7 +692,13 @@ In **Models & Providers**, select a saved coordinator, grant it **Allow delegati
 
 Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. After each later prompt, enter comma-separated earlier step numbers as inputs. Blank selects the immediately preceding step; `0` makes the step independent. For a four-step branch and join, use `1` for steps 2 and 3, then `2,3` for step 4. Forward references and duplicates are rejected. Review shows each input list. Selected results are supplied as untrusted input; dependency branches do not imply concurrent inference. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
 
-Branch selection is implemented and covered by state and orchestration tests; a native graphical branch-authoring walkthrough remains an acceptance gate.
+Branch selection is implemented and covered by state and orchestration tests. The desktop execution path also completed a four-step live Ollama branch/join and reopened its checkpoint; a native graphical branch-authoring walkthrough remains an acceptance gate.
+
+For an opt-in execution rehearsal, set `VESPERA_TEST_BRANCH_DATA` to an isolated desktop data directory with a saved roster, a delegation-enabled coordinator and a running configured model provider. The test creates tasks, workflow history and event evidence in that directory; it does not drive the graphical editor.
+
+```sh
+cargo test --locked -p vespera-view --features graphics --bin vespera-view live_desktop_branch_join_reopens_committed_plan_and_evidence -- --ignored --nocapture
+```
 
 Use **Ctrl+V** in a task or workflow prompt to append text from the system clipboard. The editor flattens line breaks and tabs into spaces and applies the same 1,200-character limit as typing. Pasting keeps the prompt in the editor until you submit it.
 
