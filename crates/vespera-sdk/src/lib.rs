@@ -2,7 +2,8 @@
 //!
 //! Use an operator key for task submission and a worker key for execution.
 //! Each action obtains the server's session and signs a fresh proof. Calls
-//! use HTTP/1 with a timeout for each exchange and no automatic retries.
+//! use HTTP/1 with a timeout for each exchange. Only the opt-in read-only
+//! event subscription reconnects automatically.
 //!
 //! ```no_run
 //! use vespera_sdk::{SigningKey, WorkerClient};
@@ -29,7 +30,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use subscription::EventSubscription;
+pub use subscription::{EventSubscription, ResumableEventSubscription};
 pub use vespera_core::{
     AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, BrokerStreamEnd,
     BrokerStreamFrame, Capability, EventEnvelope, EventKind, ExternalAttempt, ExternalTaskChange,
@@ -253,6 +254,13 @@ impl OperatorClient {
     ) -> Result<EventSubscription, ClientError> {
         EventSubscription::connect(&self.0, after).await
     }
+    /// Read operator events with bounded reconnects and explicit cursor acknowledgement.
+    pub fn subscribe_resumable(
+        &self,
+        after: Option<BrokerEventCursor>,
+    ) -> ResumableEventSubscription<'_> {
+        ResumableEventSubscription::new(&self.0, after)
+    }
     /// Read a page of observed broker events, including all workers.
     pub async fn replay(
         &self,
@@ -365,6 +373,13 @@ impl WorkerClient {
         after: Option<BrokerEventCursor>,
     ) -> Result<EventSubscription, ClientError> {
         EventSubscription::connect(&self.0, after).await
+    }
+    /// Read this worker's events with bounded reconnects and explicit cursor acknowledgement.
+    pub fn subscribe_resumable(
+        &self,
+        after: Option<BrokerEventCursor>,
+    ) -> ResumableEventSubscription<'_> {
+        ResumableEventSubscription::new(&self.0, after)
     }
     /// Read a page of events about attempts assigned to this worker.
     pub async fn replay(

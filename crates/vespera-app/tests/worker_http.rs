@@ -1080,6 +1080,123 @@ async fn live_frame(stream: &mut EventSubscription) -> BrokerStreamFrame {
 }
 
 #[tokio::test]
+async fn resumable_worker_subscription_uses_only_acknowledged_cursors_after_tls_restart() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let identity = TlsFixture::new("127.0.0.1");
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let operator_key = fresh_token();
+    let first_key = fresh_token();
+    let second_key = fresh_token();
+    let start = |listen: &str| {
+        let policy = create_policy(first, second);
+        let mut command = server_command_at(&policy, Some(&db.0), listen);
+        identity.configure(&mut command);
+        command
+            .env("TEST_OPERATOR_TOKEN", &operator_key)
+            .env("TEST_FIRST_TOKEN", &first_key)
+            .env("TEST_SECOND_TOKEN", &second_key);
+        launch_command(command, policy)
+    };
+    let (process, base) = start("127.0.0.1:0");
+    let address = base.strip_prefix("https://").unwrap();
+    let endpoint = address.parse().unwrap();
+    let operator = OperatorClient::new_tls(
+        endpoint,
+        SigningKey::from_hex(&operator_key).unwrap(),
+        identity.roots.as_bytes(),
+    )
+    .unwrap();
+    let worker = WorkerClient::new_tls(
+        endpoint,
+        first,
+        SigningKey::from_hex(&first_key).unwrap(),
+        identity.roots.as_bytes(),
+    )
+    .unwrap();
+    let other = WorkerClient::new_tls(
+        endpoint,
+        second,
+        SigningKey::from_hex(&second_key).unwrap(),
+        identity.roots.as_bytes(),
+    )
+    .unwrap();
+    let submission = || Submission {
+        task_id: TaskId::new(),
+        prompt: "Resumable subscription fixture".into(),
+        required_capabilities: ["text-generation".parse().unwrap()].into(),
+        eligible_workers: [first].into(),
+        lifetime_seconds: 60,
+        max_attempts: 1,
+    };
+    let mut stream = worker.subscribe_resumable(None);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let Some(BrokerStreamFrame::Ready {
+            after: baseline, ..
+        }) = stream.next().await.unwrap()
+        else {
+            panic!("missing initial baseline");
+        };
+        operator.submit(&submission()).await.unwrap();
+        let lease = worker.claim().await.unwrap().unwrap();
+        let Some(BrokerStreamFrame::Event { entry: claim }) = stream.next().await.unwrap() else {
+            panic!("missing claim event");
+        };
+        assert_eq!(stream.cursor(), Some(baseline));
+        assert!(!stream.acknowledge(baseline));
+        assert!(matches!(
+            stream.next().await.unwrap(),
+            Some(BrokerStreamFrame::Event { entry }) if entry == claim
+        ));
+        assert!(stream.acknowledge(claim.cursor));
+        worker.complete(lease.fence, "done").await.unwrap();
+        let Some(BrokerStreamFrame::Event { entry: completed }) = stream.next().await.unwrap()
+        else {
+            panic!("missing completion event");
+        };
+        assert!(stream.acknowledge(completed.cursor));
+
+        drop(process);
+        let (_restarted, restarted_base) = start(address);
+        assert_eq!(base, restarted_base);
+        operator.submit(&submission()).await.unwrap();
+        let next_lease = worker.claim().await.unwrap().unwrap();
+        assert!(matches!(
+            stream.next().await.unwrap(),
+            Some(BrokerStreamFrame::Ready { after, .. }) if after == completed.cursor
+        ));
+        let Some(BrokerStreamFrame::Event { entry: resumed }) = stream.next().await.unwrap() else {
+            panic!("missing claim after restart");
+        };
+        assert_eq!(resumed.cursor.sequence, completed.cursor.sequence + 1);
+        assert!(matches!(
+            resumed.event.kind,
+            EventKind::ExternalTaskChanged { task_id, change: ExternalTaskChange::Claimed, .. }
+                if task_id == next_lease.fence.task_id
+        ));
+        assert!(stream.acknowledge(resumed.cursor));
+        let mut foreign = other.subscribe_resumable(stream.cursor());
+        assert!(matches!(
+            foreign.next().await,
+            Err(ClientError::Rejected { status: 409, .. })
+        ));
+        assert!(foreign.next().await.unwrap().is_none());
+        operator.revoke(first).await.unwrap();
+        assert!(matches!(
+            stream.next().await.unwrap(),
+            Some(BrokerStreamFrame::End {
+                reason: BrokerStreamEnd::Unauthorized
+            })
+        ));
+        assert!(stream.next().await.unwrap().is_none());
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn websocket_delivers_scoped_events_resumes_and_observes_revocation() {
     let first = AgentId::new();
     let second = AgentId::new();

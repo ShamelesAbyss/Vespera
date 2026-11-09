@@ -128,6 +128,10 @@ End reasons are `lifetime`, `unauthorized`, `cursor_expired` and `storage_unavai
 
 Keep the cursor only after processing its event. Reconnect with that cursor and a new proof, or use HTTP replay to catch up. A resumed client can see events it already processed if its saved cursor lagged. Deduplicate by event ID if needed. After a retention gap, obtain a fresh view of known tasks before continuing from retained history.
 
+The Rust SDK also exposes `WorkerClient::subscribe_resumable(after)` and `OperatorClient::subscribe_resumable(after)`. Use the last cursor saved with your application state, or `None` to begin at the oldest retained event. Each `next().await` can reconnect up to three times after transport loss, timeout, HTTP 503, or normal rotation. It signs a fresh proof and resumes from the last acknowledged position. `Ready` reports the initial baseline or the exact resumed position. After processing an event durably, save its cursor and call `acknowledge(entry.cursor)`. Until then, `next()` returns that event again. Acknowledgement is local to the reader and does not acknowledge a mailbox message or mutate the broker.
+
+If reconnect attempts are exhausted, `next()` returns the last error and leaves the cursor intact. Authorization rejection, foreign and expired cursors, and invalid frames end the resumable subscription. A terminal server frame is returned to the caller with its reason. After a retention gap, reconcile application state before opening a new subscription. Task leasing, completion and other mutations retain their existing explicit request behavior.
+
 ### Durable broker recovery
 
 With `--broker-db` the server commits task changes, revocations, bounded event feeds and worker inbox changes in the same SQLite transaction before responding. Each database is exclusively owned by one live server. The access file still supplies the allowed identities, capabilities, message routes and key references. Revocations persisted in the database take precedence over that file. Keys and authentication nonces stay in memory. Prompts, accepted results and pending message contents are stored in the database without encryption.
