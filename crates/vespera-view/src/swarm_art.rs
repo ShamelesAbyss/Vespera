@@ -286,7 +286,13 @@ impl Foundry {
             hash.wrapping_mul(31).wrapping_add(u32::from(byte))
         });
         let sigil = &self.sigils[(signature % 6) as usize];
-        let wings = 3 + (signature / 6 % 3) as usize;
+        // Narrow heat sinks, a split gantry, and a wide radiator bank give the
+        // shared foundry chassis different silhouettes without relying on color.
+        let (wings, reach, rise, width, flare) = match signature % 3 {
+            0 => (3, 0.78, 1.04, 0.20, 0.05),
+            1 => (2, 1.13, 0.88, 0.37, 0.29),
+            _ => (4, 1.32, 0.62, 0.43, 0.13),
+        };
         let height = 1.30 + (signature / 18 % 4) as f32 * 0.17;
         let stem_base = height + 0.20;
         self.part(
@@ -320,13 +326,13 @@ impl Foundry {
         }
         for wing in 0..wings {
             let turn = Quat::from_rotation_y(wing as f32 * std::f32::consts::TAU / wings as f32);
-            let part = |commands: &mut Commands, material, x, y, scale| {
+            let part = |commands: &mut Commands, material, x, y, tilt: f32, scale| {
                 self.part(
                     commands,
                     parent,
                     material,
                     Transform::from_translation(turn * Vec3::new(x, y, 0.0))
-                        .with_rotation(turn)
+                        .with_rotation(turn * Quat::from_rotation_z(-tilt))
                         .with_scale(scale),
                     false,
                     true,
@@ -335,24 +341,42 @@ impl Foundry {
             part(
                 commands,
                 &self.alloy,
-                0.55,
-                height * 0.64,
-                Vec3::new(0.24, height * 0.76, 0.29),
+                reach * 0.63,
+                0.37,
+                0.0,
+                Vec3::new(reach * 0.88, 0.23, width + 0.08),
+            );
+            part(
+                commands,
+                &self.alloy,
+                reach * 0.79,
+                height * (0.43 + rise * 0.25),
+                flare,
+                Vec3::new(0.29, height * rise, width),
             );
             part(
                 commands,
                 &self.obsidian,
+                reach,
                 0.70,
-                0.78,
-                Vec3::new(0.21, 0.53, 0.39),
+                0.0,
+                Vec3::new(0.27, 0.47, width + 0.10),
             );
-            part(commands, sigil, 0.82, 0.79, Vec3::new(0.045, 0.33, 0.19));
+            part(
+                commands,
+                sigil,
+                reach + 0.14,
+                0.73,
+                0.0,
+                Vec3::new(0.045, 0.19, width * 0.62),
+            );
             part(
                 commands,
                 &self.trim,
-                0.42,
-                height + 0.05,
-                Vec3::new(0.39, 0.17, 0.22),
+                reach * 0.69,
+                height * (0.43 + rise * 0.73),
+                flare,
+                Vec3::new(0.46, 0.13, width + 0.07),
             );
         }
     }

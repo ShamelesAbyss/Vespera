@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-09 — Distinct agent silhouettes in the Swarm Foundry
+
+Agent UUIDs now select narrow heat sinks, a split gantry, or a wide radiator bank. The chassis can be distinguished by shape as well as accent color, and the profile remains stable when the agent changes models. Native Windows overview and close-up captures show the three-agent fixture at sequences 19 and 20. The close-up caught the newly committed fixture message in transit. The README uses both captures and identifies their synthetic source.
+
+The revised debug build measured 8.58 ms median, 9.47 ms p95, and 11.18 ms maximum across 600 Vulkan updates after 120 warmup updates at 1200×800 on the RTX 4070 Laptop GPU. This sample used neither screenshot capture nor concurrent inference. The earlier concurrent inference result applies to the preceding art revision. The Windows graphics build, 43 default tests, formatting, and strict Clippy passed.
+
 ## 2026-11-09 — GitHub release asset download rehearsal
 
 The Windows updater downloaded a pinned 66,850,032-byte Git for Windows fixture through GitHub's `release-assets.githubusercontent.com` redirect. The production downloader verified its published size, SHA-256, and embedded Authenticode signature. Dropping the verified handle removed the staged file without executing it. The opt-in test passed, as did all 43 default Windows graphics tests, formatting, and strict Clippy. The Git for Windows fixture covers the delivery path only. Vespera still needs its own signed, immutable release for a production upgrade rehearsal. [Fixture release and published SHA-256](https://github.com/git-for-windows/git/releases/tag/v2.56.0.windows.4)

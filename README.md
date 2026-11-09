@@ -58,7 +58,7 @@ An agent keeps its identity when you change its model. The registry records whic
 <details>
 <summary>Explore three agents in the Swarm Foundry</summary>
 
-![Native Swarm Foundry overview showing three agent constructs and colored evidence conduits](assets/screenshots/swarm-foundry.png)
+![Native Swarm Foundry overview showing three distinct agent silhouettes and colored evidence conduits](assets/screenshots/swarm-foundry.png)
 
 ![Swarm close-up showing an amber message transit and its matching observation in the inspector](assets/screenshots/swarm-transit.png)
 
