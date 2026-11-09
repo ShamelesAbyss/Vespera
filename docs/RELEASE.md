@@ -14,7 +14,9 @@ channel error on Home.
 The standard per-user Windows installation can select **Download update**.
 Vespera downloads the Setup bundle into a new temporary directory and checks
 its exact published size and SHA-256. Windows must also recognize a valid
-embedded Authenticode signature. After verification, **Close and open Setup**
+embedded Authenticode signature. If preparation fails, use **Download update**
+again to retry or **Check for updates** to refresh the release. After
+verification, **Close and open Setup**
 uses the ordinary desktop shutdown flow before opening the interactive Setup
 window. Complete the update in Setup. Vespera preserves its separate user data
 directory through the standard installer. Portable and source builds show

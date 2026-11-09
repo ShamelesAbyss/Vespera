@@ -11,7 +11,7 @@ const RELEASE_API: &str = "https://api.github.com/repos/ShamelesAbyss/Vespera/re
 const MAX_METADATA: usize = 256 * 1024;
 const MAX_SETUP: u64 = 512 * 1024 * 1024;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Candidate {
     version: String,
     url: String,
@@ -156,7 +156,7 @@ impl Updates {
         if !self.installed || self.preparing.is_some() {
             return false;
         }
-        let Some(candidate) = self.candidate.take() else {
+        let Some(candidate) = self.candidate.clone() else {
             return false;
         };
         let (send, receive) = mpsc::sync_channel(1);
@@ -283,6 +283,33 @@ fn select_candidate(release: &Value, current: &str) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_setup_download_can_be_retried_without_checking_again() {
+        let mut updates = Updates {
+            installed: true,
+            candidate: Some(Candidate {
+                version: "0.2.0".into(),
+                url: String::new(),
+                bytes: 3,
+                sha256: String::new(),
+            }),
+            ..Updates::default()
+        };
+        // The empty URL fails request construction before any network access.
+        assert!(!updates.install());
+        assert_eq!(updates.install_label(), None);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while updates.preparing.is_some() {
+            assert!(std::time::Instant::now() < deadline);
+            updates.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(updates.status, "Could not download Setup from GitHub.");
+        assert_eq!(updates.install_label(), Some("Download update"));
+    }
 
     #[test]
     fn requires_a_newer_immutable_stable_release_and_exact_installer_identity() {

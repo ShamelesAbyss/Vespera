@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-09 — Retry Windows Setup preparation from Home
+
+Home retains the selected immutable release after a failed Setup download or verification, so the operator can retry without rechecking the channel. A regression test exercises the asynchronous Home updater state through a failed request and confirms that the retry control returns. Windows graphics validation passed 43 tests with four opt-in tests skipped. Formatting and strict graphics Clippy passed. The official channel still returned HTTP 404, so this checkpoint does not establish a production upgrade.
+
 ## 2026-11-09 — Windows Setup lifecycle in hosted CI
 
 Checkpoint `0d11cad` uses the actual WiX Setup bundle for the successful upgrade and removal phases on a disposable Windows runner. The rehearsal passed initial per-user MSI installation, rollback after an injected MSI failure, Setup upgrade, downgrade rejection, Setup removal, and restore of the previous installation. It verified the saved world's bytes and revision. Local WiX extraction also matched the embedded MSI byte for byte. The bundle was unsigned, and this rehearsal did not exercise Home's download and signature gate against a production release. [Hosted validation](https://github.com/ShamelesAbyss/Vespera/actions/runs/42583645819)
