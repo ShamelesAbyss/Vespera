@@ -203,7 +203,7 @@ The extracted portable launcher opened from a different working directory, commi
 
 Windows passed 289 workspace tests and doctests, 53 optimized graphics tests, formatting, strict workspace and graphics Clippy, and strict workspace rustdoc. Foundation, Linux native and Windows native CI all passed for the candidate's source. The refreshed CycloneDX 1.6 SBOM passed schema validation and records the same 429 third-party Cargo package versions. The OSV query returned zero matches for those exact crates.io versions. The review bundle retains the license compliance inventory and upstream notices, with the previously documented distribution gates still open. [Passing source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42666424536)
 
-The local `Vespera-0.1.2-146dfb0-internal-review.zip` bundle has SHA-256 `f425417b0a9b87e86930725d4f22d70b010a366b434432b47220a3f44f510a14`. The optimized installer lifecycle was also dispatched for this exact source revision. [Hosted qualification run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42667326866)
+The local `Vespera-0.1.2-146dfb0-internal-review.zip` bundle has SHA-256 `f425417b0a9b87e86930725d4f22d70b010a366b434432b47220a3f44f510a14`. The separately built hosted artifacts from this exact source also passed the optimized installer lifecycle. [Passing hosted qualification](https://github.com/ShamelesAbyss/Vespera/actions/runs/42667326866/job/129334377176)
 
 ### Windows x64 candidate with saved desktop discovery and identity editing
 
@@ -238,6 +238,14 @@ A second optimized run passed the same lifecycle from the `0.1.1` baseline to `0
 | Prior MSI | `a3b6866e7bec187b144baacf37451cd781c52fae8b99e9f67e4e31eed831bacc` |
 | Candidate MSI | `9cb9edd12bba620c5ef72d7da075c54702a84b50d0d2476d96d0b7742d525676` |
 | Candidate Setup | `0a4fe58d17202e688437a0961147ae15d191b19941d6bcf76892cbaefc03d9f0` |
+
+The same disposable Windows lifecycle passed from the optimized `0.1.1` baseline to `0.1.2` at `146dfb04ebe8f2912597400d24c32c4fbfd0b166`. The test verified both portable manifests, clean Setup installation and upgrade, automatic rollback, downgrade rejection, removal and restoration with the committed world preserved. [Passing desktop memory installer run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42667326866/job/129334377176)
+
+| Desktop memory hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `1c0bffa575dac7739f6351afe35c79ae19aa9e851431146132e1fe8dd08f1d22` |
+| Candidate MSI | `360c610ac55af562fbdcae4542ee967e7f0db4db9e4e6b7a0ead4983811ab908` |
+| Candidate Setup | `d47f85bdf9658c17e0ab60e107d71a50ed08fc2547f6c371fc643c2ec19c816a` |
 
 ### Windows x64 candidate with workflow editing and durable task audit
 
