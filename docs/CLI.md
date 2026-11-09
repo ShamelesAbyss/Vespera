@@ -680,6 +680,8 @@ To retain a completed response, grant **Toggle memory write** for its agent, ope
 
 Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. **Task history** shows the hold as of its last read alongside the retained task states. The panel reloads the hold when you change agents or use Suspend or Resume with history open. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.
 
+Use **Toggle communication** to grant or revoke local messaging for the selected agent. **Send message** asks for the recipient's roster number, then for the message text. The recipient uses **Inbox** and the page buttons to read retained messages once their own communication grant is enabled. **F3** shows the committed sender and recipient in Swarm. The local journal carries message metadata alone. [Durable inbox](AGENTS.md#durable-inbox)
+
 ### Run a delegated desktop workflow
 
 Select the drafting agent, choose **Allow delegation**, and open **Draft + review** or press **G** while the panel has no active editor. Enter the number of a different saved agent on the same provider, then enter the draft prompt and review instruction. Press **Enter** after each field. Both agents must be available for work.

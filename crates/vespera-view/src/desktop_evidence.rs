@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use tokio::sync::mpsc;
+use vespera_agents::AgentTaskStore;
 use vespera_core::{EventEnvelope, TaskId};
 use vespera_events::{Journal, JournalError};
 use vespera_orchestrator::WorkflowStore;
@@ -15,18 +16,44 @@ pub(super) fn workflow_path(dir: &Path) -> PathBuf {
     dir.join("desktop-workflows.sqlite3")
 }
 
-/// Rebuild a missing projection from the committed, payload-free workflow audit.
+/// Rebuild missing observations from the committed, payload-free audits.
 pub(super) fn restore(dir: &Path) -> Result<(), String> {
     let path = workflow_path(dir);
+    if path.try_exists().map_err(|error| error.to_string())? {
+        let events =
+            WorkflowStore::inspect_audit_history(&path).map_err(|error| error.to_string())?;
+        if !events.is_empty() {
+            publish(&mut open(dir).map_err(|error| error.to_string())?, &events)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let path = dir.join("desktop-tasks.sqlite3");
     if !path.try_exists().map_err(|error| error.to_string())? {
         return Ok(());
     }
-    let events = WorkflowStore::inspect_audit_history(&path).map_err(|error| error.to_string())?;
-    if events.is_empty() {
-        return Ok(());
+    let mut cursor = None;
+    loop {
+        let page = AgentTaskStore::inspect_inbox_audit(&path, cursor, vespera_events::MAX_PAGE)
+            .map_err(|error| error.to_string())?;
+        if !page.events.is_empty() {
+            publish(
+                &mut open(dir).map_err(|error| error.to_string())?,
+                &page.events,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        if !page.has_more {
+            return Ok(());
+        }
+        cursor = page.next_cursor;
     }
-    let mut journal = open(dir).map_err(|error| error.to_string())?;
-    publish(&mut journal, &events).map_err(|error| error.to_string())
+}
+
+pub(super) fn record_message(dir: &Path, event: &EventEnvelope) -> Result<(), String> {
+    open(dir)
+        .and_then(|mut journal| journal.append(event))
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn open(dir: &Path) -> Result<Journal, JournalError> {

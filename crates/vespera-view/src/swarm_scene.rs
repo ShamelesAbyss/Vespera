@@ -497,13 +497,13 @@ pub(super) fn install_journal(
 
 pub(super) fn install_desktop(app: &mut App, dir: PathBuf, reduced_motion: bool) {
     let evidence = Evidence {
-        status: "Waiting for desktop workflow observations",
+        status: "Waiting for desktop observations",
         ..default()
     };
     let (send, input) = watch::channel(evidence.clone());
     std::thread::spawn(move || {
         if let Err(error) = crate::desktop_evidence::restore(&dir) {
-            warn!("Desktop workflow evidence recovery: {error}");
+            warn!("Desktop evidence recovery: {error}");
         }
         observe(&crate::desktop_evidence::journal_path(&dir), &send, true);
     });
@@ -605,7 +605,7 @@ fn observe(path: &Path, send: &watch::Sender<Evidence>, desktop: bool) {
                 evidence.reset("Journal changed; rebuilding observations");
             }
             Err(_) if desktop && matches!(path.try_exists(), Ok(false)) => {
-                evidence.status = "Waiting for desktop workflow observations";
+                evidence.status = "Waiting for desktop observations";
             }
             Err(_) => evidence.status = "Journal unavailable; showing last observations",
         }

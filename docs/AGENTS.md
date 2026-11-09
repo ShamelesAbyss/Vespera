@@ -84,6 +84,14 @@ stay available. Inboxes are local, append-only and private. The offline CLI
 treats the operator as trusted and uses the supplied configuration to authorize
 the claimed agent UUID. See [CLI inbox operations](CLI.md#agent-inbox).
 
+In the desktop Providers panel, **Toggle communication** manages the selected
+agent's grant. **Send message** saves a local message to another saved agent.
+**Inbox** opens the selected agent's messages and supports paging. Desktop
+messages and their audit share `desktop-tasks.sqlite3`. Swarm receives a
+sanitized envelope with the sender and recipient, and can recover a missing
+observation from the committed inbox audit on startup. Message text remains
+in the private task database.
+
 ## Actual task inference
 
 A configured agent with the `delegate` grant can plan and execute its own

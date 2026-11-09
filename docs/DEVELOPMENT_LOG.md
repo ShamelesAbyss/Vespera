@@ -1,5 +1,11 @@
 # Development log
 
+## Milestones 7, 9 and 12 — Connect the desktop to durable local messaging
+
+The Providers panel now manages communication grants, composes a message to a saved agent, and pages through the selected recipient's inbox. The desktop rechecks the current roster and delegates storage and authorization to the agent runtime. The private message commits before Swarm publication. Only the sender and recipient audit envelope enters the journal. Startup can recover a missing observation from the task store.
+
+The optimized Bevy regression verified denied access, send, recipient isolation, reopening a profile, and recovery after a foreign journal prevented publication. It checked that the message remained private and that replay produced one event after repeated recovery. The optimized graphics suite passed 55 tests. Formatting and strict graphics Clippy passed. The native window launched, but the foreground input helper could not activate it for the click-through. [Desktop controls](CLI.md#open-the-native-desktop)
+
 ## Milestone 12 — Show the selected agent's durable hold in task history
 
 Task history reads the selected agent's hold and bounded task page under one SQLite connection. Suspend and Resume refresh the open history. Switching agents reloads their own hold and tasks. The panel labels the hold as of its last read and marks nonterminal retained tasks as interrupted.

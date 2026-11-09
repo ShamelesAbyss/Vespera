@@ -9,7 +9,9 @@ use bevy::input::{
 };
 use bevy::prelude::*;
 use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
-use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
+use vespera_agents::{
+    AgentMessage, AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary,
+};
 use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
 use vespera_config::ProviderConfig;
 use vespera_core::{AgentId, Permission, ProviderKind, TaskId};
@@ -27,6 +29,7 @@ use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
 const TASKS_PER_PAGE: u32 = 8;
+const MESSAGES_PER_PAGE: usize = 6;
 const PROMPT_LIMIT: usize = 1200;
 const OLLAMA: &str = "http://127.0.0.1:11434";
 const COMPATIBLE: &str = "http://127.0.0.1:1234/v1";
@@ -58,6 +61,9 @@ enum Action {
     ToggleMemoryRead,
     ToggleMemoryWrite,
     Remember,
+    ToggleCommunication,
+    Inbox,
+    Message,
     Cancel,
     PreviousAgent,
     NextAgent,
@@ -99,6 +105,10 @@ enum Edit {
     },
     MemoryPhrase(String),
     Prompt(String, Option<String>),
+    Message {
+        recipient: Option<AgentId>,
+        input: String,
+    },
     Workflow {
         fields: [String; 3],
         index: usize,
@@ -194,7 +204,8 @@ enum Work {
     ),
     History(Mutex<Receiver<HistoryResult>>),
     Inspect(Mutex<Receiver<Result<StoredAgentTask, AgentTaskStoreError>>>),
-    Remember(Mutex<Receiver<Result<(), String>>>),
+    LocalWrite(Mutex<Receiver<Result<String, String>>>),
+    Inbox(Mutex<Receiver<Result<Vec<AgentMessage>, String>>>),
     Task {
         result: Mutex<Receiver<Result<FinishedTask, String>>>,
         cancel: CancellationToken,
@@ -216,6 +227,11 @@ struct History {
     suspended: Option<bool>,
 }
 
+struct Inbox {
+    messages: Vec<AgentMessage>,
+    page: usize,
+}
+
 #[derive(Resource)]
 pub(super) struct Panel {
     kind: ProviderKind,
@@ -234,6 +250,7 @@ pub(super) struct Panel {
     closing: bool,
     feedback: String,
     history: Option<History>,
+    inbox: Option<Inbox>,
 }
 
 impl Panel {
@@ -270,6 +287,7 @@ impl Panel {
         self.pending_copy = None;
         self.draft = None;
         self.history = None;
+        self.inbox = None;
         self.work = Some(Work::Workflow { result, cancel });
         self.feedback = feedback.into();
         Ok(())
@@ -384,6 +402,7 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         closing: false,
         feedback,
         history: None,
+        inbox: None,
     })
     .add_systems(Startup, setup)
     .add_systems(Update, (keyboard, receive_work, readout).chain())
@@ -480,6 +499,9 @@ fn setup(mut commands: Commands) {
                         button(Action::ToggleMemoryWrite, "Toggle memory write"),
                         button(Action::MemoryPrompt, "Run with memory"),
                         button(Action::Remember, "Remember task"),
+                        button(Action::ToggleCommunication, "Toggle communication"),
+                        button(Action::Inbox, "Inbox"),
+                        button(Action::Message, "Send message"),
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
@@ -518,6 +540,9 @@ fn apply(action: Action, panel: &mut Panel) {
     }
     if panel.draft.is_some() || panel.work.is_some() {
         return;
+    }
+    if !matches!(action, Action::Previous | Action::Next) {
+        panel.inbox = None;
     }
     if panel.history.is_some()
         && !matches!(
@@ -587,6 +612,23 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Remember => remember_task(panel),
+        Action::Inbox => {
+            if let Some((dir, revision, selected)) = messaging_source(panel) {
+                panel.feedback = "Reading the selected agent's inbox...".into();
+                panel.work = Some(Work::Inbox(background(move |runtime| {
+                    runtime.block_on(desktop_agent::inbox(&dir, revision, selected))
+                })));
+            }
+        }
+        Action::Message => {
+            if messaging_source(panel).is_some() {
+                panel.feedback.clear();
+                panel.draft = Some(Edit::Message {
+                    recipient: None,
+                    input: String::new(),
+                });
+            }
+        }
         Action::Cancel => {}
         Action::Workflow | Action::Chain => {
             let Some(roster) = &panel.roster else {
@@ -613,7 +655,8 @@ fn apply(action: Action, panel: &mut Panel) {
         Action::AllowDelegation
         | Action::RevokeDelegation
         | Action::ToggleMemoryRead
-        | Action::ToggleMemoryWrite => {
+        | Action::ToggleMemoryWrite
+        | Action::ToggleCommunication => {
             let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
                 return;
             };
@@ -633,10 +676,15 @@ fn apply(action: Action, panel: &mut Panel) {
                     !agent.permissions.contains(&Permission::MemoryRead),
                     "Memory read permission updated.",
                 ),
-                _ => (
+                Action::ToggleMemoryWrite => (
                     Permission::MemoryWrite,
                     !agent.permissions.contains(&Permission::MemoryWrite),
                     "Memory write permission updated.",
+                ),
+                _ => (
+                    Permission::Communicate,
+                    !agent.permissions.contains(&Permission::Communicate),
+                    "Communication permission updated.",
                 ),
             };
             panel.work = Some(Work::SaveRoster(
@@ -747,7 +795,9 @@ fn apply(action: Action, panel: &mut Panel) {
             panel.feedback = "Checking health and discovering models...".into();
         }
         Action::Previous => {
-            if let Some(history) = &panel.history {
+            if let Some(inbox) = &mut panel.inbox {
+                inbox.page = inbox.page.saturating_sub(1);
+            } else if let Some(history) = &panel.history {
                 if history.page > 0 {
                     open_history(panel, history.page - 1);
                 }
@@ -756,7 +806,11 @@ fn apply(action: Action, panel: &mut Panel) {
             }
         }
         Action::Next => {
-            if let Some(history) = &panel.history {
+            if let Some(inbox) = &mut panel.inbox {
+                if (inbox.page + 1) * MESSAGES_PER_PAGE < inbox.messages.len() {
+                    inbox.page += 1;
+                }
+            } else if let Some(history) = &panel.history {
                 if history.tasks.len() > TASKS_PER_PAGE as usize {
                     open_history(panel, history.page + 1);
                 }
@@ -823,6 +877,7 @@ fn keyboard(
         panel.selected = draft.steps[0].agent;
         panel.rebind = false;
         panel.history = None;
+        panel.inbox = None;
         panel.feedback = "Editing a copy of the retained workflow.".into();
         panel.draft = Some(Edit::Chain(draft));
         input.clear();
@@ -880,7 +935,7 @@ fn keyboard(
                 {
                     if panel.history.is_some() {
                         inspect_history(&mut panel, index);
-                    } else {
+                    } else if panel.inbox.is_none() {
                         select_model(&mut panel, index);
                     }
                 }
@@ -910,6 +965,10 @@ fn keyboard(
 fn paste_prompt(edit: &mut Edit, read: impl FnOnce() -> Option<String>) {
     let prompt = match edit {
         Edit::Prompt(prompt, _) => prompt,
+        Edit::Message {
+            recipient: Some(_),
+            input,
+        } => input,
         Edit::Workflow {
             fields,
             index: index @ (1 | 2),
@@ -1004,9 +1063,25 @@ fn remember_task(panel: &mut Panel) {
         return;
     };
     let revision = roster.revision;
-    panel.work = Some(Work::Remember(background(move |_| {
+    panel.work = Some(Work::LocalWrite(background(move |_| {
         desktop_agent::remember(&dir, revision, owner, task)
+            .map(|()| "Saved the completed response to this agent's memory.".into())
     })));
+}
+
+fn messaging_source(panel: &mut Panel) -> Option<(PathBuf, i64, usize)> {
+    let (Some(dir), Some(roster)) = (&panel.dir, &panel.roster) else {
+        panel.feedback = "Select a saved agent to use local messaging.".into();
+        return None;
+    };
+    if !roster
+        .selection(panel.selected)
+        .is_some_and(|(agent, _, _)| agent.permissions.contains(&Permission::Communicate))
+    {
+        panel.feedback = "Grant communication to the selected agent first.".into();
+        return None;
+    }
+    Some((dir.clone(), roster.revision, panel.selected))
 }
 
 fn select_model(panel: &mut Panel, index: usize) {
@@ -1078,6 +1153,11 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
         }
         Edit::Prompt(value, _) => (value, PROMPT_LIMIT, |c| !c.is_control()),
         Edit::MemoryPhrase(value) => (value, 256, |c| !c.is_control()),
+        Edit::Message {
+            recipient: None,
+            input,
+        } => (input, 2, |c| c.is_ascii_digit()),
+        Edit::Message { input, .. } => (input, PROMPT_LIMIT, |c| !c.is_control()),
         Edit::Workflow { fields, index: 0 } => (&mut fields[0], 2, |c| c.is_ascii_digit()),
         Edit::Workflow { fields, index } => {
             (&mut fields[*index], PROMPT_LIMIT, |c| !c.is_control())
@@ -1261,8 +1341,55 @@ fn submit(panel: &mut Panel) {
                 panel.feedback = "Task in progress. Waiting for the provider and scheduler.".into();
             }
         }
+        Edit::Message { recipient, input } => submit_message(panel, recipient, input),
         Edit::Workflow { fields, index } => submit_workflow(panel, fields, index),
         Edit::Chain(draft) => submit_chain(panel, draft),
+    }
+}
+
+fn submit_message(panel: &mut Panel, recipient: Option<AgentId>, input: String) {
+    let Some((dir, revision, selected)) = messaging_source(panel) else {
+        return;
+    };
+    match recipient {
+        None => {
+            let target = input
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1))
+                .filter(|&index| index != selected)
+                .and_then(|index| panel.roster.as_ref()?.selection(index))
+                .map(|(agent, _, _)| agent.identity.id);
+            panel.draft = Some(Edit::Message {
+                recipient: target,
+                input: String::new(),
+            });
+            panel.feedback = if target.is_some() {
+                String::new()
+            } else {
+                "Choose a different saved agent by number.".into()
+            };
+        }
+        Some(recipient) if input.trim().is_empty() => {
+            panel.feedback = "Enter a message before sending.".into();
+            panel.draft = Some(Edit::Message {
+                recipient: Some(recipient),
+                input,
+            });
+        }
+        Some(recipient) => {
+            panel.feedback = "Saving the local message...".into();
+            panel.work = Some(Work::LocalWrite(background(move |runtime| {
+                let evidence_error = runtime.block_on(desktop_agent::send_message(
+                    &dir, revision, selected, recipient, input,
+                ))?;
+                let saved = "Message saved to the recipient's local inbox.";
+                Ok(evidence_error.map_or_else(
+                    || saved.into(),
+                    |error| format!("{saved}\nSwarm evidence could not be published. {error}"),
+                ))
+            })));
+        }
     }
 }
 
@@ -1523,13 +1650,20 @@ fn receive_work(mut panel: ResMut<Panel>) {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => panel.feedback = "The task reader stopped.".into(),
         },
-        Some(Work::Remember(result)) => match poll(result) {
-            Ok(Ok(())) => {
-                panel.feedback = "Saved the completed response to this agent's memory.".into()
+        Some(Work::LocalWrite(result)) => match poll(result) {
+            Ok(Ok(message)) => panel.feedback = message,
+            Ok(Err(error)) => panel.feedback = error,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => panel.feedback = "The local writer stopped.".into(),
+        },
+        Some(Work::Inbox(result)) => match poll(result) {
+            Ok(Ok(messages)) => {
+                panel.inbox = Some(Inbox { messages, page: 0 });
+                panel.feedback.clear();
             }
             Ok(Err(error)) => panel.feedback = error,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => panel.feedback = "The memory writer stopped.".into(),
+            Err(TryRecvError::Disconnected) => panel.feedback = "The inbox reader stopped.".into(),
         },
         Some(Work::Workflow { result, .. }) => match poll(result) {
             Ok(Ok(finished)) => panel.feedback = workflow_summary(finished, panel.roster.as_ref()),
@@ -1602,15 +1736,7 @@ fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> Stri
         let _ = write!(summary, "\nOutcome: {failure:?}");
     }
     for attempt in &report.attempts {
-        let name = roster
-            .and_then(|roster| {
-                roster
-                    .config()
-                    .agents
-                    .iter()
-                    .find(|agent| agent.identity.id == attempt.agent_id)
-            })
-            .map_or("Unknown agent", |agent| agent.identity.name.as_str());
+        let name = agent_label(roster, attempt.agent_id);
         let state = attempt
             .task_state
             .map_or_else(|| "No task state".into(), |state| state.to_string());
@@ -1646,6 +1772,18 @@ fn workflow_summary(finished: FinishedWorkflow, roster: Option<&Roster>) -> Stri
         summary.push_str("\nF3 opens the committed observations in Swarm.");
     }
     summary
+}
+
+fn agent_label(roster: Option<&Roster>, id: AgentId) -> &str {
+    roster
+        .and_then(|roster| {
+            roster
+                .config()
+                .agents
+                .iter()
+                .find(|agent| agent.identity.id == id)
+        })
+        .map_or("Unknown agent", |agent| agent.identity.name.as_str())
 }
 
 pub(super) fn preview(value: &str, limit: usize) -> String {
@@ -1722,9 +1860,10 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         };
         let _ = writeln!(
             content,
-            "Memory read {}  |  Memory write {}",
+            "Memory read {}  |  Memory write {}  |  Communication {}",
             permission(Permission::MemoryRead),
-            permission(Permission::MemoryWrite)
+            permission(Permission::MemoryWrite),
+            permission(Permission::Communicate)
         );
         if provider.credential_windows {
             let _ = writeln!(content, "Task credential  |  Windows Credential Manager");
@@ -1891,6 +2030,32 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                     "\nMemory search phrase: {phrase}_\nEnter continues to the task prompt. Only this agent's matching records can be included."
                 );
             }
+            Edit::Message {
+                recipient: None,
+                input,
+            } => {
+                let _ = writeln!(
+                    content,
+                    "\nRecipient number  |  {input}_\nEnter continues to the message."
+                );
+                if let Some(roster) = &panel.roster {
+                    for (index, agent) in roster.config().agents.iter().enumerate() {
+                        if index != panel.selected {
+                            let _ = writeln!(content, "{}. {}", index + 1, agent.identity.name);
+                        }
+                    }
+                }
+            }
+            Edit::Message {
+                recipient: Some(recipient),
+                input,
+            } => {
+                let name = agent_label(panel.roster.as_ref(), *recipient);
+                let _ = write!(
+                    content,
+                    "\nMessage to {name}\n{input}_\nEnter saves this message to the local inbox."
+                );
+            }
             Edit::Prompt(prompt, memory_phrase) => {
                 if memory_phrase.is_some() {
                     content.push_str("\nMatching memories will be passed to the bound provider as untrusted input.");
@@ -1902,6 +2067,28 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
             }
         }
         content.push_str("\nEsc cancels the edit. Delete clears the field.");
+    } else if let Some(inbox) = &panel.inbox {
+        let _ = writeln!(
+            content,
+            "\nLocal inbox  |  Page {}  |  {} retained messages",
+            inbox.page + 1,
+            inbox.messages.len()
+        );
+        for message in inbox
+            .messages
+            .iter()
+            .rev()
+            .skip(inbox.page * MESSAGES_PER_PAGE)
+            .take(MESSAGES_PER_PAGE)
+        {
+            let name = agent_label(panel.roster.as_ref(), message.from_agent_id);
+            let body = preview(&message.content, PROMPT_LIMIT);
+            let _ = writeln!(
+                content,
+                "\n#{tick} from {name}\n{body}",
+                tick = message.logical_tick
+            );
+        }
     } else if let Some(history) = &panel.history {
         let _ = writeln!(
             content,
@@ -2007,9 +2194,7 @@ mod tests {
         super::discover(declaration, CancellationToken::new()).await
     }
 
-    #[tokio::test]
-    async fn history_refreshes_the_selected_hold_after_actions_and_restart() {
-        let dir = std::env::temp_dir().join(format!("vespera-desktop-hold-{}", TaskId::new()));
+    async fn register_pair(dir: &std::path::Path) {
         let registration = |name: &str| Registration {
             provider: desktop_agent::provider(ProviderKind::OpenAiCompatible, COMPATIBLE.into()),
             model: DiscoveredModel {
@@ -2026,36 +2211,46 @@ mod tests {
             ram_mib: 1024,
             vram_mib: 0,
         };
-        let (first, _) = desktop_agent::register(&dir, None, registration("First"))
+        let (first, _) = desktop_agent::register(dir, None, registration("First"))
             .await
             .unwrap();
-        desktop_agent::register(&dir, Some(&first), registration("Second"))
+        desktop_agent::register(dir, Some(&first), registration("Second"))
             .await
             .unwrap();
+    }
 
-        let open = || {
-            let mut app = App::new();
-            app.insert_resource(Layers::new(Layer::Providers));
-            install(&mut app, Some(dir.clone()));
-            let readout = app.world_mut().spawn((Readout, Text::default())).id();
-            (app, readout)
-        };
+    fn open_profile(dir: &std::path::Path) -> (App, Entity) {
+        let mut app = App::new();
+        app.insert_resource(Layers::new(Layer::Providers));
+        install(&mut app, Some(dir.to_path_buf()));
+        let readout = app.world_mut().spawn((Readout, Text::default())).id();
+        (app, readout)
+    }
+
+    fn check_readout(app: &mut App, entity: Entity, expected: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.world().resource::<Panel>().work.is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Panel update timed out"
+            );
+            app.world_mut().run_system_once(receive_work).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        app.world_mut().run_system_once(readout).unwrap();
+        let text = &app.world().get::<Text>(entity).unwrap().0;
+        assert!(text.contains(expected), "{text}");
+    }
+
+    #[tokio::test]
+    async fn history_refreshes_the_selected_hold_after_actions_and_restart() {
+        let dir = std::env::temp_dir().join(format!("vespera-desktop-hold-{}", TaskId::new()));
+        register_pair(&dir).await;
         let check = |app: &mut App, entity, action, expected| {
             apply(action, &mut app.world_mut().resource_mut::<Panel>());
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while app.world().resource::<Panel>().work.is_some() {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "History update timed out"
-                );
-                app.world_mut().run_system_once(receive_work).unwrap();
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            app.world_mut().run_system_once(readout).unwrap();
-            let text = &app.world().get::<Text>(entity).unwrap().0;
-            assert!(text.contains(expected), "{text}");
+            check_readout(app, entity, expected);
         };
-        let (mut app, entity) = open();
+        let (mut app, entity) = open_profile(&dir);
         let clear = "Operator hold at last read  |  Clear";
         let suspended = "Operator hold at last read  |  Suspended";
         check(&mut app, entity, Action::History, clear);
@@ -2064,12 +2259,90 @@ mod tests {
         check(&mut app, entity, Action::NextAgent, clear);
         drop(app);
 
-        let (mut app, entity) = open();
+        let (mut app, entity) = open_profile(&dir);
         check(&mut app, entity, Action::History, suspended);
         check(&mut app, entity, Action::Resume, clear);
         drop(app);
         std::fs::remove_file(dir.join("desktop-tasks.sqlite3")).unwrap();
         std::fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn desktop_inbox_preserves_private_messages_and_recovers_sanitized_evidence() {
+        const MESSAGE: &str = "Private test message only visible in the recipient inbox";
+        let dir = std::env::temp_dir().join(format!("vespera-desktop-inbox-{}", TaskId::new()));
+        register_pair(&dir).await;
+        let (mut app, entity) = open_profile(&dir);
+        let action =
+            |app: &mut App, action| apply(action, &mut app.world_mut().resource_mut::<Panel>());
+        action(&mut app, Action::Message);
+        check_readout(&mut app, entity, "Grant communication");
+        action(&mut app, Action::ToggleCommunication);
+        check_readout(&mut app, entity, "Communication allowed");
+        let path = crate::desktop_evidence::journal_path(&dir);
+        std::fs::write(&path, "foreign fixture").unwrap();
+        action(&mut app, Action::Message);
+        {
+            let mut panel = app.world_mut().resource_mut::<Panel>();
+            submit_message(&mut panel, None, "2".into());
+            let Some(Edit::Message {
+                recipient: Some(_),
+                input,
+            }) = &mut panel.draft
+            else {
+                panic!("recipient must be selected");
+            };
+            MESSAGE.clone_into(input);
+            submit(&mut panel);
+        }
+        check_readout(
+            &mut app,
+            entity,
+            "Message saved to the recipient's local inbox.",
+        );
+        check_readout(&mut app, entity, "Swarm evidence could not be published.");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "foreign fixture");
+        action(&mut app, Action::Inbox);
+        check_readout(&mut app, entity, "0 retained messages");
+        action(&mut app, Action::NextAgent);
+        action(&mut app, Action::Inbox);
+        check_readout(&mut app, entity, "Grant communication");
+        action(&mut app, Action::ToggleCommunication);
+        check_readout(&mut app, entity, "Communication allowed");
+        drop(app);
+
+        let (mut app, entity) = open_profile(&dir);
+        action(&mut app, Action::NextAgent);
+        action(&mut app, Action::Inbox);
+        check_readout(&mut app, entity, MESSAGE);
+        check_readout(&mut app, entity, "1 retained messages");
+        drop(app);
+        std::fs::remove_file(&path).unwrap();
+        for _ in 0..2 {
+            crate::desktop_evidence::restore(&dir).unwrap();
+        }
+        let page = vespera_events::Journal::open_reader(&path)
+            .unwrap()
+            .replay(None, 8)
+            .unwrap();
+        assert_eq!(page.entries.len(), 1);
+        assert!(matches!(
+            page.entries[0].event.kind,
+            vespera_core::EventKind::AgentMessageSent { .. }
+        ));
+        assert!(
+            !serde_json::to_string(&page.entries[0].event)
+                .unwrap()
+                .contains(MESSAGE)
+        );
+        for file in [
+            path,
+            dir.join("desktop-tasks.sqlite3"),
+            dir.join("desktop.sqlite3"),
+        ] {
+            std::fs::remove_file(file).unwrap();
+        }
         std::fs::remove_dir(dir).unwrap();
     }
 

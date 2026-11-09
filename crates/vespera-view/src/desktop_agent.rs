@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use vespera_agents::{AgentTaskStore, ExecutionOptions, MemoryContext};
+use vespera_agents::{AgentMessage, AgentTaskStore, ExecutionOptions, MemoryContext};
 use vespera_app::memory::{authorize_remembered_task, configured_authorizer};
 use vespera_app::runtime::{VesperaRuntime, configured_registry};
 use vespera_config::{AppConfig, CONFIG_SCHEMA_VERSION, ProviderConfig};
@@ -451,6 +451,85 @@ fn current_roster(dir: &Path, revision: i64) -> Result<Roster, Failure> {
     load(dir)?
         .filter(|roster| roster.revision == revision)
         .ok_or("The saved binding changed. Reopen the application.")
+}
+
+pub(super) async fn inbox(
+    dir: &Path,
+    revision: i64,
+    selected: usize,
+) -> Result<Vec<AgentMessage>, String> {
+    let (runtime, actor) = inbox_runtime(dir, revision, selected).await?;
+    let path = dir.join("desktop-tasks.sqlite3");
+    if !path.try_exists().map_err(|_| STORAGE)? {
+        return Ok(vec![]);
+    }
+    runtime
+        .agents()
+        .attach_task_store(AgentTaskStore::open_existing(&path).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    runtime
+        .agents()
+        .inbox_messages(actor)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn send_message(
+    dir: &Path,
+    revision: i64,
+    selected: usize,
+    recipient: AgentId,
+    content: String,
+) -> Result<Option<String>, String> {
+    let (runtime, actor) = inbox_runtime(dir, revision, selected).await?;
+    runtime
+        .agents()
+        .attach_task_store(
+            AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    let (_, event) = runtime
+        .agents()
+        .send_message_observed(actor, recipient, content, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    drop(runtime);
+    let evidence = event
+        .ok_or("Missing inbox audit event.".to_owned())
+        .and_then(|event| crate::desktop_evidence::record_message(dir, &event));
+    Ok(evidence.err())
+}
+
+async fn inbox_runtime(
+    dir: &Path,
+    revision: i64,
+    selected: usize,
+) -> Result<(VesperaRuntime, AgentId), String> {
+    let roster = current_roster(dir, revision)?;
+    let (agent, _, _) = roster
+        .selection(selected)
+        .ok_or("No saved agent selected.")?;
+    if !agent.permissions.contains(&Permission::Communicate) {
+        return Err("Communication is denied for the selected agent.".into());
+    }
+    let actor = agent.identity.id;
+    let mut config = roster.config;
+    let agents = std::mem::take(&mut config.agents);
+    config.providers.clear();
+    config.models.clear();
+    config.scheduling = Default::default();
+    let runtime = VesperaRuntime::from_config(&config)
+        .await
+        .map_err(|error| error.to_string())?;
+    for agent in agents {
+        runtime
+            .agents()
+            .register_agent(agent)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok((runtime, actor))
 }
 
 fn retrieve_memory(
