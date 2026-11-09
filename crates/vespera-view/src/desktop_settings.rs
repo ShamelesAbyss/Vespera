@@ -1,4 +1,4 @@
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
@@ -19,6 +19,7 @@ const INVALID: &str =
 pub(super) fn load(dir: &Path) -> Result<Option<ProviderConfig>, &'static str> {
     let path = dir.join(FILE);
     match path.symlink_metadata() {
+        Ok(info) if info.is_file() && info.len() == 0 => return Ok(None),
         Ok(info) if info.is_file() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         _ => return Err(FORMAT),
@@ -34,12 +35,16 @@ pub(super) fn save(dir: &Path, settings: &ProviderConfig) -> Result<(), &'static
     let kind = validate(settings).ok_or(INVALID)?;
     fs::create_dir_all(dir).map_err(|_| STORAGE)?;
     let path = dir.join(FILE);
-    let created = match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+    let can_initialize = match path.symlink_metadata() {
+        Ok(info) if info.is_file() => info.len() == 0,
+        Ok(_) => return Err(FORMAT),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
         Err(_) => return Err(STORAGE),
     };
-    let mut db = open(&path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let mut db = open(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+    )?;
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| STORAGE)?;
@@ -47,7 +52,13 @@ pub(super) fn save(dir: &Path, settings: &ProviderConfig) -> Result<(), &'static
         (APPLICATION_ID, 1) => {
             read(&tx)?;
         }
-        (0, 0) if created => {
+        (0, 0) if can_initialize => {
+            let objects: i64 = tx
+                .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
+                .map_err(|_| FORMAT)?;
+            if objects != 0 {
+                return Err(FORMAT);
+            }
             tx.execute_batch(
                 "CREATE TABLE discovery (
                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -195,5 +206,17 @@ mod tests {
         assert!(load(&dir.0).is_err());
         assert!(save(&dir.0, &settings).is_err());
         assert_eq!(fs::read(path).unwrap(), b"foreign fixture");
+    }
+
+    #[test]
+    fn discovery_settings_retry_after_interrupted_file_creation() {
+        let dir = Fixture::new();
+        fs::create_dir(&dir.0).unwrap();
+        fs::File::create(dir.0.join(FILE)).unwrap();
+        assert!(load(&dir.0).unwrap().is_none());
+        let settings =
+            desktop_agent::provider(ProviderKind::Ollama, "http://127.0.0.1:11434".into());
+        save(&dir.0, &settings).unwrap();
+        assert_eq!(load(&dir.0).unwrap().unwrap().endpoint, settings.endpoint);
     }
 }

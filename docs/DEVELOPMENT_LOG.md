@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 12 — Recover an interrupted first settings save
+
+Discovery settings now treat an empty settings file as an unfinished initialization. The next save initializes it transactionally. A format check protects foreign databases and files. The first-save recovery regression passed with the other 52 default optimized graphics tests, and strict graphics Clippy passed.
+
 ## Milestone 12 — Edit a saved agent's name and role
 
 The desktop identity editor updates the selected agent through the existing roster revision check and displays the capabilities of the bound model. The native Windows walkthrough edited the name and role, reopened the application, and opened the same agent's retained tasks. The isolated roster comparison showed exactly the two intended fields changed. The task database matched byte for byte. The 52 default optimized graphics tests passed, including a regression for stale roster writes, along with formatting and strict graphics Clippy.
