@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Resumable worker event subscriptions
+
+Checkpoint `94e76f2f7daa08ed1902487a2641b5045951ba36` adds opt-in read-only reconnects to the Rust worker and operator SDK. The subscriber resumes from its acknowledged position with a fresh proof, retains the current event until acknowledgement, and stops on authorization or cursor rejection. It checks feed identity and consecutive sequence numbers. Existing low-level subscriptions and mutation calls retain their behavior.
+
+The real loopback TLS fixture delivered and redelivered an unacknowledged claim, completed and acknowledged it, killed the broker, and restarted it on the same address with the same SQLite database. The subscriber resumed at the acknowledged cursor and received the next claim. A second worker was denied that cursor, and revocation ended the original stream. All ten broker HTTP and WebSocket tests and strict app and SDK Clippy passed on Windows and Ubuntu WSL2. Windows SDK rustdoc passed with warnings denied. Independent physical-host deployment remains open. [Protocol](PROTOCOL.md#live-websocket-subscriptions) · [Hosted CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42556377775)
+
 ## 2026-11-08 — Automatic rollback after a failed Windows upgrade
 
 Checkpoint `140f712316c4dcd5731e9fc7872788c77fde2c99` extends the installer rehearsal with a test-only WiX action that aborts an upgrade before finalization. The local run used separately named packages, install and data paths, shortcuts, and registry identifiers. Both product versions used the same optimized executable fixture, with a distinct prior license payload. The MSI log confirmed successful old product removal before the injected `1603` failure. Windows Installer restored the prior registration and license hash, and the restored CLI reopened the byte-identical revision 3 world. The same run then passed the normal upgrade, downgrade rejection, manual restore, and fixture uninstall. The optimized release MSI checksum stayed unchanged.
