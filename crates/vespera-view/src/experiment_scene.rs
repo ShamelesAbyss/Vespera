@@ -509,13 +509,20 @@ mod tests {
     use vespera_world::World;
 
     fn wait(app: &mut App, label: Entity, expected: &str) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-        while app.world().resource::<ExperimentPanel>().busy() {
+        // Each comparison creates and flushes six SQLite stores. Hosted Windows
+        // storage can take longer when the other desktop tests run in parallel.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            app.world_mut().run_system_once(receive).unwrap();
+            let panel = app.world().resource::<ExperimentPanel>();
+            if !panel.busy() {
+                break;
+            }
             assert!(
                 std::time::Instant::now() < deadline,
-                "Experiment worker timed out"
+                "Experiment worker timed out waiting for {expected:?} (last status {:?})",
+                panel.status
             );
-            app.world_mut().run_system_once(receive).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         app.world_mut().run_system_once(readout).unwrap();
