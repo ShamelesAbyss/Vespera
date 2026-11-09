@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-09 — Revised Swarm silhouettes under concurrent inference
+
+The Windows debug build at `fa8b26a` rendered the three-agent synthetic journal while isolated Ollama 0.40.15 generated 1,400 tokens with `hermes3:8b` at 2,048 context. The first streamed token arrived at `08:26:12.261Z`. Swarm launched at `08:26:12.424Z` and reported the sample by `08:26:22.114Z`, before the final provider packet at `08:26:49.695Z`. The provider reported 37.440 seconds of evaluation and 4,750,049,279 bytes of fully GPU-resident model allocation. The model was unloaded and the isolated server stopped after the run.
+
+With no screenshot capture, 600 Vulkan updates after 120 warmup updates at 1200×800 measured 9.61 ms median, 10.53 ms p95, 13.02 ms p99, and 18.10 ms maximum. One sample on the RTX 4070 Laptop GPU showed 6,592 of 8,188 MiB in use at 97% utilization. These figures describe one model, GPU, and workload.
+
 ## 2026-11-09 — Distinct agent silhouettes in the Swarm Foundry
 
 Agent UUIDs now select narrow heat sinks, a split gantry, or a wide radiator bank. The chassis can be distinguished by shape as well as accent color, and the profile remains stable when the agent changes models. Native Windows overview and close-up captures show the three-agent fixture at sequences 19 and 20. The close-up caught the newly committed fixture message in transit. The README uses both captures and identifies their synthetic source.
