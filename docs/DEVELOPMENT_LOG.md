@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-08 — Current-source optimized Windows desktop package
+
+Source `472cfe4e7202ab2758e51726feacf0a21609376e` passed an offline optimized build, verification of 45 fresh portable files, and WiX 5.0.2 MSI and Setup construction. Administrative extraction matched 13 payloads against the manifest, and bundle extraction reproduced the exact MSI. The packaged CLI reported `0.1.2` and the view help exposed `--broker-tls-ca`. Two launcher runs from a separate working directory opened Home with a scratch profile and exited on a close request. The initial launcher harness waited for the entire process tree and timed out after the child was closed, then incorrectly expected an exit code from a process found by enumeration. The corrected harness waited for the launcher separately and observed both child window and process closure. Atlas Machine completed a focused Vulkan measurement on the RTX 4070 Laptop GPU. The [release guide](RELEASE.md#windows-x64-desktop-package-rehearsal) records artifact hashes, sample scope and remaining acceptance work.
+
 ## 2026-11-08 — Current-source optimized headless package
 
 The optimized Windows x64 CLI at `72dbf86169de6ea4233430766592d891ce7a5531` built offline and staged as a separate `0.1.2` headless archive. The Rust verifier checked all 43 listed files before and after running version, configuration validation, diagnostics and world commands from a fresh extraction. Revision 8 replay matched the entire committed public snapshot after normalizing JSON key order. The first direct JSON string comparison flagged different object key order in residents and sites. Structural comparison resolved the mismatch without a simulation change. The [release guide](RELEASE.md#windows-x64-headless-source-rehearsal) records the archive checksum and validation scope. Graphical qualification, separate physical-host TLS testing, signing and distribution review remain open.

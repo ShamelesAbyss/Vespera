@@ -111,6 +111,28 @@ returned the same world snapshot after normalizing JSON object key order. The
 manifest verified again after the walkthrough. This rehearsal covers Windows
 headless operation. The desktop and installer retain separate acceptance records.
 
+### Windows x64 desktop package rehearsal
+
+Source `472cfe4e7202ab2758e51726feacf0a21609376e` built offline as an optimized
+Windows x64 desktop package at software version `0.1.2`. A fresh portable
+extraction passed all 45 manifest checks. WiX 5.0.2 built the MSI and Setup.
+Administrative extraction matched all 13 MSI payloads to the portable manifest.
+The extracted Setup bundle contained the byte-identical standalone MSI.
+
+| Local rehearsal artifact | SHA-256 |
+| --- | --- |
+| `vespera-desktop-472cfe4.zip` | `2EB0403719D8A1082111CD8F34985F5951A58AA6D1B35D22AB32D8D2061CE9FE` |
+| `vespera-0.1.2.msi` | `E86DA87F49255AEDE3E0CBD45C1F66AB7E408DCDBDC8F5D3EF4B2511FC3EA2CE` |
+| `Vespera-Setup-0.1.2.exe` | `F741AD6F39192F44FB3E65951913E7F1489BEAF98B0E3B79D384E2DE4FB9A315` |
+
+From a different working directory, the extracted launcher opened Home twice
+with a scratch profile and each process exited after a close request. The
+extracted Atlas Machine view reported a 7.41 ms p95 application update interval
+over 60 focused samples after 120 warmup updates at 1200×800 on the RTX 4070
+Laptop GPU via Vulkan. These are update intervals. Interactive acceptance for
+the remaining Atlas views and workflow authoring, an installation lifecycle for
+these exact artifacts, and signing remain open.
+
 ### Validated Windows x64 candidate
 
 The candidate artifacts below are pinned to their recorded source revision.
