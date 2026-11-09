@@ -1,5 +1,11 @@
 # Development log
 
+## Milestones 13 and 14 — Repeat world experiments and verify the messaging package
+
+The packaged CLI repeated the 60-tick world policy comparison with three seeds. All six arms matched the repeated run on deterministic outcomes. Replaying each first-run database reproduced its recorded revision, tick, shelter count and shared stock. All three baseline arms reached five shelters, and none of the three suspension arms did. The paired shelter difference was −3 for each seed.
+
+The optimized package from `33ab12bfc3532b1a695600b6f7efeca950475306` passed portable and installer payload checks. The packaged CLI reopened a message and its separate, payload-free journal entry. The foreground input and native Swarm capture checks remain open. Windows passed 289 workspace tests and doctests in addition to the graphics validation below. [Package checksums](RELEASE.md#windows-x64-candidate-with-desktop-messaging)
+
 ## Milestones 7, 9 and 12 — Connect the desktop to durable local messaging
 
 The Providers panel now manages communication grants, composes a message to a saved agent, and pages through the selected recipient's inbox. The desktop rechecks the current roster and delegates storage and authorization to the agent runtime. The private message commits before Swarm publication. Only the sender and recipient audit envelope enters the journal. Startup can recover a missing observation from the task store.

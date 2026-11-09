@@ -189,6 +189,19 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Windows x64 candidate with desktop messaging
+
+The unsigned `0.1.2` build from `33ab12bfc3532b1a695600b6f7efeca950475306` verified 49 portable manifest files, 13 administrative MSI payload files, and the exact MSI embedded in Setup.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `18e1e7d64da3432166df718e7741c8079716e65ee418a024cf9c069bf0550d20` |
+| Standalone MSI | `3001a84ca7efbee504bb0dd2308d00f98b83da5753dede189b9cc07cb2b1e62a` |
+| Setup EXE | `673db910f79c8ed95ed028a67cbf765c13ee9f1d7f0ad5d2d0fcda0671d965d4` |
+| Internal review bundle | `6ccf85ca10200252f47cd59dbc64ec9068d0d670d0eb95f6dd139387d65eeddb` |
+
+The packaged CLI wrote and reopened a private inbox message. The journal recorded only its sender and recipient. The desktop regression verified permission checks, profile reopen, and recovery after a failed journal write. Native foreground input could not activate the viewer, and both native Swarm capture attempts timed out. The prior candidate below carries the full Atlas and restart evidence. The refreshed CycloneDX SBOM passed schema validation, and OSV returned zero matches for the 429 exact crates.io versions queried. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42684347057)
+
 ### Windows x64 candidate with workflow recovery
 
 The unsigned `0.1.2` candidate from `8adfe1c5acafe4a5770e94adab6e57005dc0daac` passed verification of 49 portable manifest files, 13 administrative MSI payload files, and the exact MSI embedded in Setup. Windows reports both installer files as unsigned.

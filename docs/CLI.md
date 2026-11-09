@@ -467,7 +467,13 @@ cargo run --locked -p vespera-app -- experiment-world --spec config/world.exampl
 
 `experiment-world` compares an all-active baseline with a run where selected residents of one role are suspended from tick zero. `--suspend-role` accepts `forager` or `builder`. `--suspend-count` defaults to one, accepts 1–31 and selects matching residents in specification order. At least one resident must remain active. `--ticks` accepts 1–1,000 and `--target-shelters` accepts 1–256. `--seeds` defaults to one and accepts up to the number of residents, with a maximum of 32. Each paired run uses the same world and seed in both arms. Successive seeds rotate the starting resident. The runner alternates which arm executes first to reduce timing order effects.
 
-The command writes JSON to stdout and creates a new evidence directory containing one SQLite world per arm per seed. The parent directory must exist. Existing evidence directories are refused. The report includes the full experiment configuration with canonical resident names and IDs, each trial’s final simulated resources and shelter count, target hits and misses, and the observed range of paired shelter differences. Each arm names its database, committed revision and advance event UUID. Use `world replay --revision` with the indicated database and revision to inspect a committed outcome.
+The command writes JSON to stdout and creates a new evidence directory containing one SQLite world per arm per seed. The parent directory must exist. Existing evidence directories are refused. The report includes the full experiment configuration with canonical resident names and IDs, each trial’s final simulated resources and shelter count, target hits and misses, and the observed range of paired shelter differences. Each arm names its database, committed revision and advance event UUID. The database name is relative to the evidence directory. Replay the recorded revision and read the resulting `world` snapshot.
+
+```powershell
+$report = Get-Content -Raw target/world-policy-report.json | ConvertFrom-Json
+$arm = $report.pairs[0].baseline.evidence
+vespera world --database (Join-Path target/world-policy-evidence $arm.database) replay --revision $arm.revision
+```
 
 Export `configuration.world` as JSON and supply the recorded parameters with a fresh evidence directory to repeat the deterministic metrics. Execution timings, process memory readings and event UUIDs vary between runs. Timing includes the policy and tick commits, with the initial database creation outside the measurement. Process memory is a single end-of-run reading. The report records no inference latency or GPU measurements for this offline experiment. The seed range describes the configured simulation, and it does not support a population-level statistical claim. If a trial encounters a storage error, the command exits unsuccessfully and completed evidence databases remain available.
 
