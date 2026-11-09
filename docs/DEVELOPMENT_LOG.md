@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-08 — Prompt desktop broker shutdown
+
+Checkpoint `b8edb0200e6368652e227cd673cc9a2c2acf961a` gives the primary desktop receiver ownership of the full broker observation lifetime. Closing it drops outstanding subscription, HTTP, publication and reconnect futures rather than waiting for their transport deadlines. Requests are not retried during shutdown; an interrupted cancellation still requires independent broker inspection to establish its remote outcome.
+
+A loopback fixture accepted the actual session HTTP request and deliberately withheld its response. Closing the view receiver ended the observer and closed that TCP connection within the one-second regression bound. A second regression waited for the disconnected status, then verified closure interrupted the two-second reconnect delay. Both passed on Windows and Ubuntu WSL2. The complete desktop binary suite passed on Windows (36 passed, two environment-dependent tests skipped) and WSL2 (35 passed, two skipped). Strict graphics Clippy, formatting and diff checks passed; WSL2 also passed all 11 broker integration tests. No graphical walkthrough or new TLS deployment was performed for this shutdown-only change. Hosted CI for the preceding TLS and session-safety checkpoints was still running at this inspection.
 ## 2026-11-08 — TLS transport for desktop broker views
 
 Checkpoint `9e03eb6a78bd38bf3f525dfb8c74faba64054592` adds `--broker-tls-ca` to Atlas, standalone Network and broker-backed Swarm. The option requires an explicit broker IP and port and loads a bounded PEM trust bundle through the existing TLS 1.3 SDK. Certificate verification and signed operator authority both apply. Without the option, HTTP remains restricted to loopback. No transport downgrade is implemented.
