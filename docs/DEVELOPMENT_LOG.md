@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Package the live Swarm capture
+
+The portable allowlist includes the live workflow screenshot linked by the staged README. The packager and manifest verifier example tests passed on Windows.
+
 ## Milestone 12 — Desktop pointer routing and live branching workflow
 
 On the unsigned Windows package at `d5e9593`, Home navigation accepted clicks but inactive desktop cameras could intercept provider buttons. Atlas now enables Bevy UI picking only on the active desktop camera. A navigation regression checks the marker when switching from Home to Providers and then to the Machine scene. The optimized Windows graphics suite and strict graphics Clippy passed.
