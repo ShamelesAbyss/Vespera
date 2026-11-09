@@ -109,6 +109,8 @@ The workspace pins Rust **1.99.1**. A fresh source build needs access to locked 
 
 For an internal build, follow the release walkthrough to stage and verify the Windows package. Run the resulting `Vespera-Setup.exe` for a per-user install with Start Menu and desktop shortcuts. For a portable candidate, open `bin\vespera-launcher.exe`. The installer and portable build include the official icon and assets. [Build and verify a local package](docs/RELEASE.md)
 
+Vespera Nexus Studio is the draft Microsoft Store edition. Its separate x64 MSIX build has passed development installation and upgrade testing. [Store preparation and test scope](https://github.com/ShamelesAbyss/Vespera/blob/main/docs/MICROSOFT_STORE.md)
+
 ### Run from source
 
 <details open>

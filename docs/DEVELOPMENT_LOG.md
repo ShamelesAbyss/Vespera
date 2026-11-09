@@ -1,5 +1,17 @@
 # Development log
 
+## Milestone 14 — Prepare the Vespera Nexus Studio Store edition
+
+Added an independent optimized Windows x64 MSIX path with an identity gate for Store product `9PNV5XMS74FW`, official package artwork and an isolated development identity. The Store viewer uses WinRT LocalState and routes updates through Microsoft Store. The classic installer and portable build retain their existing application paths.
+
+Windows SDK MakeAppx validated 14 files in each development package and matched the unpacked bytes. Local development signing, native Start activation, a committed simulation tick and upgrade from `1.0.0.0` to `1.0.1.0` passed. A separate run exercised loopback provider discovery, model registration, agent execution and retained task bytes after upgrade. The package and certificate were removed after testing. The 290 workspace tests and doctests, 57 classic optimized graphics tests, 56 Store-feature viewer tests and strict workspace Clippy with the Store feature passed. The actual Partner Center identity, certification, live packaged inference and public submission approval are pending. [Store build and listing](MICROSOFT_STORE.md)
+
+## Milestones 13 and 14 — Verify native experiment replay and classic installer data retention
+
+The Windows viewer built with the readout changes in `de08278` ran two experiments, reopened the older builder run and rendered its seed 43 intervention. A second process reopened the newer forager report and replayed its baseline. Both windows closed cleanly. The live-world SQLite file remained byte-identical. The readout uses supported glyphs and a path relative to the desktop profile. The optimized graphics suite passed. The replay panel shows verified trial values. Interactive 3D trial rendering remains open.
+
+The optimized Windows runner at `42288688358e76735f14d0607999b0aa3eb930ff` verified clean Setup, rollback after removal of the old product, upgrade, downgrade rejection and removal. World, memory and inbox databases retained the expected bytes. The installed CLI verified memory backup, restore and inbox isolation. [Hosted installer evidence](https://github.com/ShamelesAbyss/Vespera/actions/runs/42691367834/job/129411637693)
+
 ## Milestone 13 — Browse and replay retained world comparisons
 
 Experiments now opens the newest saved comparison and navigates to older and newer reports. The selected seed and arm reconstruct their committed world revision in the panel. The worker checks the arm's fixed filename, simulation values, seed and advance event against the report. A damaged report can be skipped while browsing.

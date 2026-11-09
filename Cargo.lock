@@ -5808,6 +5808,7 @@ dependencies = [
  "vespera-providers",
  "vespera-sdk",
  "vespera-world",
+ "windows",
  "winit",
  "xkbcommon-dl",
 ]

@@ -35,6 +35,10 @@ baseline against a later software version in an isolated Windows profile.
 Verify the signer and release asset digest after signing. The unsigned bundle
 hash from a rehearsal does not apply to the final signed bytes.
 
+## Microsoft Store
+
+Vespera Nexus Studio has a separate Windows x64 MSIX build and development identity. The Microsoft Store candidate requires the actual Partner Center identity and independent review. [MSIX build, listing and submission preparation](https://github.com/ShamelesAbyss/Vespera/blob/main/docs/MICROSOFT_STORE.md)
+
 ## Build and stage
 
 Use the pinned Rust toolchain, Git and the platform build tools. Start from a commit with a clean tracked worktree. Run the packager from the workspace root. [Build requirements](../README.md#requirements)
@@ -280,6 +284,14 @@ Windows passed 289 workspace tests and doctests, 53 default optimized graphics t
 All four Atlas views opened from the extraction. Intelligence Network matched a signed broker attempt to the live Ollama scheduler task and worker. The 1200×800 Network sample measured a 7.43 ms p95 update interval across 600 Vulkan updates after 120 warmup updates on an RTX 4070 Laptop GPU.
 
 ### Hosted optimized Windows installer qualification
+
+The optimized lifecycle for `42288688358e76735f14d0607999b0aa3eb930ff` also passed with the expanded world, memory and inbox fixtures. The upgraded CLI backed up and restored the retained memory record. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42691367834/job/129411637693)
+
+| Expanded lifecycle hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `84d2c5914e158fcb2ad1491d70716a800ff9344f4150146214a2d81bab125138` |
+| Candidate MSI | `c1f1bf7d0e144071e7ce2fab3792110804921ffca51effde107417c60d4f335d` |
+| Candidate Setup | `e1a2b5920d7dc24699c20a1646d34ee7bc09a8903eb2a66f56dd50eac8bcf2fa` |
 
 The Windows 2025 runner built `0.1.1` from `3d232672abacbfac1f0467cbbc5c64e58157702d` and `0.1.2` from `fd1a46449c05afa4d74cbd9f64bd95e816ce974c`. The run verified both portable manifests and the exact candidate MSI inside Setup. It passed clean Setup installation, rollback after a fault injected following old-product removal, upgrade from the optimized `0.1.1` MSI, downgrade rejection, Setup removal and manual restoration. The runner checked both shortcuts, installed payload hashes and the bytes and revision of the saved world. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42658938008/job/129304919231)
 

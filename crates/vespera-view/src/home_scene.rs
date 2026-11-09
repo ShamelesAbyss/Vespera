@@ -198,6 +198,22 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) -> std::proce
 }
 
 fn default_data_dir() -> Option<PathBuf> {
+    #[cfg(all(windows, feature = "store"))]
+    {
+        use windows::Storage::ApplicationData;
+        ApplicationData::Current()
+            .and_then(|data| data.LocalFolder())
+            .and_then(|folder| folder.Path())
+            .ok()
+            .map(|path| PathBuf::from(path.to_os_string()))
+            .filter(|path| path.is_absolute())
+    }
+    #[cfg(not(all(windows, feature = "store")))]
+    classic_data_dir()
+}
+
+#[cfg(not(all(windows, feature = "store")))]
+fn classic_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]
@@ -297,7 +313,17 @@ fn setup(
                         button(Action::Workflows, "Workflow history  [F7]"),
                         button(Action::Experiments, "World experiments  [F8]"),
                         button(Action::Motion, "Reduced motion  [M]"),
-                        button(Action::CheckUpdates, "Check for updates")
+                        (
+                            Node {
+                                display: if crate::desktop_update::STORE_BUILD {
+                                    Display::None
+                                } else {
+                                    Display::Flex
+                                },
+                                ..default()
+                            },
+                            children![button(Action::CheckUpdates, "Check for updates")]
+                        )
                     ]
                 ),
                 (

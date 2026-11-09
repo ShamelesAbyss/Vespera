@@ -8,6 +8,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
+store = ["dep:windows"]
 graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:reqwest", "dep:ring", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-memory", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit", "dep:xkbcommon-dl"]
 
 [[bin]]
@@ -56,6 +57,9 @@ nvml-wrapper = { version = "=0.13.0", default-features = false, optional = true 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xkbcommon-dl = { version = "=0.4.2", features = ["x11"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "=0.62.2", default-features = false, features = ["Storage_Search"], optional = true }
 
 [build-dependencies]
 cc = "=1.11.0"

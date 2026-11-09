@@ -10,6 +10,7 @@ const REPOSITORY: &str = "ShamelesAbyss/Vespera";
 const RELEASE_API: &str = "https://api.github.com/repos/ShamelesAbyss/Vespera/releases/latest";
 const MAX_METADATA: usize = 256 * 1024;
 const MAX_SETUP: u64 = 512 * 1024 * 1024;
+pub(super) const STORE_BUILD: bool = cfg!(all(windows, feature = "store"));
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Candidate {
@@ -44,10 +45,14 @@ impl Default for Updates {
             preparing: None,
             candidate: None,
             prepared: None,
-            installed: installer::standard_installation(),
+            installed: !STORE_BUILD && installer::standard_installation(),
             signer_pins: valid_signer_pins(option_env!("VESPERA_UPDATE_SIGNER_SHA256")),
             handoff: Handoff::default(),
-            status: format!("Running Vespera {}", env!("CARGO_PKG_VERSION")),
+            status: if STORE_BUILD {
+                "Updates are managed by Microsoft Store.".into()
+            } else {
+                format!("Running Vespera {}", env!("CARGO_PKG_VERSION"))
+            },
         }
     }
 }
@@ -61,7 +66,11 @@ fn valid_signer_pins(pins: Option<&str>) -> Option<&str> {
 
 impl Updates {
     pub(super) fn check(&mut self) {
-        if self.pending.is_some() || self.preparing.is_some() || self.prepared.is_some() {
+        if STORE_BUILD
+            || self.pending.is_some()
+            || self.preparing.is_some()
+            || self.prepared.is_some()
+        {
             return;
         }
         if !cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -143,7 +152,9 @@ impl Updates {
     }
 
     pub(super) fn install_label(&self) -> Option<&'static str> {
-        if self.prepared.is_some() {
+        if STORE_BUILD {
+            None
+        } else if self.prepared.is_some() {
             Some("Close and open Setup")
         } else if self.installed
             && self.signer_pins.is_some()
@@ -158,6 +169,9 @@ impl Updates {
 
     /// Returns true when Home should enter its ordinary window-close flow.
     pub(super) fn install(&mut self) -> bool {
+        if STORE_BUILD {
+            return false;
+        }
         if let Some(setup) = self.prepared.take() {
             *self
                 .handoff
@@ -302,6 +316,17 @@ mod tests {
 
     const TEST_PIN: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+    #[cfg(all(windows, feature = "store"))]
+    #[test]
+    fn store_build_never_starts_a_standalone_update() {
+        let mut updates = Updates::default();
+        updates.check();
+        assert!(updates.pending.is_none());
+        assert_eq!(updates.status, "Updates are managed by Microsoft Store.");
+        assert_eq!(updates.install_label(), None);
+        assert!(!updates.install());
+    }
+
     #[test]
     fn unpinned_build_cannot_prepare_an_installer() {
         let mut updates = Updates {
@@ -326,6 +351,7 @@ mod tests {
         assert_eq!(valid_signer_pins(Some(&"x".repeat(64))), None);
     }
 
+    #[cfg(not(all(windows, feature = "store")))]
     #[test]
     fn failed_setup_download_can_be_retried_without_checking_again() {
         let mut updates = Updates {
