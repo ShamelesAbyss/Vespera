@@ -294,6 +294,61 @@ async fn branch_join_transmits_only_declared_predecessor_results() {
 }
 
 #[tokio::test]
+async fn failed_branch_never_runs_join_and_preserves_partial_checkpoint() {
+    use vespera_orchestrator::WorkflowStore;
+    let fixture = Fixture::new(
+        vec![
+            (200, "seed-result"),
+            (200, "left-result"),
+            (500, "branch unavailable"),
+        ],
+        Duration::ZERO,
+        100,
+    )
+    .await;
+    let mut plan = fixture.plan(true);
+    let mut left = plan.steps[1].clone();
+    left.name = "left".into();
+    let mut right = left.clone();
+    right.name = "right".into();
+    let mut join = left.clone();
+    join.name = "join".into();
+    join.dependencies = vec!["left".into(), "right".into()];
+    plan.steps.truncate(1);
+    plan.steps.extend([left, right, join]);
+    plan.output = OutputPolicy::Step {
+        step: "join".into(),
+    };
+    let task = plan.task.id;
+    let path = std::env::temp_dir().join(format!("vespera-branch-failure-{task}.sqlite3"));
+    let store = WorkflowStore::open(&path).unwrap();
+    let report = fixture
+        .orchestrator
+        .execute_checkpointed(plan, CancellationToken::new(), None, Some(&store))
+        .await
+        .unwrap();
+    assert_eq!(report.task.state, TaskState::Failed);
+    assert_eq!(fixture.inference().len(), 3);
+    assert_eq!(report.attempts.len(), 3);
+    assert!(report.attempts.iter().all(|attempt| attempt.step != "join"));
+    drop(store);
+    let saved = WorkflowStore::inspect(&path, task).unwrap();
+    assert!(!saved.interrupted);
+    assert_eq!(saved.report.task.state, TaskState::Failed);
+    assert_eq!(
+        saved.report.attempts[0].task_state,
+        Some(TaskState::Completed)
+    );
+    assert_eq!(
+        saved.report.attempts[1].task_state,
+        Some(TaskState::Completed)
+    );
+    assert_eq!(saved.report.attempts[2].task_state, Some(TaskState::Failed));
+    assert_eq!(saved.plan.steps[3].dependencies, ["left", "right"]);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn failed_result_checkpoint_stops_dependent_work() {
     use vespera_orchestrator::WorkflowStore;
 
