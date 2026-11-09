@@ -189,7 +189,7 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 
 ### Windows x64 candidate with workflow editing and durable task audit
 
-The unsigned `0.1.2` build from `35ead88` verified 49 files after portable ZIP extraction, 13 MSI payloads and the exact MSI recovered from Setup. The MSI and Setup report `NotSigned`.
+The unsigned `0.1.2` build from `35ead88` verified 49 files after portable ZIP extraction, 13 MSI payloads and the exact MSI recovered from Setup. The MSI identifies Vespera 0.1.2 and records branded Start Menu and desktop shortcuts to the launcher. Windows icon extraction produced matching bitmaps from Setup, the launcher and the desktop executable. The MSI and Setup report `NotSigned`.
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -201,7 +201,7 @@ The extracted launcher opened with an isolated profile, displayed the official m
 
 The extracted desktop switched through all four Atlas views. Intelligence Network matched the current Ollama scheduler task and worker with the broker attempt. At 1200×800 on the RTX 4070 Laptop GPU, the Network view recorded a 7.50 ms p95 update interval over 600 Vulkan updates after 120 warmup updates.
 
-Windows formatting, workspace all-target checks, 289 workspace tests and doctests, strict Clippy and rustdoc, and 49 default optimized graphics tests passed. The internal review bundle carries the schema-validated SBOM for this revision and the matching locked dependency inventory. Signing, independent review and the outstanding attribution requirements remain public release gates. [Candidate CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42656388657)
+On Windows 11 Home build 26300, formatting, workspace all-target checks, 289 workspace tests and doctests, strict Clippy and rustdoc, 49 default optimized graphics tests, and the opt-in Windows Credential Manager rehearsal passed. The foundation, Linux native and Windows native CI jobs passed, including the disposable Windows installer lifecycle with generated fixtures. The internal review bundle carries the schema-validated SBOM for this revision and the matching locked dependency inventory. Signing, independent review and the outstanding attribution requirements remain public release gates. [Passing candidate CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42656388657)
 
 ### Refreshed unsigned Windows x64 candidate
 
