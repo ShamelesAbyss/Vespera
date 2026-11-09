@@ -182,6 +182,8 @@ The operator task audit upgrades broker storage to schema 4. For a rollback to a
 
 A profile using Windows Credential Manager stores the source choice and endpoint. The Windows account supplies the credential independently of the profile backup. Use the pre-upgrade profile with builds that predate the `credential_windows` field.
 
+For a rollback to a build that predates `fixed_with_capabilities`, use a pre-upgrade profile if any desktop agent saved that policy. [Fixed model requirements](AGENTS.md#fixed-model-requirements)
+
 ## Release evidence
 
 - Record the Git revision, Windows or Linux architecture, build profile and package checksums.

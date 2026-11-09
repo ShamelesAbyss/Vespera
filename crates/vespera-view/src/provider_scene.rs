@@ -14,7 +14,7 @@ use vespera_agents::{
 };
 use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
 use vespera_config::ProviderConfig;
-use vespera_core::{AgentId, Permission, ProviderKind, TaskId};
+use vespera_core::{AgentId, ModelSelectionPolicy, Permission, ProviderKind, TaskId};
 use vespera_orchestrator::{OutputPolicy, Workflow};
 use vespera_providers::{
     CancellationToken, DiscoveredModel, ProviderError, ProviderHealthReport,
@@ -69,6 +69,7 @@ enum Action {
     NextAgent,
     NewAgent,
     EditIdentity,
+    EditRequirements,
     Rebind,
     History,
     AllowDelegation,
@@ -103,6 +104,7 @@ enum Edit {
         fields: [String; 2],
         index: usize,
     },
+    Requirements(String),
     MemoryPhrase(String),
     Prompt(String, Option<String>),
     Message {
@@ -495,6 +497,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Cancel, "Cancel work"),
                         windows_credential_button,
                         button(Action::EditIdentity, "Edit agent identity"),
+                        button(Action::EditRequirements, "Require capabilities"),
                         button(Action::ToggleMemoryRead, "Toggle memory read"),
                         button(Action::ToggleMemoryWrite, "Toggle memory write"),
                         button(Action::MemoryPrompt, "Run with memory"),
@@ -749,6 +752,26 @@ fn apply(action: Action, panel: &mut Panel) {
             } else {
                 panel.feedback = "Select a saved agent to edit its identity.".into();
             }
+        }
+        Action::EditRequirements => {
+            let Some((agent, _, _)) = panel
+                .roster
+                .as_ref()
+                .and_then(|roster| roster.selection(panel.selected))
+            else {
+                panel.feedback = "Select a saved agent to edit its capability requirements.".into();
+                return;
+            };
+            let input = match &agent.model_policy {
+                ModelSelectionPolicy::FixedWithCapabilities { required, .. } => required
+                    .iter()
+                    .map(|item| item.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                _ => String::new(),
+            };
+            panel.feedback.clear();
+            panel.draft = Some(Edit::Requirements(input));
         }
         Action::Rebind => {
             panel.rebind = panel.roster.is_some();
@@ -1148,6 +1171,7 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
             ..
         } => (&mut fields[*index], 64, |c| !c.is_control()),
         Edit::Identity { fields, index } => (&mut fields[*index], 64, |c| !c.is_control()),
+        Edit::Requirements(value) => (value, 512, |c| !c.is_control()),
         Edit::Registration { fields, index, .. } => {
             (&mut fields[*index], 8, |c| c.is_ascii_digit())
         }
@@ -1305,6 +1329,36 @@ fn submit(panel: &mut Panel) {
                     "Agent name and role saved.",
                 ));
                 panel.feedback = "Saving agent identity...".into();
+            }
+        }
+        Edit::Requirements(input) => {
+            let Some((dir, roster)) = panel.dir.clone().zip(panel.roster.clone()) else {
+                return;
+            };
+            let required = desktop_agent::parse_requirements(&input).and_then(|required| {
+                let (_, model, _) = roster
+                    .selection(panel.selected)
+                    .ok_or("No saved agent selected.")?;
+                if !required.is_subset(&model.capabilities) {
+                    return Err("The bound model does not declare every required capability.");
+                }
+                Ok(required)
+            });
+            match required {
+                Ok(required) => {
+                    let selected = panel.selected;
+                    panel.work = Some(Work::SaveRoster(
+                        background(move |_| {
+                            desktop_agent::set_requirements(&dir, roster, selected, required)
+                        }),
+                        "Agent capability requirements saved.",
+                    ));
+                    panel.feedback = "Saving capability requirements...".into();
+                }
+                Err(error) => {
+                    panel.feedback = error.into();
+                    panel.draft = Some(Edit::Requirements(input));
+                }
             }
         }
         Edit::MemoryPhrase(phrase) => {
@@ -1828,7 +1882,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     {
         let _ = writeln!(
             content,
-            "Agent {} of {}  |  {}  |  {}  |  Delegation {}\nBound model  |  {}\nCapabilities  |  {}\nTask endpoint  |  {}",
+            "Agent {} of {}  |  {}  |  {}  |  Delegation {}\nBound model  |  {}\nDeclared model capabilities  |  {}\nTask endpoint  |  {}",
             panel.selected + 1,
             roster.len(),
             agent.identity.name,
@@ -1849,6 +1903,31 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                 90
             ),
             provider.endpoint
+        );
+        let required = match &agent.model_policy {
+            ModelSelectionPolicy::FixedWithCapabilities { required, .. } => required
+                .iter()
+                .map(|item| item.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "None".into(),
+        };
+        let estimate = |bytes: Option<u64>| {
+            bytes.map_or_else(
+                || "Unknown".into(),
+                |bytes| format!("{} MiB", bytes / (1024 * 1024)),
+            )
+        };
+        let _ = writeln!(
+            content,
+            "Agent requirements  |  {}\nEstimated RAM  |  {}    VRAM  |  {}\nModel context ceiling  |  {}    Quantization  |  {}",
+            preview(&required, 180),
+            estimate(model.resources.ram_bytes),
+            estimate(model.resources.vram_bytes),
+            model
+                .context_window_tokens
+                .map_or_else(|| "Unknown".into(), |tokens| format!("{tokens} tokens")),
+            preview(model.quantization.as_deref().unwrap_or("Unknown"), 45),
         );
         if let Some(name) = &provider.credential_env {
             let _ = writeln!(content, "Task credential variable  |  {name}");
@@ -1915,6 +1994,12 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
             Edit::Identity { fields, index } => {
                 let label = ["Agent name", "Agent role"][*index];
                 let _ = write!(content, "\n{label}: {}_\nEnter continues.", fields[*index]);
+            }
+            Edit::Requirements(value) => {
+                let _ = write!(
+                    content,
+                    "\nRequired capability names  |  {value}_\nSeparate declared names with spaces. Enter saves. Delete clears. Desktop tasks use text chat."
+                );
             }
             Edit::Workflow { fields, index } => {
                 if *index == 0
@@ -2242,6 +2327,144 @@ mod tests {
         app.world_mut().run_system_once(readout).unwrap();
         let text = &app.world().get::<Text>(entity).unwrap().0;
         assert!(text.contains(expected), "{text}");
+    }
+
+    #[tokio::test]
+    async fn desktop_requirements_survive_restart_and_protect_shared_model_metadata() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for capabilities in [
+                r#"["completion","tools"]"#,
+                r#"["completion","tools"]"#,
+                r#"["completion"]"#,
+            ] {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                assert_eq!(line.trim_end(), "POST /api/show HTTP/1.1");
+                let mut length = None;
+                loop {
+                    line.clear();
+                    assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = Some(value.trim().parse().unwrap());
+                    }
+                }
+                let mut request = vec![0; length.unwrap()];
+                stream.read_exact(&mut request).await.unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&request).unwrap()["model"],
+                    "fixture"
+                );
+                let body = format!(
+                    r#"{{"capabilities":{capabilities},"details":{{"quantization_level":"Q4_K_M"}},"model_info":{{"fixture.context_length":8192}}}}"#
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let dir =
+            std::env::temp_dir().join(format!("vespera-desktop-requirements-{}", TaskId::new()));
+        let registration = |name: &str| Registration {
+            provider: desktop_agent::provider(ProviderKind::Ollama, format!("http://{address}")),
+            model: DiscoveredModel {
+                provider_model_name: "fixture".into(),
+                digest: None,
+                size_bytes: None,
+                parameter_size: None,
+                quantization_level: None,
+                family: None,
+            },
+            agent_name: name.into(),
+            role: "Fixture".into(),
+            rebind: None,
+            ram_mib: 1024,
+            vram_mib: 0,
+        };
+        let (first, _) = desktop_agent::register(&dir, None, registration("First"))
+            .await
+            .unwrap();
+        desktop_agent::register(&dir, Some(&first), registration("Second"))
+            .await
+            .unwrap();
+        let (mut app, entity) = open_profile(&dir);
+        check_readout(
+            &mut app,
+            entity,
+            "Declared model capabilities  |  text-generation, tool-use",
+        );
+        check_readout(&mut app, entity, "Model context ceiling  |  8192 tokens");
+        let edit = |app: &mut App, input: &str| {
+            let mut panel = app.world_mut().resource_mut::<Panel>();
+            if panel.draft.is_none() {
+                apply(Action::EditRequirements, &mut panel);
+            }
+            let Some(Edit::Requirements(value)) = &mut panel.draft else {
+                panic!("requirement editor must be open");
+            };
+            input.clone_into(value);
+            submit(&mut panel);
+        };
+        edit(&mut app, "vision");
+        check_readout(
+            &mut app,
+            entity,
+            "The bound model does not declare every required capability.",
+        );
+        assert_eq!(desktop_agent::load(&dir).unwrap().unwrap().revision, 1);
+        edit(&mut app, "tool-use");
+        check_readout(&mut app, entity, "Agent requirements  |  tool-use");
+        drop(app);
+        let (mut app, entity) = open_profile(&dir);
+        check_readout(&mut app, entity, "Agent requirements  |  tool-use");
+        apply(
+            Action::NextAgent,
+            &mut app.world_mut().resource_mut::<Panel>(),
+        );
+        check_readout(&mut app, entity, "Agent requirements  |  None");
+
+        let saved = desktop_agent::load(&dir).unwrap().unwrap();
+        let mut refresh = registration("Second");
+        refresh.rebind = Some(saved.selection(1).unwrap().0.identity.id);
+        assert_eq!(
+            desktop_agent::register(&dir, Some(&saved), refresh)
+                .await
+                .err(),
+            Some("The model does not satisfy a saved agent's required capabilities.")
+        );
+        server.await.unwrap();
+        let mut replacement = registration("First");
+        replacement.provider =
+            desktop_agent::provider(ProviderKind::OpenAiCompatible, COMPATIBLE.into());
+        replacement.rebind = Some(saved.selection(0).unwrap().0.identity.id);
+        assert!(
+            desktop_agent::register(&dir, Some(&saved), replacement)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            desktop_agent::load(&dir).unwrap().unwrap().revision,
+            saved.revision
+        );
+        assert!(desktop_agent::set_requirements(&dir, first, 0, Default::default()).is_err());
+
+        apply(
+            Action::PreviousAgent,
+            &mut app.world_mut().resource_mut::<Panel>(),
+        );
+        edit(&mut app, "");
+        check_readout(&mut app, entity, "Agent requirements  |  None");
+        drop(app);
+        std::fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[tokio::test]

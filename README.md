@@ -148,6 +148,8 @@ For an authenticated loopback server, choose **Credential reference** to use a l
 
 Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. Grant delegation to a coordinator, then use **G** for **Draft + review** or **C** to author and revise a workflow with two to six steps and explicit dependencies. **F7** opens retained checkpoints. From there you can focus Swarm on a run or open its plan as an editable copy. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow builder](docs/CLI.md#author-a-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 
+Models & Providers shows saved model capabilities and memory estimates. Use **Require capabilities** to make the selected agent's binding enforce specific model declarations across tasks and workflows. [Desktop model and agent controls](docs/CLI.md#register-a-model-and-run-a-desktop-agent)
+
 On Windows x64, **Check for updates** on Home looks for a newer eligible
 official release. A standard per-user installation with an approved signer
 fingerprint can download and verify Setup, then open it after Vespera shuts

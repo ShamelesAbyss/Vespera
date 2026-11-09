@@ -11,8 +11,7 @@ use vespera_agents::{
 };
 use vespera_config::{AppConfig, ConfigError, ProviderConfig};
 use vespera_core::{
-    AgentId, AgentStatus, ModelAvailability, ModelId, ModelSelectionPolicy, Permission, ProviderId,
-    ProviderKind, Task,
+    AgentId, AgentStatus, ModelAvailability, ModelId, Permission, ProviderId, ProviderKind, Task,
 };
 use vespera_model_registry::{
     ModelRegistration, ModelRegistry, ProviderHealthState, RegistryError,
@@ -369,12 +368,9 @@ impl VesperaRuntime {
                 .iter()
                 .filter(|model| {
                     model.available
-                        && match &worker.model_policy {
-                            ModelSelectionPolicy::Fixed { model_id } => model.model_id == *model_id,
-                            ModelSelectionPolicy::Capability { required } => {
-                                required.is_subset(&model.capabilities)
-                            }
-                        }
+                        && worker
+                            .model_policy
+                            .accepts(model.model_id, &model.capabilities)
                 })
                 .map(|model| model.capabilities.clone())
                 .collect();
@@ -468,14 +464,7 @@ impl VesperaRuntime {
                         && selected.iter().any(|agent| {
                             agent.status == AgentStatus::Idle
                                 && step.candidates.contains(&agent.identity.id)
-                                && match &agent.model_policy {
-                                    ModelSelectionPolicy::Fixed { model_id } => {
-                                        *model_id == model.id
-                                    }
-                                    ModelSelectionPolicy::Capability { required } => {
-                                        required.is_subset(&model.capabilities)
-                                    }
-                                }
+                                && agent.model_policy.accepts(model.id, &model.capabilities)
                         })
                 })
         });
@@ -515,12 +504,7 @@ impl VesperaRuntime {
                 .iter()
                 .filter(|model| {
                     model.availability != ModelAvailability::Unavailable
-                        && match &agent.model_policy {
-                            ModelSelectionPolicy::Fixed { model_id } => model.id == *model_id,
-                            ModelSelectionPolicy::Capability { required } => {
-                                required.is_subset(&model.capabilities)
-                            }
-                        }
+                        && agent.model_policy.accepts(model.id, &model.capabilities)
                 })
                 .map(|model| model.id)
                 .collect::<Vec<_>>();
@@ -728,12 +712,9 @@ impl VesperaRuntime {
             .filter(|model| {
                 model.available
                     && task.required_capabilities.is_subset(&model.capabilities)
-                    && match &agent.model_policy {
-                        ModelSelectionPolicy::Fixed { model_id } => model.model_id == *model_id,
-                        ModelSelectionPolicy::Capability { required } => {
-                            required.is_subset(&model.capabilities)
-                        }
-                    }
+                    && agent
+                        .model_policy
+                        .accepts(model.model_id, &model.capabilities)
             })
             .map(|model| model.provider_id)
             .collect();

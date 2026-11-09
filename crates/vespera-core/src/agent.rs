@@ -31,17 +31,52 @@ impl AgentIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelSelectionPolicy {
-    Fixed { model_id: ModelId },
-    Capability { required: BTreeSet<Capability> },
+    Fixed {
+        model_id: ModelId,
+    },
+    FixedWithCapabilities {
+        model_id: ModelId,
+        required: BTreeSet<Capability>,
+    },
+    Capability {
+        required: BTreeSet<Capability>,
+    },
 }
 
 impl ModelSelectionPolicy {
+    /// Returns the bound model for either fixed policy.
+    pub fn fixed_model(&self) -> Option<ModelId> {
+        match self {
+            Self::Fixed { model_id } | Self::FixedWithCapabilities { model_id, .. } => {
+                Some(*model_id)
+            }
+            Self::Capability { .. } => None,
+        }
+    }
+
+    /// Checks the binding and capability requirements against model metadata.
+    pub fn accepts(&self, id: ModelId, capabilities: &BTreeSet<Capability>) -> bool {
+        match self {
+            Self::Fixed { model_id } => *model_id == id,
+            Self::FixedWithCapabilities { model_id, required } => {
+                *model_id == id && required.is_subset(capabilities)
+            }
+            Self::Capability { required } => required.is_subset(capabilities),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), DomainError> {
         match self {
-            Self::Fixed { model_id } => model_id.validate(),
-            Self::Capability { required } if required.is_empty() => Err(DomainError::EmptySet {
-                field: "agent.model_policy.required",
-            }),
+            Self::FixedWithCapabilities { required, .. } | Self::Capability { required }
+                if required.is_empty() =>
+            {
+                Err(DomainError::EmptySet {
+                    field: "agent.model_policy.required",
+                })
+            }
+            Self::Fixed { model_id } | Self::FixedWithCapabilities { model_id, .. } => {
+                model_id.validate()
+            }
             Self::Capability { .. } => Ok(()),
         }
     }

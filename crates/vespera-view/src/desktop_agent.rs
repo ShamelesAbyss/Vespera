@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -40,9 +41,7 @@ impl Roster {
         index: usize,
     ) -> Option<(&AgentDefinition, &ModelDescriptor, &ProviderConfig)> {
         let agent = self.config.agents.get(index)?;
-        let ModelSelectionPolicy::Fixed { model_id } = agent.model_policy else {
-            return None;
-        };
+        let model_id = agent.model_policy.fixed_model()?;
         let model = self
             .config
             .models
@@ -131,7 +130,7 @@ fn read(db: &Connection) -> Result<Option<Roster>, Failure> {
         || config
             .agents
             .iter()
-            .any(|agent| !matches!(agent.model_policy, ModelSelectionPolicy::Fixed { .. }))
+            .any(|agent| agent.model_policy.fixed_model().is_none())
     {
         return Err(FORMAT);
     }
@@ -221,6 +220,7 @@ pub(super) async fn register(
         None => return Err("This desktop profile already has 16 agents."),
     };
     let text = Capability::new("text-generation").expect("static capability is valid");
+    let mut capabilities = BTreeSet::from([text.clone()]);
     let mut context = None;
     let mut quantization = model.quantization_level;
     if native {
@@ -242,6 +242,7 @@ pub(super) async fn register(
         }
         context = metadata.context_window_tokens;
         quantization = metadata.quantization_level.or(quantization);
+        capabilities = metadata.capabilities;
     }
     let existing_model = inventory
         .models
@@ -255,7 +256,7 @@ pub(super) async fn register(
         provider_id: id,
         name: model.provider_model_name.clone(),
         identifier: model.provider_model_name,
-        capabilities: [text].into(),
+        capabilities,
         context_window_tokens: context,
         parameter_count: None,
         quantization,
@@ -272,8 +273,7 @@ pub(super) async fn register(
             .iter()
             .enumerate()
             .any(|(agent_index, agent)| {
-                agent_index != index
-                    && agent.model_policy == ModelSelectionPolicy::Fixed { model_id }
+                agent_index != index && agent.model_policy.fixed_model() == Some(model_id)
             });
         if shared && inventory.models[existing].resources != descriptor.resources {
             return Err(
@@ -300,7 +300,15 @@ pub(super) async fn register(
     if let Some(agent) = inventory.agents.get_mut(index) {
         agent.identity.name = definition.identity.name;
         agent.identity.role = definition.identity.role;
-        agent.model_policy = definition.model_policy;
+        agent.model_policy = match &agent.model_policy {
+            ModelSelectionPolicy::FixedWithCapabilities { required, .. } => {
+                ModelSelectionPolicy::FixedWithCapabilities {
+                    model_id,
+                    required: required.clone(),
+                }
+            }
+            _ => definition.model_policy,
+        };
     } else {
         inventory.agents.push(definition);
     }
@@ -308,7 +316,7 @@ pub(super) async fn register(
         inventory
             .agents
             .iter()
-            .any(|agent| agent.model_policy == ModelSelectionPolicy::Fixed { model_id: model.id })
+            .any(|agent| agent.model_policy.fixed_model() == Some(model.id))
     });
     inventory.providers.retain(|provider| {
         inventory
@@ -316,6 +324,14 @@ pub(super) async fn register(
             .iter()
             .any(|model| model.provider_id == provider.id)
     });
+    if inventory.agents.iter().any(|agent| {
+        !inventory
+            .models
+            .iter()
+            .any(|model| agent.model_policy.accepts(model.id, &model.capabilities))
+    }) {
+        return Err("The model does not satisfy a saved agent's required capabilities.");
+    }
     inventory
         .validate()
         .map_err(|_| "Invalid agent name, model, or resource declaration.")?;
@@ -403,6 +419,37 @@ pub(super) fn set_permission(
     } else {
         agent.permissions.remove(&permission);
     }
+    Ok((save(dir, Some(roster.revision), roster.config)?, selected))
+}
+
+pub(super) fn parse_requirements(input: &str) -> Result<BTreeSet<Capability>, Failure> {
+    input
+        .split_whitespace()
+        .map(|name| {
+            name.parse()
+                .map_err(|_| "Enter valid lowercase capability names.")
+        })
+        .collect()
+}
+
+pub(super) fn set_requirements(
+    dir: &Path,
+    mut roster: Roster,
+    selected: usize,
+    required: BTreeSet<Capability>,
+) -> Result<(Roster, usize), Failure> {
+    let (_, model, _) = roster
+        .selection(selected)
+        .ok_or("No saved agent selected.")?;
+    if !required.is_subset(&model.capabilities) {
+        return Err("The bound model does not declare every required capability.");
+    }
+    let model_id = model.id;
+    roster.config.agents[selected].model_policy = if required.is_empty() {
+        ModelSelectionPolicy::Fixed { model_id }
+    } else {
+        ModelSelectionPolicy::FixedWithCapabilities { model_id, required }
+    };
     Ok((save(dir, Some(roster.revision), roster.config)?, selected))
 }
 

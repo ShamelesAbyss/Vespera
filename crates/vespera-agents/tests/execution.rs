@@ -327,6 +327,36 @@ async fn runtime_fixture() -> (
 }
 
 #[tokio::test]
+async fn fixed_requirements_refuse_ineligible_models_before_loading() {
+    let (runtime, _, provider, a, b, model_id) = runtime_fixture().await;
+    runtime
+        .rebind_model_policy(
+            a,
+            ModelSelectionPolicy::FixedWithCapabilities {
+                model_id,
+                required: ["reasoning".parse().unwrap()].into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtime
+            .start_task_execution(a, task(TaskId::new()), None, CancellationToken::new())
+            .await,
+        Err(AgentRuntimeError::NoMatchingModel { agent_id }) if agent_id == a
+    ));
+    assert_eq!(provider.loads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        runtime
+            .resolve_model_for_agent(b, &BTreeSet::new())
+            .await
+            .unwrap()
+            .model_id,
+        model_id
+    );
+}
+
+#[tokio::test]
 async fn task_completion_uses_recorded_lease_and_rejects_wrong_or_duplicate_release() {
     let (runtime, scheduler, _, a, b, model) = runtime_fixture().await;
     let task_a = TaskId::new();

@@ -135,7 +135,15 @@ pub(super) async fn run(args: Args) -> Result<(), AppError> {
             .iter_mut()
             .find(|agent| agent.identity.id == args.agent)
             .expect("validated agent");
-        agent.model_policy = ModelSelectionPolicy::Fixed { model_id };
+        agent.model_policy = match &agent.model_policy {
+            ModelSelectionPolicy::FixedWithCapabilities { required, .. } => {
+                ModelSelectionPolicy::FixedWithCapabilities {
+                    model_id,
+                    required: required.clone(),
+                }
+            }
+            _ => ModelSelectionPolicy::Fixed { model_id },
+        };
         config
     });
     std::fs::create_dir(&args.evidence_dir).map_err(AppError::ExperimentDirectory)?;
@@ -315,6 +323,13 @@ fn select_models<'a>(
     }
     for model in models {
         require_local_ollama(config, model.provider_id)?;
+        if let ModelSelectionPolicy::FixedWithCapabilities { required, .. } = &agent.model_policy
+            && !required.is_subset(&model.capabilities)
+        {
+            return Err(AppError::ModelExperimentInput(
+                "selected model does not satisfy the agent's fixed capability requirements",
+            ));
+        }
         if model.availability == vespera_core::ModelAvailability::Unavailable {
             return Err(AppError::ModelExperimentInput(
                 "selected model is marked unavailable",

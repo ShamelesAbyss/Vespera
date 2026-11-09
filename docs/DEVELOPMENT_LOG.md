@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Preserve model declarations and enforce desktop agent requirements
+
+The Providers panel retains Ollama's capability declarations and displays context, quantization and scheduler estimates. Each agent can save its own required capabilities while keeping a fixed model. The same eligibility check is used for task dispatch, provider scoping, workflow candidates and model comparison. Rebinds preserve the requirement and reject incompatible replacements or refreshes of a shared registration.
+
+The optimized Windows graphics suite passed 57 tests, with six opt-in tests skipped. A loopback Ollama protocol fixture drove registration and the Bevy editor through save, restart, separate agent selection, a refused shared metadata change, and clearing the requirement. The 290 workspace tests and doctests passed, including a regression that verifies the agent runtime refuses a capability mismatch before loading the model. Strict workspace Clippy with graphics and formatting passed. Native foreground interaction and live Ollama verification for this editor remain open. Existing fixed profiles load with the new build. Older builds need the pre-upgrade backup once the new policy has been saved. [Agent policy](AGENTS.md#fixed-model-requirements)
+
 ## Milestones 13 and 14 — Qualify the desktop experiment package
 
 The optimized package at `353857889c989ef0d02033d1d9cf438e24839230` passed archive and installer payload verification, native Home launch and clean close. The packaged CLI validated the bundled configuration, ran doctor, and replayed the builder comparison's six arms. A separate repeat matched every deterministic outcome and verified that the runner refused to overwrite an existing evidence directory. The source passed 289 workspace tests and doctests, 56 optimized graphics tests, strict graphics Clippy, formatting and strict workspace rustdoc. The native foreground walkthrough remains open. [Package evidence](RELEASE.md#windows-x64-candidate-with-desktop-world-experiments)

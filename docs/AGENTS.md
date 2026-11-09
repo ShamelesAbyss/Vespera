@@ -6,6 +6,19 @@ inspects agents, routes by fixed model or declared capabilities, coordinates
 owned task execution, and provides permission-gated in-process memory/messages.
 It is not yet a persistent autonomous ecosystem or an external-agent server.
 
+## Fixed model requirements
+
+An agent can require capabilities while keeping a fixed model binding. In
+configuration, set the policy's `kind` to `fixed_with_capabilities` and provide
+the existing `model_id` and a nonempty `required` list. The same binding and
+capability check applies when scoping providers, planning workflow candidates,
+and resolving a model for execution. Task requirements still apply in addition
+to the agent policy. [Desktop capability editor](CLI.md#register-a-model-and-run-a-desktop-agent)
+
+Existing fixed policies continue to load. Earlier Vespera builds cannot read a
+profile that contains the new policy. Keep a pre-upgrade profile backup when
+qualifying a downgrade.
+
 ## Durable task ownership
 
 Pass `--task-store <PATH>` to `run-agent` or `run-workflow` to retain accepted

@@ -97,7 +97,8 @@ fn sum<'a>(mut values: impl Iterator<Item = &'a str>) -> Result<usize, AgentRunt
 pub(super) fn policy_bytes(policy: &ModelSelectionPolicy) -> Result<usize, AgentRuntimeError> {
     match policy {
         ModelSelectionPolicy::Fixed { .. } => Ok(0),
-        ModelSelectionPolicy::Capability { required } => {
+        ModelSelectionPolicy::FixedWithCapabilities { required, .. }
+        | ModelSelectionPolicy::Capability { required } => {
             sum(required.iter().map(|capability| capability.as_str()))
         }
     }

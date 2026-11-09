@@ -906,12 +906,9 @@ impl AgentRuntime {
             for model in &models {
                 if model.available
                     && required.is_subset(&model.capabilities)
-                    && match &agent.model_policy {
-                        ModelSelectionPolicy::Fixed { model_id } => *model_id == model.model_id,
-                        ModelSelectionPolicy::Capability { required } => {
-                            required.is_subset(&model.capabilities)
-                        }
-                    }
+                    && agent
+                        .model_policy
+                        .accepts(model.model_id, &model.capabilities)
                 {
                     providers.insert(model.provider_id);
                 }
@@ -952,9 +949,15 @@ impl AgentRuntime {
         let agent = self.get_agent(agent_id).await?;
 
         match &agent.model_policy {
-            ModelSelectionPolicy::Fixed { model_id } => {
+            ModelSelectionPolicy::Fixed { model_id }
+            | ModelSelectionPolicy::FixedWithCapabilities { model_id, .. } => {
                 let model = self.registry.get_model(*model_id).await?;
-                if !model.available || !task_capabilities.is_subset(&model.capabilities) {
+                if !model.available
+                    || !task_capabilities.is_subset(&model.capabilities)
+                    || !agent
+                        .model_policy
+                        .accepts(model.model_id, &model.capabilities)
+                {
                     return Err(AgentRuntimeError::NoMatchingModel { agent_id });
                 }
                 Ok(model)

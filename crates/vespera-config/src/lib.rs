@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
 use vespera_core::{
-    AgentDefinition, AgentId, InferenceOverhead, ModelDescriptor, ModelId, ModelSelectionPolicy,
-    ProviderId, ProviderKind, ResourceBudget,
+    AgentDefinition, AgentId, InferenceOverhead, ModelDescriptor, ModelId, ProviderId,
+    ProviderKind, ResourceBudget,
 };
 
 /// Maximum configuration input size, independent of the number of models.
@@ -229,9 +229,9 @@ impl AppConfig {
             }
             validate_provider(provider, &self.network)?;
         }
-        let mut model_ids = BTreeSet::new();
+        let mut models_by_id = BTreeMap::new();
         for model in &self.models {
-            if !model_ids.insert(model.id) {
+            if models_by_id.insert(model.id, model).is_some() {
                 return Err(ConfigError::DuplicateModel(model.id));
             }
             let error = |issue| ConfigError::InvalidModel {
@@ -249,7 +249,7 @@ impl AppConfig {
             .scheduling
             .model_priorities
             .keys()
-            .any(|id| !model_ids.contains(id))
+            .any(|id| !models_by_id.contains_key(id))
         {
             return Err(ConfigError::InvalidField(
                 "scheduling.model_priorities references an unknown model",
@@ -265,21 +265,18 @@ impl AppConfig {
             agent
                 .validate()
                 .map_err(|_| error("invalid domain definition"))?;
-            match &agent.model_policy {
-                ModelSelectionPolicy::Fixed { model_id } => {
-                    if !model_ids.contains(model_id) {
-                        return Err(error("fixed model reference does not exist"));
-                    }
-                }
-                ModelSelectionPolicy::Capability { required } => {
-                    if !self
-                        .models
-                        .iter()
-                        .any(|model| required.is_subset(&model.capabilities))
-                    {
-                        return Err(error("no registered model satisfies required capabilities"));
-                    }
-                }
+            let eligible = if let Some(id) = agent.model_policy.fixed_model() {
+                let model = models_by_id
+                    .get(&id)
+                    .ok_or_else(|| error("fixed model reference does not exist"))?;
+                agent.model_policy.accepts(id, &model.capabilities)
+            } else {
+                self.models
+                    .iter()
+                    .any(|model| agent.model_policy.accepts(model.id, &model.capabilities))
+            };
+            if !eligible {
+                return Err(error("no registered model satisfies required capabilities"));
             }
         }
         Ok(())
@@ -360,6 +357,7 @@ fn validate_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vespera_core::ModelSelectionPolicy;
 
     const SAMPLE: &str = include_str!("../../../config/local.toml");
 
