@@ -875,6 +875,25 @@ journal view, append **`--swarm-capture <new-file.png>`** to save a native windo
 capture after 120 updates following the committed journal. Choose a new file
 path in an existing directory.
 
+The short upper beacon shows observed agent runtime status. The wide lower
+beacon shows the latest assigned attempt. Amber means acceptance without a
+terminal record, green means completed, red means failed, and violet means
+cancelled. Runtime suspension also uses violet on the upper beacon. The
+inspector lists the corresponding runtime or acceptance sequence. New live
+delegations, message enqueues and receipts can send a brief marker along their
+conduit. Frozen replay and reduced motion use the static evidence display.
+
+For a synthetic three-agent visual test, generate a new scratch journal and
+open it in the native view:
+
+```powershell
+cargo run --locked -p vespera-view --features graphics --example swarm-fixture -- target/swarm-fixture.sqlite3
+cargo run --locked -p vespera-view --features graphics -- --swarm target/swarm-fixture.sqlite3 --swarm-capture target/swarm-fixture.png
+```
+
+This journal contains synthetic event metadata, including a four-step branch
+and join and separate failed and open attempts. Use a fresh fixture path.
+
 To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
 
 ```powershell

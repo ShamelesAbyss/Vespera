@@ -12,7 +12,7 @@ use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
 use crate::Update;
 use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
-use crate::swarm_art::{Foundry, HAZE};
+use crate::swarm_art::{Foundry, HAZE, SignalColor};
 
 type Focus = CameraFocus<{ Layer::Swarm as usize }>;
 
@@ -213,6 +213,22 @@ impl Evidence {
             })
     }
 
+    fn latest_attempt(&self, agent: AgentId) -> Option<(TaskId, u64, Option<TaskState>)> {
+        self.edges
+            .iter()
+            .rev()
+            .find_map(|edge| match edge.relation {
+                Relation::Delegation {
+                    task,
+                    observed_live: true,
+                    ..
+                } if edge.to == agent => {
+                    Some((task, edge.sequence, self.outcome(task, edge.sequence)))
+                }
+                _ => None,
+            })
+    }
+
     fn for_workflow(mut self, root: TaskId) -> Self {
         let mut tasks = BTreeSet::from([root]);
         self.edges.retain(|edge| match edge.relation {
@@ -369,6 +385,12 @@ impl Filter {
 #[derive(Component)]
 struct Readout;
 
+#[derive(Component)]
+enum Beacon {
+    Runtime(AgentId),
+    Attempt(AgentId),
+}
+
 pub(super) fn run(
     path: PathBuf,
     reduced_motion: bool,
@@ -492,6 +514,8 @@ fn install(
             navigate,
             camera::<{ Layer::Swarm as usize }>,
             sync_routes,
+            update_beacons,
+            update_transits,
             draw_selection,
             inspect,
         )
@@ -678,7 +702,15 @@ fn sync(
     for (index, id) in agents.into_iter().enumerate() {
         let x = (index % columns) as f32 - (columns - 1) as f32 / 2.0;
         let z = (index / columns) as f32 - rows.saturating_sub(1) as f32 / 2.0;
-        let point = Vec3::new(x * 3.65, 0.04, z * 3.65);
+        let point = if columns == 3 && rows == 1 {
+            [
+                Vec3::new(0.0, 0.04, -2.7),
+                Vec3::new(-3.2, 0.04, 1.6),
+                Vec3::new(3.2, 0.04, 1.6),
+            ][index]
+        } else {
+            Vec3::new(x * 3.65, 0.04, z * 3.65)
+        };
         if let Some((entity, prior)) = layout.agents.get_mut(&id) {
             if *prior != point {
                 commands
@@ -700,6 +732,20 @@ fn sync(
                 })
                 .id();
             art.agent(&mut commands, entity, id);
+            for (kind, y, width) in [
+                (Beacon::Runtime(id), 2.30, 0.35),
+                (Beacon::Attempt(id), 2.12, 0.61),
+            ] {
+                commands.spawn((
+                    ChildOf(entity),
+                    kind,
+                    art.signal_mesh(),
+                    MeshMaterial3d(art.signal_material(SignalColor::Cyan)),
+                    Transform::from_xyz(0.0, y, 0.0).with_scale(Vec3::new(width, 0.085, 0.12)),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                ));
+            }
             layout.agents.insert(id, (entity, point));
         }
     }
@@ -813,6 +859,151 @@ fn draw_selection(layout: Res<Layout>, mut gizmos: Gizmos) {
     }
 }
 
+fn update_beacons(
+    feed: Res<Feed>,
+    art: Res<Foundry>,
+    mut beacons: Query<(
+        &Beacon,
+        &mut Visibility,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
+) {
+    for (beacon, mut visibility, mut material) in &mut beacons {
+        let color = match *beacon {
+            Beacon::Runtime(id) => match feed.evidence.agent_status(id).map(|(_, state)| state) {
+                Some(AgentStatus::Running) => Some(SignalColor::Cyan),
+                Some(AgentStatus::Failed) => Some(SignalColor::Red),
+                Some(AgentStatus::Suspended) => Some(SignalColor::Violet),
+                _ => None,
+            },
+            Beacon::Attempt(id) => {
+                feed.evidence
+                    .latest_attempt(id)
+                    .map(|(_, _, state)| match state {
+                        Some(TaskState::Completed) => SignalColor::Green,
+                        Some(TaskState::Failed) => SignalColor::Red,
+                        Some(TaskState::Cancelled) => SignalColor::Violet,
+                        Some(TaskState::Running) => SignalColor::Cyan,
+                        _ => SignalColor::Amber,
+                    })
+            }
+        };
+        let next = if let Some(color) = color {
+            let handle = art.signal_material(color);
+            if material.0 != handle {
+                material.0 = handle;
+            }
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != next {
+            *visibility = next;
+        }
+    }
+}
+
+#[derive(Component)]
+struct Transit {
+    edge: Edge,
+    started: f64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct TransitCursor {
+    generation: u64,
+    head: u64,
+    workflow: Option<TaskId>,
+    frozen: bool,
+}
+
+fn update_transits(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    scene: (Res<Feed>, Res<Layout>, Res<WorkflowSelection>),
+    settings: (Res<Layers>, Res<Focus>),
+    art: Res<Foundry>,
+    mut last: Local<Option<TransitCursor>>,
+    mut transits: Query<(Entity, &Transit, &mut Transform)>,
+) {
+    let (feed, layout, workflow) = scene;
+    let (layers, focus) = settings;
+    let cursor = TransitCursor {
+        generation: feed.evidence.generation,
+        head: feed.evidence.head,
+        workflow: workflow.0,
+        frozen: feed.frozen.is_some(),
+    };
+    let previous = last.replace(cursor);
+    let enabled = !cursor.frozen && !focus.reduced_motion && !layers.switched;
+    let same_feed = previous.is_some_and(|old| {
+        !old.frozen && old.generation == cursor.generation && old.workflow == cursor.workflow
+    });
+    let now = time.elapsed_secs_f64();
+    let endpoints = |edge: Edge| {
+        let from = layout.agents.get(&edge.from)?.1;
+        let to = layout.agents.get(&edge.to)?.1;
+        if from == to || !layout.filter.includes(&edge) {
+            return None;
+        }
+        let (lane, color) = match edge.relation {
+            Relation::Delegation {
+                observed_live: true,
+                ..
+            } => (0.0, SignalColor::Cyan),
+            Relation::Message => (2.0, SignalColor::Amber),
+            Relation::MessageAcknowledged => (3.0, SignalColor::Pink),
+            _ => return None,
+        };
+        let direction = (to - from).normalize();
+        let offset = Vec3::Y * (0.29 + lane * 0.13) + direction.cross(Vec3::Y) * 0.17;
+        Some((
+            from + direction * 0.80 + offset,
+            to - direction * 0.80 + offset,
+            color,
+        ))
+    };
+    let mut occupied = 0;
+    for (entity, transit, mut transform) in &mut transits {
+        let progress = ((now - transit.started) / 0.9) as f32;
+        if enabled
+            && same_feed
+            && progress < 1.0
+            && let Some((from, to, _)) = endpoints(transit.edge)
+        {
+            transform.translation = from.lerp(to, progress);
+            occupied += 1;
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+    if !enabled {
+        return;
+    }
+    let Some(previous) = previous.filter(|old| same_feed && old.head > 0 && old.head < cursor.head)
+    else {
+        return;
+    };
+    for (edge, from, color) in feed
+        .evidence
+        .edges
+        .iter()
+        .rev()
+        .take_while(|edge| edge.sequence > previous.head)
+        .filter_map(|&edge| endpoints(edge).map(|(from, _, color)| (edge, from, color)))
+        .take(8usize.saturating_sub(occupied))
+    {
+        commands.spawn((
+            layers.parent(Layer::Swarm),
+            Transit { edge, started: now },
+            art.signal_mesh(),
+            MeshMaterial3d(art.signal_material(color)),
+            Transform::from_translation(from).with_scale(Vec3::splat(0.15)),
+            Pickable::IGNORE,
+        ));
+    }
+}
+
 fn inspect(
     feed: Res<Feed>,
     layout: Res<Layout>,
@@ -840,6 +1031,15 @@ fn inspect(
         if let Some((sequence, status)) = evidence.agent_status(id) {
             detail.push_str(&format!(
                 "\nRuntime status {status:?} at sequence {sequence}"
+            ));
+        }
+        if let Some((task, sequence, outcome)) = evidence.latest_attempt(id) {
+            let label = outcome.map_or_else(
+                || "Accepted, no terminal evidence".into(),
+                |state| format!("{state:?}"),
+            );
+            detail.push_str(&format!(
+                "\nLatest assigned attempt at #{sequence}\n{task}\n{label}"
             ));
         }
         if let Some(edge) = latest {
@@ -921,7 +1121,7 @@ fn inspect(
         format!("Workflow focus\n{root}\nBackspace clears workflow focus\n")
     });
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
@@ -1107,11 +1307,19 @@ mod tests {
             Some((2, AgentStatus::Running))
         );
         assert_eq!(projection.outcome(task, 3), Some(TaskState::Completed));
+        assert_eq!(
+            projection.latest_attempt(agent),
+            Some((task, 3, Some(TaskState::Completed)))
+        );
         assert_eq!(projection.outcome(root, 3), Some(TaskState::Completed));
         frozen.step(true);
         assert_eq!(frozen.projection().outcome(root, 3), None);
         frozen.step(true);
         assert_eq!(frozen.projection().outcome(task, 3), None);
+        assert_eq!(
+            frozen.projection().latest_attempt(agent),
+            Some((task, 3, None))
+        );
     }
 
     #[test]

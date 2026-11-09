@@ -11,9 +11,36 @@ pub(super) struct Foundry {
     alloy: Handle<StandardMaterial>,
     trim: Handle<StandardMaterial>,
     sigils: [Handle<StandardMaterial>; 6],
+    fault: Handle<StandardMaterial>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SignalColor {
+    Cyan,
+    Amber,
+    Green,
+    Red,
+    Violet,
+    Pink,
 }
 
 impl Foundry {
+    pub(super) fn signal_material(&self, color: SignalColor) -> Handle<StandardMaterial> {
+        match color {
+            SignalColor::Cyan => &self.sigils[0],
+            SignalColor::Amber => &self.sigils[1],
+            SignalColor::Violet => &self.sigils[2],
+            SignalColor::Green => &self.sigils[3],
+            SignalColor::Pink => &self.sigils[4],
+            SignalColor::Red => &self.fault,
+        }
+        .clone()
+    }
+
+    pub(super) fn signal_mesh(&self) -> Mesh3d {
+        Mesh3d(self.block.clone())
+    }
+
     pub(super) fn route(
         &self,
         commands: &mut Commands,
@@ -102,6 +129,11 @@ impl Foundry {
             obsidian: materials.add(material(Color::srgb(0.065, 0.088, 0.13), 0.35, 0.68)),
             alloy: materials.add(material(Color::srgb(0.24, 0.31, 0.40), 0.65, 0.38)),
             trim: materials.add(material(Color::srgb(0.50, 0.31, 0.20), 0.52, 0.42)),
+            fault: materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.15, 0.12),
+                emissive: LinearRgba::new(0.85, 0.025, 0.02, 1.0),
+                ..default()
+            }),
             sigils,
         }
     }
@@ -256,6 +288,19 @@ impl Foundry {
         let sigil = &self.sigils[(signature % 6) as usize];
         let wings = 3 + (signature / 6 % 3) as usize;
         let height = 1.30 + (signature / 18 % 4) as f32 * 0.17;
+        let stem_base = height + 0.20;
+        self.part(
+            commands,
+            parent,
+            &self.trim,
+            Transform::from_xyz(0.0, (stem_base + 2.33) * 0.5, 0.0).with_scale(Vec3::new(
+                0.08,
+                2.33 - stem_base,
+                0.09,
+            )),
+            false,
+            true,
+        );
         for (y, radius, thickness, material) in [
             (0.19, 1.53, 0.30, &self.obsidian),
             (0.36, 1.28, 0.10, &self.trim),

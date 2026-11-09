@@ -20,6 +20,10 @@ name = "vespera-launcher"
 path = "src/launcher.rs"
 required-features = ["graphics"]
 
+[[example]]
+name = "swarm-fixture"
+required-features = ["graphics"]
+
 [dependencies]
 vespera-core.workspace = true
 vespera-agents = { path = "../vespera-agents", optional = true }
