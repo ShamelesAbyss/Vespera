@@ -189,6 +189,22 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Windows x64 candidate with desktop agent memory
+
+The unsigned `0.1.2` candidate from `146dfb04ebe8f2912597400d24c32c4fbfd0b166` passed verification of 49 portable manifest files, 13 administrative MSI payload files and the exact MSI embedded in Setup. Windows reports both installers as unsigned.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `245d2ad1005b74f135a11da4eb52a0ca405706249dcddc13ba4dbb9b5c98c11b` |
+| Standalone MSI | `18ea8512855b07922e363d4125b711e67f2468f257a632d874c88ac18aa672bd` |
+| Setup EXE | `2928ec14a899962655d1e535ed9316324b8022a6648d2317e311c50899c23799` |
+
+The extracted portable launcher opened from a different working directory, committed a Living World step and reopened the same saved revision byte for byte. In a separate copied profile, it reopened an agent's memory and completed a real Ollama task with the recorded memory ID. The memory database remained byte-identical after recall and Ollama unloaded the fixture model. This checkpoint covers extracted payloads and portable execution. Installed upgrade and rollback evidence is recorded separately for the revisions in the hosted installer qualification.
+
+Windows passed 289 workspace tests and doctests, 53 optimized graphics tests, formatting, strict workspace and graphics Clippy, and strict workspace rustdoc. The refreshed CycloneDX 1.6 SBOM passed schema validation and records the same 429 third-party Cargo package versions. The OSV query returned zero matches for those exact crates.io versions. The review bundle retains the license compliance inventory and upstream notices, with the previously documented distribution gates still open. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42666424536)
+
+The local `Vespera-0.1.2-146dfb0-internal-review.zip` bundle has SHA-256 `f425417b0a9b87e86930725d4f22d70b010a366b434432b47220a3f44f510a14`. The optimized installer lifecycle was also dispatched for this exact source revision. [Hosted qualification run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42667326866)
+
 ### Windows x64 candidate with saved desktop discovery and identity editing
 
 The unsigned `0.1.2` build from `7defb68` verified 49 manifest files, 13 files from administrative MSI extraction, and the exact MSI recovered from Setup.

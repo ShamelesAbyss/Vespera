@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Qualify the unsigned desktop memory package
+
+Source checkpoint `146dfb04ebe8f2912597400d24c32c4fbfd0b166` passed all 289 Windows workspace tests and doctests, formatting, strict workspace Clippy and rustdoc in addition to the native tests below. The unsigned portable archive, standalone MSI and Setup passed manifest and payload comparisons. The extracted app verified a byte-identical Living World restart and completed an Ollama task that reopened an existing memory by its recorded ID without modifying the memory store. The schema-validated CycloneDX SBOM and refreshed OSV inventory are included in the internal review archive. [Package checksums and evidence](RELEASE.md#windows-x64-candidate-with-desktop-agent-memory)
+
 ## Milestone 12 — Use private agent memory from the desktop
 
 The Providers panel now exposes separate memory read and write grants. Remembering a completed response rechecks the saved roster revision, grant and durable task owner. Each source task has one deterministic memory ID in the desktop database. Phrase recall is opt-in for a single task and records which memories were included as untrusted provider input.
