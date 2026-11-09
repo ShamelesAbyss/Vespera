@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-11-08 — Explicit desktop workflow branches and joins
+
+Checkpoint `3ffe24d0f215c896a2491875869a35d371e8a820` adds predecessor selection after each later prompt in Build workflow. Blank keeps the previous-step dependency; 0 creates an independent step; comma-separated earlier step numbers select branch and join inputs. The review includes dependency names. The last step remains the output, six-step bounds and permissions remain, and Draft + review keeps its original dependency. This controls data flow and does not promise parallel inference.
+
+Windows desktop tests passed (38 passed, two environment-dependent tests skipped), and WSL2 passed (37 passed, two skipped). Tests check plan dependencies, invalid/forward/duplicate selections and exclusion of dependency fields from clipboard reads. Strict graphics Clippy passed on both platforms. A Windows orchestrator HTTP regression executed a four-step branch/join and confirmed that each request contained only its declared predecessor results; its strict Clippy check passed. Formatting and diff checks passed.
+
+Native graphical branch-authoring, live-provider execution of that desktop-authored plan, restart recovery and visual Swarm inspection remain the next acceptance work. CLI guidance and the milestone ledger explicitly preserve that unverified scope. Existing sequential workflow evidence remains valid for the preceding implementation; no new screenshot or packaged binary is claimed here.
 ## 2026-11-08 — Rust package integrity verifier
 
 Checkpoint `cef5b192c95595eb527822a5eefe5e8bdc743e70` adds the read-only `verify-package` Cargo example. It validates bounded schema 1 manifests, rejects unsafe and duplicate paths, and checks each listed regular file's size and SHA-256. The tool explicitly does not establish authenticity, inspect unlisted files or grant release approval. Use it without concurrent package writers. The release guide includes the cross-platform command, and Windows and Linux CI now run its regression.
