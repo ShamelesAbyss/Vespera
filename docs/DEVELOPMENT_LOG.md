@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-11-08 — TLS transport for desktop broker views
+
+Checkpoint `9e03eb6a78bd38bf3f525dfb8c74faba64054592` adds `--broker-tls-ca` to Atlas, standalone Network and broker-backed Swarm. The option requires an explicit broker IP and port and loads a bounded PEM trust bundle through the existing TLS 1.3 SDK. Certificate verification and signed operator authority both apply. Without the option, HTTP remains restricted to loopback. No transport downgrade is implemented.
+
+An isolated WSL2 broker with a fresh certificate and synthetic keys accepted the Windows desktop feed. The actual observer received its uniquely identified submission, sent a session-bound cancellation, and independently confirmed the cancelled broker state. The fixture broker was stopped afterward. This was a headless desktop transport test, not a rendered walkthrough or independent physical-host deployment. The documented opt-in test reproduces it against an isolated configured broker.
+
+Windows desktop tests passed (34 passed, two environment-dependent tests skipped), and the TLS test passed separately with its required environment. Ubuntu WSL2 desktop tests passed (33 passed, two skipped); its 11 broker integration tests also passed. Strict graphics Clippy passed on both systems, along with formatting and diff checks. The Windows executable built and its help exposed the new option. README, CLI reference, protocol and milestone ledger now describe the supported path and remaining limits. Existing installed data and release candidate packages were untouched.
 ## 2026-11-08 — Desktop cancellation stays within its observed broker session
 
 Checkpoint `5d96fa229710df66e1e3a41b6723fbff3a7fad50` binds Network confirmation and queued cancellation to the session that authenticated its event stream. The SDK checks the current session before posting and signs that same session. Reconnection cannot silently retarget an old cancellation to a replacement broker. Authorization rejection and invalid event frames stop the desktop subscription. Existing direct CLI and SDK cancellation remain explicit current-broker operations.
