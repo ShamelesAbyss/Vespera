@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Official update discovery on Home
+
+Checkpoint `036d10e3c83257de7b789399b6668020599b9cb1` adds Windows x64 update discovery to Home. The background HTTPS check accepts only newer immutable stable releases with a single official version-matched Setup asset, bounded size and SHA-256 digest. Tests covered numeric version comparison and rejection of untrusted asset locations, mutable releases, duplicate assets and invalid digests. The lockfile adds an existing HTTP dependency to the desktop package without changing resolved versions.
+
+Windows strict graphics Clippy, formatting and the native build passed. Desktop tests reported 39 passed and three opt-in skips. Clicking **Check for updates** in a native Home window with a scratch profile reported that no newer published release was found, matching the official endpoint's 404 response. The window was closed after verification. Download verification and safe installer handoff remain open. A signed published release is still needed to verify a production upgrade.
+
 ## 2026-11-08 — Swarm and concurrent local inference on Windows
 
 The native Swarm build from `fdd117d24a8019a3c85950f99ac0f03ff3a680a1` ran a 600-update focused overview sample after 120 warmup updates at 1200×800 using Vulkan on the RTX 4070 Laptop GPU. The three-agent journal was synthetic. At the same time an isolated loopback Ollama 0.40.15 instance generated 1,400 tokens with the fully GPU-resident `hermes3:8b` model at 2,048 context. Provider evaluation ran from `07:40:57.843Z` through `07:41:35.079Z`. The view's sample was collected at `07:41:08.826Z`, within that interval. An initial sequential launch attempt missed overlap and was discarded.
