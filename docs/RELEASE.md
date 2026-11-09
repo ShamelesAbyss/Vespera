@@ -98,6 +98,19 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Windows x64 headless source rehearsal
+
+The optimized `0.1.2` CLI was built offline from
+`72dbf86169de6ea4233430766592d891ce7a5531` using `package-local --headless`.
+The internal `vespera-headless-72dbf86.zip` had SHA-256
+`F20EDFCEC265B8F5D5EAB1D71DD65359366C3849E854EE7B61FD7F2F1A7176FB`.
+A fresh extraction verified all 43 manifest entries. The packaged CLI passed
+`--version`, `validate-config` and `doctor`, initialized a fresh world, and
+advanced it by eight ticks. A separate CLI invocation replayed revision 8 and
+returned the same world snapshot after normalizing JSON object key order. The
+manifest verified again after the walkthrough. This rehearsal covers Windows
+headless operation. The desktop and installer retain separate acceptance records.
+
 ### Validated Windows x64 candidate
 
 The candidate artifacts below are pinned to their recorded source revision.

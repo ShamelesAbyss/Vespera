@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-08 — Current-source optimized headless package
+
+The optimized Windows x64 CLI at `72dbf86169de6ea4233430766592d891ce7a5531` built offline and staged as a separate `0.1.2` headless archive. The Rust verifier checked all 43 listed files before and after running version, configuration validation, diagnostics and world commands from a fresh extraction. Revision 8 replay matched the entire committed public snapshot after normalizing JSON key order. The first direct JSON string comparison flagged different object key order in residents and sites. Structural comparison resolved the mismatch without a simulation change. The [release guide](RELEASE.md#windows-x64-headless-source-rehearsal) records the archive checksum and validation scope. Graphical qualification, separate physical-host TLS testing, signing and distribution review remain open.
+
 ## 2026-11-08 — Failed workflow branches preserve partial history
 
 Checkpoint `0a359c882350fbbaef075c4797b99092b2d40d51` adds a real HTTP adapter regression for a failed branch in a four-step dependency graph. The seed and left branch complete, the right branch returns HTTP 500, and no join request or attempt is created. Reopening the SQLite workflow store preserves both successful task states, the failed branch, the original join dependencies and a terminal failed root rather than an interrupted or successful result.
