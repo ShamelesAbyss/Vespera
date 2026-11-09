@@ -1,8 +1,12 @@
 # Development log
 
+## Milestones 3 and 12 — Qualify standalone llama.cpp on Windows
+
+The official llama.cpp Windows CPU archive for build `b12230` matched SHA-256 `a787fb94d48e6d93aa5809133f5f984360a5713b20d2f9ee1ccc4b22cd9cce56`. Its version output identified commit `a4d4f2fd4`. The local server used an already installed Gemma 4 12B Q4_K_S GGUF, a 1,024-token context and CPU inference. The live OpenAI-compatible smoke test passed discovery, bounded chat, two streamed text chunks, a terminal stream event and local cancellation. The CLI separately completed a durable agent task with 20 reported completion tokens. The Windows viewer from `8210064` discovered the alias, registered an agent and persisted a completed response in an isolated profile. The desktop first rejected an estimate above available host RAM. The successful run used a 1 GiB incremental RAM estimate for requests against the already loaded server. [Provider setup and scope](PROVIDERS.md#standalone-llamacpp)
+
 ## Milestone 12 — Keep desktop controls and results reachable in small windows
 
-Providers and Workflow History now scroll with the wheel or Page Up and Page Down. Their content stays between the Vespera header and Atlas navigation. The native Windows acceptance build opened at 740×470 and verified both input paths, a return to the top, a retained workflow result at the bottom, and navigation back to Home. The acceptance build used the production panel layout with a smaller initial window size and input tracing. The release default stays 1200×800. The 53 default optimized graphics tests, formatting and strict graphics Clippy passed.
+At source checkpoint `0a8c631a7218a261c7863f46221c915266720049`, Providers and Workflow History scroll with the wheel or Page Up and Page Down. Their content stays between the Vespera header and Atlas navigation. The native Windows acceptance build opened at 740×470 and verified both input paths, a return to the top, a permission control clicked after scrolling, a retained workflow result at the bottom, and navigation back to Home. The acceptance build used the production panel layout with a smaller initial window size and input tracing. The release default stays 1200×800. The 53 default optimized graphics tests, formatting and strict graphics Clippy passed.
 
 ## Milestone 12 — Continue an interrupted desktop workflow
 

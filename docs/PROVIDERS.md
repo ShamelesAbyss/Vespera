@@ -151,6 +151,18 @@ Remove-Item Env:VESPERA_LIVE_OPENAI_ENDPOINT, Env:VESPERA_LIVE_OPENAI_MODEL
 
 BionicGPT is a separate product. Its deployment and API were outside this qualification. [BionicGPT model configuration](https://bionic-gpt.com/docs/guides/managing-models/)
 
+### Standalone llama.cpp
+
+The official Windows x64 CPU build **b12230** (`a4d4f2fd4`) served an existing Gemma 4 12B Q4_K_S GGUF over its loopback OpenAI-compatible endpoint. Vespera verified model discovery, bounded chat, streamed text with a terminal event, and local cancellation after a text delta. A separate CLI agent task reported 20 completion tokens and committed its result to the task store. The Windows desktop also discovered the model, registered a saved agent and retained a completed task in a fresh profile. The server owns model loading and memory. The shared adapter reports metadata, load, unload and residency as unsupported. [Tested server release](https://github.com/ggml-org/llama.cpp/releases/tag/b12230) · [Server options](https://github.com/ggml-org/llama.cpp/blob/b12230/tools/server/README.md)
+
+Start the server with a local GGUF you already have. Replace the model path in this example with that file.
+
+```powershell
+llama-server --model 'C:\models\model.gguf' --alias vespera-llama-qualification --host 127.0.0.1 --port 1234 --ctx-size 1024 --parallel 1 --threads 8 --gpu-layers 0 --reasoning-budget 0
+```
+
+In Models & Providers, choose **OpenAI-compatible**, set the endpoint to `http://127.0.0.1:1234/v1`, and discover the alias. For CLI use, select `kind = "open_ai_compatible"` and use the advertised alias as the model identifier. Give the model explicit resource estimates and a context limit appropriate to the server.
+
 ## Protocol references
 
 These official references were consulted on 2026-11-06 for the tested wire subset;

@@ -8,7 +8,7 @@ The order comes from [MASTER_DIRECTIVE.txt](MASTER_DIRECTIVE.txt) and the owner'
 | --- | --- |
 | 0–1: inspection and foundation | Implemented; Windows workspace and CLI validation pass on Rust 1.99.1. |
 | 2: provider contract and Ollama | Original gates verified on Ollama 0.40.13 / hermes3:8b. Live checks include nonstreaming inference, streamed completion, local cancellation, discovery, metadata and acknowledged unload. Offline fixtures cover transport policy and failure paths. |
-| 3: additional providers | Verified the shared OpenAI-compatible adapter against Ollama 0.40.13 and LM Studio Bionic v1.2.0+2. Bionic loopback evidence covers discovery, bounded chat, streaming and client cancellation. Portable lifecycle and residency remain unsupported. |
+| 3: additional providers | Verified the shared OpenAI-compatible adapter against Ollama 0.40.13 and LM Studio Bionic v1.2.0+2. Bionic and standalone llama.cpp b12230 loopback evidence covers discovery, bounded chat, streaming and client cancellation. Portable lifecycle and residency remain unsupported. |
 | 4: registry | Durable SQLite model metadata, revision-fenced edits and live inference from a reopened catalog are verified. The headless health monitor handles bounded rounds, failure and recovery. Opt-in startup lifecycle reconciliation is verified on native Ollama. See [REGISTRY.md](REGISTRY.md). |
 | 5: scheduler | Verified in the native Ollama scope. Admission uses conservative estimates, optional host RAM and CPU ceilings and an operator-mapped NVIDIA VRAM ceiling. Fixtures and live runs cover lifecycle, contention, latency routing, external pressure and durable restart recovery. Other GPU backends use declared ceilings. |
 | 6: master orchestration | Verified for bounded native Ollama workflows. The coordinator can decompose a task within an authorized roster and explicit budgets. Durable history supports resume at a committed step boundary. Fixtures verify routing, retries, cancellation and conflict policies. See [ORCHESTRATION.md](ORCHESTRATION.md). |
@@ -51,7 +51,7 @@ The qualified Bionic target is the installed LM Studio Bionic v1.2.0+2 daemon an
 
 - Record Bionic identification and operations; missing documentation remains an explicit blocker, not a completed adapter.
 - Test each implemented adapter's auth, framing, cancellation limits, missing capabilities, and errors against its documented API subset.
-- Demonstrate interchangeable provider ports without vendor branches in orchestration. Standalone llama.cpp, other LM Studio versions and custom servers remain separate qualification targets.
+- Demonstrate interchangeable provider ports without vendor branches in orchestration. Standalone llama.cpp b12230 has a [Windows CPU qualification](PROVIDERS.md#standalone-llamacpp). Other versions, GPU builds and custom servers remain separate qualification targets.
 
 ## Milestone 4 — Model registry and health monitoring
 
