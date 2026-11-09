@@ -81,25 +81,84 @@ pub(super) async fn run(
     if !(2..=MAX_CHAIN_STEPS).contains(&steps.len()) {
         return Err("Choose between two and six steps.".into());
     }
-    let (coordinator, _, provider) = roster
-        .selection(steps[0].agent)
-        .ok_or("Select a coordinator.")?;
+    let assigned = steps
+        .into_iter()
+        .map(|step| {
+            let (agent, _, _) = roster
+                .selection(step.agent)
+                .ok_or("Choose a saved agent for each step.")?;
+            Ok::<_, &str>((agent.identity.id, step))
+        })
+        .collect::<Result<_, _>>()?;
+    execute(dir, roster, plan(assigned), false, cancel).await
+}
+
+pub(super) async fn resume(
+    dir: &Path,
+    roster: Roster,
+    workflow: Workflow,
+    cancel: CancellationToken,
+) -> Result<FinishedWorkflow, String> {
+    execute(dir, roster, workflow, true, cancel).await
+}
+
+async fn execute(
+    dir: &Path,
+    roster: Roster,
+    workflow: Workflow,
+    resume: bool,
+    cancel: CancellationToken,
+) -> Result<FinishedWorkflow, String> {
+    workflow.validate().map_err(|error| error.to_string())?;
+    if !(2..=MAX_CHAIN_STEPS).contains(&workflow.steps.len())
+        || workflow.steps[0].candidates.as_slice() != [workflow.coordinator]
+        || workflow.timeout_ms > STEP_TIMEOUT_MS * workflow.steps.len() as u64
+        || workflow.max_total_attempts > workflow.steps.len() as u32
+        || workflow.max_total_output_tokens
+            > u64::from(STEP_OUTPUT_TOKENS) * workflow.steps.len() as u64
+        || workflow.steps.iter().any(|step| {
+            step.max_output_tokens > STEP_OUTPUT_TOKENS || step.timeout_ms > STEP_TIMEOUT_MS
+        })
+    {
+        return Err("This checkpoint is outside the desktop workflow limits.".into());
+    }
+    let binding_for = |id| {
+        let index = roster
+            .config()
+            .agents
+            .iter()
+            .position(|agent| agent.identity.id == id)?;
+        roster.selection(index)
+    };
+    let (coordinator, _, provider) =
+        binding_for(workflow.coordinator).ok_or("Select a coordinator.")?;
     if !coordinator.permissions.contains(&Permission::Delegate) {
         return Err("Allow delegation for the coordinator before starting a workflow.".into());
     }
     if desktop_agent::load(dir)?.is_none_or(|current| current.revision != roster.revision) {
         return Err("The saved roster changed. Reopen the application.".into());
     }
+    let path = desktop_evidence::workflow_path(dir);
     let tasks = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
         .map_err(|error| error.to_string())?;
+    let recovery = if resume {
+        let store = WorkflowStore::open_for_resume(&path).map_err(|error| error.to_string())?;
+        store
+            .ensure_resumable(&workflow)
+            .map_err(|error| error.to_string())?;
+        Some(store)
+    } else {
+        None
+    };
     let suspended = tasks.suspensions().map_err(|error| error.to_string())?;
     let mut ram = 0;
     let mut vram = 0;
-    let mut assigned = Vec::with_capacity(steps.len());
-    for step in steps {
-        let (agent, model, binding) = roster
-            .selection(step.agent)
-            .ok_or("Choose a saved agent for each step.")?;
+    for step in &workflow.steps {
+        let [candidate] = step.candidates.as_slice() else {
+            return Err("Choose one saved agent for each desktop workflow step.".into());
+        };
+        let (agent, model, binding) =
+            binding_for(*candidate).ok_or("Choose a saved agent for each step.")?;
         if binding.id != provider.id {
             return Err("All workflow agents must use the same saved provider.".into());
         }
@@ -118,10 +177,7 @@ pub(super) async fn run(
                 .vram_bytes
                 .ok_or("All models need VRAM estimates.")?,
         );
-        assigned.push((agent.identity.id, step));
     }
-    let workflow = plan(assigned);
-    workflow.validate().map_err(|error| error.to_string())?;
     let native = provider.kind == ProviderKind::Ollama;
     let mut config = roster.config().clone();
     config.resources = ResourceBudget {
@@ -140,28 +196,47 @@ pub(super) async fn run(
         .agents()
         .attach_task_store(tasks)
         .map_err(|error| error.to_string())?;
-    if native {
-        runtime
-            .reconcile_startup(cancel.clone())
-            .await
-            .map_err(|error| error.to_string())?;
+    let outcome = async {
+        if native {
+            runtime
+                .reconcile_startup(cancel.clone())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        if cancel.is_cancelled() {
+            return Err("The workflow was cancelled before execution.".into());
+        }
+        let store = match recovery {
+            Some(store) => store,
+            None => WorkflowStore::open(&path).map_err(|error| error.to_string())?,
+        };
+        let task = workflow.task.id;
+        let projection = Projection::start(dir, &store, task);
+        let report = if resume {
+            runtime
+                .orchestrator()
+                .resume_checkpointed(workflow, cancel, None, &store)
+                .await
+                .map_err(|error| error.to_string())
+        } else {
+            runtime
+                .run_workflow_checkpointed(workflow, cancel, None, Some(&store))
+                .await
+                .map_err(|error| error.to_string())
+        };
+        let observation = match projection {
+            Ok(projection) => projection.finish(dir, &store, task).await,
+            Err(_) => desktop_evidence::replay(dir, &store),
+        };
+        report.map(|report| (report, observation.err()))
     }
-    let store = WorkflowStore::open(&desktop_evidence::workflow_path(dir))
-        .map_err(|error| error.to_string())?;
-    let task = workflow.task.id;
-    let projection = Projection::start(dir, &store, task);
-    let outcome = runtime
-        .run_workflow_checkpointed(workflow, cancel, None, Some(&store))
-        .await;
-    let observation = match projection {
-        Ok(projection) => projection.finish(dir, &store, task).await,
-        Err(_) => desktop_evidence::replay(dir, &store),
-    };
+    .await;
     let cleanup = runtime.cleanup(native, Duration::from_secs(5)).await;
+    let (report, observation_error) = outcome?;
     Ok(FinishedWorkflow {
-        report: outcome.map_err(|error| error.to_string())?,
+        report,
         cleanup_confirmed: cleanup.drained && cleanup.unload_errors.is_empty(),
-        observation_error: observation.err(),
+        observation_error,
     })
 }
 

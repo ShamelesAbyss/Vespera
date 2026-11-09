@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Continue an interrupted desktop workflow
+
+Workflow history now continues the selected retained plan through the existing recovery engine. The desktop checks the exact plan, committed attempts, deadline, current roster and operator holds before execution. The original workflow ID, committed results and event projection are preserved.
+
+The optimized Windows app authored a two-agent workflow against a controlled Ollama HTTP fixture. It was stopped after the first result committed and before the second attempt was recorded. After restart, the history control completed the same workflow with one additional provider request containing the committed dependency. A separate interruption during the second request produced an unresolved attempt. The desktop refused recovery, preserved the workflow database byte for byte and made no further provider request. A completed checkpoint was also rejected. The 53 default optimized graphics tests, both CLI process-interruption regressions, formatting and strict graphics Clippy passed. [Workflow history controls](CLI.md#browse-retained-desktop-workflows)
+
 ## Milestone 14 — Qualify the unsigned desktop memory package
 
 Source checkpoint `146dfb04ebe8f2912597400d24c32c4fbfd0b166` passed all 289 Windows workspace tests and doctests, formatting, strict workspace Clippy and rustdoc in addition to the native tests below. The unsigned portable archive, standalone MSI and Setup passed manifest and payload comparisons. The extracted app verified a byte-identical Living World restart and completed an Ollama task that reopened an existing memory by its recorded ID without modifying the memory store. The schema-validated CycloneDX SBOM and refreshed OSV inventory are included in the internal review archive. [Package checksums and evidence](RELEASE.md#windows-x64-candidate-with-desktop-agent-memory)

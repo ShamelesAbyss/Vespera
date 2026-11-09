@@ -235,6 +235,44 @@ pub(super) struct Panel {
 }
 
 impl Panel {
+    pub(super) fn resume_workflow(&mut self, plan: Workflow) -> Result<(), &'static str> {
+        if self.work.is_some() || self.closing {
+            return Err("Wait for the current provider operation to finish.");
+        }
+        self.start_workflow(
+            move |runtime, dir, roster, cancel| {
+                runtime.block_on(desktop_workflow::resume(&dir, roster, plan, cancel))
+            },
+            "Checking the retained workflow and continuing from its committed steps.",
+        )
+    }
+
+    fn start_workflow(
+        &mut self,
+        operation: impl FnOnce(
+            tokio::runtime::Runtime,
+            PathBuf,
+            Roster,
+            CancellationToken,
+        ) -> Result<FinishedWorkflow, String>
+        + Send
+        + 'static,
+        feedback: &str,
+    ) -> Result<(), &'static str> {
+        let (Some(dir), Some(roster)) = (self.dir.clone(), self.roster.clone()) else {
+            return Err("Set up the agent roster first.");
+        };
+        let cancel = CancellationToken::new();
+        let workflow_cancel = cancel.clone();
+        let result = background(move |runtime| operation(runtime, dir, roster, workflow_cancel));
+        self.pending_copy = None;
+        self.draft = None;
+        self.history = None;
+        self.work = Some(Work::Workflow { result, cancel });
+        self.feedback = feedback.into();
+        Ok(())
+    }
+
     pub(super) fn queue_workflow_copy(&mut self, plan: &Workflow) -> Result<(), &'static str> {
         if self.work.is_some() || self.closing {
             return Err("Wait for the current provider operation to finish.");
@@ -1369,16 +1407,14 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
 }
 
 fn start_workflow(panel: &mut Panel, steps: Vec<StepRequest>) {
-    let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
-        return;
-    };
-    let cancel = CancellationToken::new();
-    let workflow_cancel = cancel.clone();
-    let result = background(move |runtime| {
-        runtime.block_on(desktop_workflow::run(&dir, roster, steps, workflow_cancel))
-    });
-    panel.work = Some(Work::Workflow { result, cancel });
-    panel.feedback = "Workflow in progress. Each step waits for its selected dependencies.".into();
+    if let Err(error) = panel.start_workflow(
+        move |runtime, dir, roster, cancel| {
+            runtime.block_on(desktop_workflow::run(&dir, roster, steps, cancel))
+        },
+        "Workflow in progress. Each step waits for its selected dependencies.",
+    ) {
+        panel.feedback = error.into();
+    }
 }
 
 fn background<T: Send + 'static>(

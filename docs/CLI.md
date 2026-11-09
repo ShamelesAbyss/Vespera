@@ -716,6 +716,8 @@ Select **Open in Swarm** or press **Enter** to focus the journal view on the sel
 
 Select **Edit a copy** or press **E** to open a retained desktop plan in the editor. The copy maps its assignments to the current roster by agent identity and uses the current saved provider bindings. Running it creates a new workflow ID and checkpoint. The original stays available in history.
 
+Select an interrupted checkpoint and choose **Resume interrupted run** or press **U** to continue the original workflow. The desktop reuses committed steps and sends only unfinished steps to the provider. The original deadline still applies. Checkpoints with an unresolved attempt, a terminal result, or an expired deadline cannot resume. The current roster must still authorize the coordinator and all assigned agents. The Providers panel shows the recovery result and offers **Cancel work** while execution continues.
+
 ### Switch layers in Atlas
 
 Open Atlas without credentials to inspect the host in Machine. Add the sources you want available in the same window.

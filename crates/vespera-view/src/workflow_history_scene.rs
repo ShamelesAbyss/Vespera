@@ -19,6 +19,7 @@ enum Action {
     Next,
     Swarm,
     Copy,
+    Resume,
     Home,
 }
 
@@ -38,7 +39,7 @@ struct History {
     pending: Option<Mutex<Receiver<Load>>>,
     checkpoints: Option<Checkpoints>,
     error: Option<String>,
-    copy_error: Option<&'static str>,
+    action_error: Option<&'static str>,
 }
 
 pub(super) fn install(app: &mut App, dir: PathBuf) {
@@ -48,7 +49,7 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         pending: None,
         checkpoints: None,
         error: None,
-        copy_error: None,
+        action_error: None,
     })
     .add_systems(Startup, setup)
     .add_systems(Update, (navigate, receive, render).chain());
@@ -82,7 +83,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Retained desktop checkpoints. Up and Down browse. E edits a copy. F5 returns Home."),
+                    Text::new("Up and Down browse. E edits a copy. U resumes an interrupted run. F5 returns Home."),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -98,6 +99,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Next, "Older workflow"),
                         button(Action::Swarm, "Open in Swarm"),
                         button(Action::Copy, "Edit a copy"),
+                        button(Action::Resume, "Resume interrupted run"),
                         button(Action::Home, "Home"),
                     ],
                 ),
@@ -141,6 +143,8 @@ fn navigate(
         Action::Swarm
     } else if keys.just_pressed(KeyCode::KeyE) {
         Action::Copy
+    } else if keys.just_pressed(KeyCode::KeyU) {
+        Action::Resume
     } else {
         return;
     };
@@ -191,12 +195,18 @@ fn apply(
             }
             return;
         }
-        Action::Copy => {
+        Action::Copy | Action::Resume => {
             if history.error.is_none()
                 && let Some((_, _, stored)) = selected
             {
-                history.copy_error = panel.queue_workflow_copy(&stored.plan).err();
-                if history.copy_error.is_none() {
+                history.action_error = match action {
+                    Action::Copy => panel.queue_workflow_copy(&stored.plan).err(),
+                    Action::Resume if stored.interrupted => {
+                        panel.resume_workflow(stored.plan.clone()).err()
+                    }
+                    _ => Some("Select an interrupted workflow checkpoint to resume."),
+                };
+                if history.action_error.is_none() {
                     layers.request(Layer::Providers);
                 }
             }
@@ -205,7 +215,7 @@ fn apply(
         Action::Home => return,
     };
     history.error = None;
-    history.copy_error = None;
+    history.action_error = None;
     let path = history.path.clone();
     let (send, receive) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -269,7 +279,7 @@ fn render(layers: Res<Layers>, history: Res<History>, mut text: Single<&mut Text
         && let Some((index, workflow)) = &checkpoints.selected
     {
         let mut content = describe(*index, checkpoints.recent.len(), workflow);
-        if let Some(error) = history.copy_error {
+        if let Some(error) = history.action_error {
             content.push_str("\n\n");
             content.push_str(error);
         }
