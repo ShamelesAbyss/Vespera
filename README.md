@@ -49,9 +49,9 @@ An agent keeps its identity when you change its model. The registry records whic
 <details>
 <summary>Inspect broker activity in the Intelligence Network</summary>
 
-![Intelligence Network focused on the layered orchestrator core during a local scheduler admission](assets/screenshots/atlas-network.jpg)
+![Intelligence Network showing the orchestrator, worker construct, and matching scheduler model in the task inspector](assets/screenshots/atlas-network.jpg)
 
-*Captured in the native Windows app. The isolated broker recorded a completed test task while a separate local Ollama run held one scheduler permit. The inspector reports each source separately.* [Atlas controls](docs/CLI.md#switch-layers-in-atlas)
+*Captured in the native Windows app while Ollama ran a test task. The inspector shows the local scheduler's model and provider because both the task and worker UUIDs match the signed broker attempt.* [Atlas controls](docs/CLI.md#switch-layers-in-atlas)
 
 </details>
 
@@ -62,7 +62,9 @@ An agent keeps its identity when you change its model. The registry records whic
 
 ![Swarm close-up showing an amber message transit and its matching observation in the inspector](assets/screenshots/swarm-transit.png)
 
-*Captured in the Windows app using a labeled synthetic journal. The close-up shows a newly committed fixture message at the midpoint of its conduit. The inspector shows the matching sequence and peer.* [Swarm controls and fixture](docs/CLI.md#swarm-view)
+![Swarm focused on a completed four-step branch and join across three agents](assets/screenshots/swarm-branch-join.png)
+
+*Captured in the Windows app using a synthetic journal. The close-up shows a newly committed fixture message at the midpoint of its conduit. Workflow focus isolates the four-step fixture and its completed outcome.* [Swarm controls and fixture](docs/CLI.md#swarm-view)
 
 </details>
 

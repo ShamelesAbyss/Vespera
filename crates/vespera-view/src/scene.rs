@@ -8,6 +8,8 @@ use vespera_core::{AgentId, ExternalTaskChange, TaskId, TaskState};
 use vespera_view::Graph;
 
 use crate::atlas::{Layer, Layers, register};
+use crate::machine_scene::{SchedulerObservation, Telemetry};
+use crate::swarm_art::Foundry;
 use crate::task_timeline::Timeline;
 use crate::{CancelRequest, Update as BrokerUpdate};
 use vespera_sdk::BrokerSessionId;
@@ -92,7 +94,8 @@ impl Filter {
 #[derive(Resource)]
 struct Palette {
     task: Handle<Mesh>,
-    worker: Handle<Mesh>,
+    worker_beacon: Handle<Mesh>,
+    foundry: Foundry,
     materials: [Handle<StandardMaterial>; 7],
 }
 
@@ -228,12 +231,12 @@ pub(super) fn install(
         Update,
         (
             navigate,
+            orchestrator::project,
             sync_scene,
             move_nodes,
             focus_selection,
             camera::<{ Layer::Network as usize }>,
             draw_links,
-            orchestrator::project,
             orchestrator::render,
             inspect,
         )
@@ -262,7 +265,8 @@ fn setup(
     ];
     commands.insert_resource(Palette {
         task: meshes.add(Cuboid::new(0.54, 0.44, 0.54)),
-        worker: meshes.add(Sphere::new(0.46)),
+        worker_beacon: meshes.add(Cuboid::new(0.30, 0.09, 0.14)),
+        foundry: Foundry::new(&mut meshes, &mut materials),
         materials: colors.map(|color| {
             materials.add(StandardMaterial {
                 base_color: color,
@@ -280,6 +284,11 @@ fn setup(
                 ..default()
             },
             Camera3d::default(),
+            AmbientLight {
+                color: Color::srgb(0.73, 0.83, 1.0),
+                brightness: 900.0,
+                ..default()
+            },
             Tonemapping::None,
             DebandDither::Disabled,
             Orbit {
@@ -301,6 +310,15 @@ fn setup(
         Pickable::IGNORE,
     ));
     orchestrator::spawn(&mut commands, &mut meshes, &mut materials, &layers);
+    commands.spawn((
+        layers.parent(Layer::Network),
+        DirectionalLight {
+            illuminance: 3600.0,
+            color: Color::srgb(0.86, 0.90, 1.0),
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.62, -0.88, 0.0)),
+    ));
     commands.spawn((
         UiTargetCamera(camera),
         StatusStrip,
@@ -514,20 +532,52 @@ fn layout(graph: &Graph) -> BTreeMap<NodeKey, Vec3> {
     positions
 }
 
+#[derive(Default)]
+struct WorkerEvidence {
+    running: usize,
+    failed: usize,
+    attributed: usize,
+}
+
+fn worker_evidence(graph: &Graph, id: AgentId) -> WorkerEvidence {
+    let mut evidence = WorkerEvidence::default();
+    for task in graph
+        .tasks
+        .values()
+        .filter(|task| task.attempt.is_some_and(|attempt| attempt.worker_id == id))
+    {
+        evidence.attributed += 1;
+        evidence.running += usize::from(task.state == TaskState::Running);
+        evidence.failed += usize::from(task.state == TaskState::Failed);
+    }
+    evidence
+}
+
+fn observed_model(
+    tasks: &[vespera_core::TaskLeaseSample],
+    task: TaskId,
+    worker: AgentId,
+) -> Option<&vespera_core::TaskLeaseSample> {
+    tasks
+        .iter()
+        .find(|lease| lease.task_id == task && lease.agent_id == worker)
+}
+
 fn sync_scene(
     mut commands: Commands,
     mut scene: ResMut<Scene>,
     selection: Res<Selection>,
     filter: Res<Filter>,
     palette: Res<Palette>,
-    layers: Res<Layers>,
+    (layers, core): (Res<Layers>, Res<orchestrator::Evidence>),
     mut existing: Query<(
         &mut MeshMaterial3d<StandardMaterial>,
         &mut LaneTarget,
         &mut Visibility,
     )>,
 ) {
-    if !scene.is_changed() && !selection.is_changed() && !filter.is_changed() {
+    if !scene.is_changed() && !selection.is_changed() && !filter.is_changed() && !core.is_changed()
+    {
         return;
     }
     let positions = layout(&scene.graph);
@@ -546,14 +596,31 @@ fn sync_scene(
                 lane(scene.graph.tasks[&id].state),
                 filter.shows(scene.graph.tasks[&id].state),
             ),
-            NodeKey::Worker(_) => (&palette.worker, 5, true),
+            NodeKey::Worker(id) => {
+                let evidence = worker_evidence(&scene.graph, id);
+                let index = if !core.broker_known {
+                    4
+                } else if evidence.running > 0 {
+                    1
+                } else if evidence.failed > 0 {
+                    3
+                } else {
+                    5
+                };
+                (&palette.worker_beacon, index, true)
+            }
         };
         let visibility = if visible {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
-        let material = &palette.materials[if selection.0 == Some(key) { 6 } else { index }];
+        let material =
+            &palette.materials[if matches!(key, NodeKey::Task(_)) && selection.0 == Some(key) {
+                6
+            } else {
+                index
+            }];
         if let Some(entity) = scene.entities.get(&key) {
             if let Ok((mut current, mut target, mut visibility_now)) = existing.get_mut(*entity) {
                 if current.0 != *material {
@@ -586,6 +653,16 @@ fn sync_scene(
                     },
                 )
                 .id();
+            if let NodeKey::Worker(id) = key {
+                let chassis = commands
+                    .spawn((
+                        ChildOf(entity),
+                        Transform::from_xyz(0.0, -1.07, 0.0).with_scale(Vec3::splat(0.46)),
+                        Visibility::Inherited,
+                    ))
+                    .id();
+                palette.foundry.agent(&mut commands, chassis, id);
+            }
             scene.entities.insert(key, entity);
         }
     }
@@ -791,7 +868,11 @@ fn inspect(
     selection: Res<Selection>,
     filter: Res<Filter>,
     (keys, layers): (Res<ButtonInput<KeyCode>>, Res<Layers>),
-    (mut connection, core): (ResMut<Connection>, Res<orchestrator::Evidence>),
+    (mut connection, core, telemetry): (
+        ResMut<Connection>,
+        Res<orchestrator::Evidence>,
+        Option<Res<Telemetry>>,
+    ),
     mut inspector: Single<&mut Text, (With<Inspector>, Without<StatusStrip>)>,
     mut status: Single<&mut Text, (With<StatusStrip>, Without<Inspector>)>,
 ) {
@@ -803,16 +884,21 @@ fn inspect(
         counts[lane(task.state)] += 1;
     }
     let headline = format!(
-        "INTELLIGENCE NETWORK   |   {}   |   {}   |   {} workers\nQUEUED {}     RUNNING {}     COMPLETE {}     FAILED {}     CANCELLED {}\n{}",
+        "INTELLIGENCE NETWORK   |   {}   |   {}   |   {} {}\nQUEUED {}     RUNNING {}     COMPLETE {}     FAILED {}     CANCELLED {}\n{}",
         connection.status,
         filter.label(),
         scene.graph.workers.len(),
+        if scene.graph.workers.len() == 1 {
+            "worker"
+        } else {
+            "workers"
+        },
         counts[0],
         counts[1],
         counts[2],
         counts[3],
         counts[4],
-        connection.timeline.label(),
+        connection.timeline.label(connection.session.is_some()),
     );
     if status.0 != headline {
         status.0 = headline;
@@ -824,10 +910,17 @@ fn inspect(
                 let attempt = task.attempt.map_or_else(
                     || "No attempt in this observation".into(),
                     |attempt| {
-                        format!(
-                            "Worker {}\nAttempt {}\nGeneration {}",
-                            attempt.worker_id, attempt.attempt_id, attempt.generation
-                        )
+                        let scheduler = telemetry.as_ref().map(|source| source.scheduler_observation());
+                        let model = match scheduler {
+                            Some(SchedulerObservation::Sample(sample))
+                                if connection.session.is_some() && !connection.timeline.is_frozen() && !sample.finished && task.state == TaskState::Running =>
+                            {
+                                observed_model(sample.tasks.as_deref().unwrap_or_default(), id, attempt.worker_id)
+                                    .map(|lease| format!("\nLocal scheduler match\nModel {}\nProvider {}", lease.model_id, lease.provider_id))
+                            }
+                            _ => None,
+                        };
+                        format!("Worker {}\nAttempt {}\nGeneration {}{}", attempt.worker_id, attempt.attempt_id, attempt.generation, model.as_deref().unwrap_or("\nModel assignment unobserved"))
                     },
                 );
                 format!(
@@ -845,15 +938,8 @@ fn inspect(
             if !scene.graph.workers.contains_key(&id) {
                 format!("WORKER  {id}\nUnavailable at this sequence")
             } else {
-                let mut seen = 0;
-                let mut running = 0;
-                for task in scene.graph.tasks.values().filter(|task| {
-                    task.attempt.is_some_and(|attempt| attempt.worker_id == id)
-                }) {
-                    seen += 1;
-                    running += usize::from(task.state == TaskState::Running);
-                }
-                format!("WORKER  {id}\n{running} running / {seen} attributed tasks\nLatest observed attempts only")
+                let WorkerEvidence { running, failed, attributed } = worker_evidence(&scene.graph, id);
+                format!("WORKER  {id}\n{running} running / {attributed} attributed\n{failed} failed in retained observations\nBroker leases only\nWorker lifecycle and model unobserved")
             }
         }
         None => "Pick the orchestrator, a task, or a worker.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
@@ -981,6 +1067,21 @@ fn change_label(change: ExternalTaskChange) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduler_model_requires_the_same_task_and_worker() {
+        let lease = vespera_core::TaskLeaseSample {
+            task_id: TaskId::new(),
+            agent_id: AgentId::new(),
+            lease_id: TaskId::new().to_string().parse().unwrap(),
+            model_id: vespera_core::ModelId::new(),
+            provider_id: vespera_core::ProviderId::new(),
+            memory_context_records: None,
+        };
+        assert!(observed_model(&[lease], lease.task_id, lease.agent_id).is_some());
+        assert!(observed_model(&[lease], TaskId::new(), lease.agent_id).is_none());
+        assert!(observed_model(&[lease], lease.task_id, AgentId::new()).is_none());
+    }
     use vespera_view::TaskNode;
 
     #[test]

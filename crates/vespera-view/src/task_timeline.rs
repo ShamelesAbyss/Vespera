@@ -148,13 +148,24 @@ impl Timeline {
         result
     }
 
-    pub fn label(&self) -> String {
+    pub fn label(&self, connected: bool) -> String {
         let live = self.window.head;
         let Some(frozen) = &self.frozen else {
-            return format!("Live #{live}");
+            return if connected {
+                format!("Live #{live}")
+            } else if self.window.ready {
+                format!("Last observed #{live}")
+            } else {
+                "No broker observations".into()
+            };
         };
+        if !frozen.window.ready {
+            return "Replay unavailable at captured position".into();
+        }
         let source = if self.source_changed() {
             "new feed"
+        } else if !connected {
+            "last observed"
         } else {
             "live"
         };
@@ -175,11 +186,16 @@ mod tests {
         let mut timeline = Timeline::default();
         timeline.toggle();
         assert!(!timeline.has_replay_source());
+        assert_eq!(
+            timeline.label(false),
+            "Replay unavailable at captured position"
+        );
         timeline.ready(0);
         assert!(!timeline.has_replay_source());
         timeline.toggle();
         timeline.toggle();
         assert!(timeline.has_replay_source());
+        assert_eq!(timeline.label(false), "Replay #0 (0-0) | last observed #0");
         timeline.reset();
         assert!(timeline.has_replay_source());
     }

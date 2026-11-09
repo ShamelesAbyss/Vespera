@@ -26,6 +26,7 @@ const DOCUMENTS: &[&str] = &[
     "assets/screenshots/atlas-network.jpg",
     "assets/screenshots/swarm-foundry.png",
     "assets/screenshots/swarm-transit.png",
+    "assets/screenshots/swarm-branch-join.png",
     "assets/screenshots/desktop-workflow.jpg",
     "assets/screenshots/living-world.jpg",
     "assets/screenshots/living-world-resident.jpg",

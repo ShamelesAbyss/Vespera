@@ -95,7 +95,7 @@ impl Scheduler {
 
 #[derive(Resource, Default, PartialEq, Eq)]
 pub(super) struct Evidence {
-    broker_known: bool,
+    pub(super) broker_known: bool,
     queued: usize,
     running: usize,
     latest_failed: bool,
@@ -146,7 +146,7 @@ impl Evidence {
         format!(
             "CENTRAL ORCHESTRATOR\n{}\n{broker}\n{}\n\n{}",
             self.signal().label(),
-            connection.timeline.label(),
+            connection.timeline.label(connection.session.is_some()),
             self.scheduler.label()
         )
     }

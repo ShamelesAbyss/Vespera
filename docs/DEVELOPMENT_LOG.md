@@ -1,5 +1,13 @@
 # Development log
 
+## Windows visual acceptance for Swarm and Intelligence Network
+
+Intelligence Network reuses the Foundry's UUID-derived worker geometry. A separate beacon describes retained broker task evidence and dims when the broker is unavailable. During live Atlas operation, model and provider identifiers appear only when a current scheduler lease matches both the running broker task and its assigned worker. The Windows walkthrough verified a matching native Ollama run, a broker deadline failure, disconnection, and replay of a retained claim. It also switched through all four Atlas views in one window.
+
+The Swarm screenshot set now includes the existing overview and message close-up plus the completed four-step branch and join across three agents. The Swarm captures use a synthetic journal. The Intelligence Network capture uses real broker and scheduler data from an isolated test workload.
+
+Intelligence Network at 2560×1440 measured 7.33 ms p95 and 13.41 ms maximum over 600 Vulkan updates after 120 warmup updates while `hermes3:8b` was fully GPU-resident at 2,048 context. One RTX 4070 Laptop GPU sample showed 6,770 of 8,188 MiB in use. The 1200×800 renderer-only sample measured 7.40 ms p95. These are single-host observations. Windows optimized graphics tests, the package example test, formatting, and strict graphics Clippy passed.
+
 ## Neural Universe Region A — Central Orchestrator
 
 Intelligence Network now has a selectable layered core. Broker events pass through the existing timeline projection, and Atlas reads the existing local scheduler watcher independently. Native Windows verification used an isolated broker to submit, claim, and complete a test task. Replaying sequence 2 restored the running core while the live feed remained at sequence 3. A real Ollama `hermes3:8b` task lit the core through one admitted scheduler permit while the broker reported no running work. Its finished snapshot cleared the active signal. The inspector reports the sources separately.
