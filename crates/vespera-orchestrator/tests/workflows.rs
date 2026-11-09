@@ -251,6 +251,49 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn branch_join_transmits_only_declared_predecessor_results() {
+    let fixture = Fixture::new(
+        vec![
+            (200, "seed-result"),
+            (200, "left-result"),
+            (200, "right-result"),
+            (200, "joined-result"),
+        ],
+        Duration::ZERO,
+        100,
+    )
+    .await;
+    let mut plan = fixture.plan(true);
+    let mut left = plan.steps[1].clone();
+    left.name = "left".into();
+    let mut right = left.clone();
+    right.name = "right".into();
+    let mut join = left.clone();
+    join.name = "join".into();
+    join.dependencies = vec!["left".into(), "right".into()];
+    plan.steps.truncate(1);
+    plan.steps.extend([left, right, join]);
+    plan.output = OutputPolicy::Step {
+        step: "join".into(),
+    };
+    let report = fixture
+        .orchestrator
+        .execute(plan, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.task.state, TaskState::Completed);
+    let requests = fixture.inference();
+    assert_eq!(requests.len(), 4);
+    let right_input = requests[2]["messages"].to_string();
+    assert!(right_input.contains("seed-result"));
+    assert!(!right_input.contains("left-result"));
+    let joined_input = requests[3]["messages"].to_string();
+    assert!(joined_input.contains("left-result"));
+    assert!(joined_input.contains("right-result"));
+    assert!(!joined_input.contains("seed-result"));
+}
+
+#[tokio::test]
 async fn failed_result_checkpoint_stops_dependent_work() {
     use vespera_orchestrator::WorkflowStore;
 

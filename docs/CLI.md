@@ -684,11 +684,15 @@ The orchestrator runs the draft first and sends its accepted output to the revie
 
 Press **F3** during the run to follow committed desktop workflow observations in Swarm, or use **Open Swarm** from Home. The desktop projects the retained audit into `desktop-events.sqlite3` without copying prompts or responses. On startup it restores missing observations from the workflow store. **T** freezes the display or returns live. While frozen, **[** and **]** step through captured observations. The workflow store remains the recovery source if the journal cannot be written.
 
-### Author a sequential desktop workflow
+<a id="author-a-sequential-desktop-workflow"></a>
+
+### Author a desktop workflow
 
 In **Models & Providers**, select a saved coordinator, grant it **Allow delegation**, and choose **Build workflow** or press **C**. Enter a count from two to six. The selected coordinator owns the first step. For every later step, select a saved agent on the same provider and enter its prompt. The same agent can own more than one step.
 
-Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. Each step receives the preceding result as untrusted input. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
+Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. After each later prompt, enter comma-separated earlier step numbers as inputs. Blank selects the immediately preceding step; `0` makes the step independent. For a four-step branch and join, use `1` for steps 2 and 3, then `2,3` for step 4. Forward references and duplicates are rejected. Review shows each input list. Selected results are supplied as untrusted input; dependency branches do not imply concurrent inference. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
+
+Branch selection is implemented and covered by state and orchestration tests; a native graphical branch-authoring walkthrough remains an acceptance gate.
 
 Use **Ctrl+V** in a task or workflow prompt to append text from the system clipboard. The editor flattens line breaks and tabs into spaces and applies the same 1,200-character limit as typing. Pasting keeps the prompt in the editor until you submit it.
 

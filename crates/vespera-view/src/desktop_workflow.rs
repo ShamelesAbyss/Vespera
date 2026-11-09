@@ -20,6 +20,7 @@ pub(super) struct StepRequest {
     pub name: String,
     pub agent: usize,
     pub prompt: String,
+    pub dependencies: Vec<String>,
 }
 
 pub(super) struct FinishedWorkflow {
@@ -34,11 +35,16 @@ fn plan(steps: Vec<(AgentId, StepRequest)>) -> Workflow {
     let coordinator = *coordinator;
     let prompt = first.prompt.clone();
     let step_count = steps.len() as u32;
-    let mut previous = None;
+    let output_step = steps
+        .last()
+        .expect("nonempty desktop workflow")
+        .1
+        .name
+        .clone();
     let steps = steps
         .into_iter()
         .map(|(agent, request)| Step {
-            dependencies: previous.replace(request.name.clone()).into_iter().collect(),
+            dependencies: request.dependencies,
             name: request.name,
             prompt: request.prompt,
             required_capabilities: [text.clone()].into(),
@@ -62,9 +68,7 @@ fn plan(steps: Vec<(AgentId, StepRequest)>) -> Workflow {
         max_total_attempts: step_count,
         max_total_output_tokens: u64::from(STEP_OUTPUT_TOKENS) * u64::from(step_count),
         timeout_ms: STEP_TIMEOUT_MS * u64::from(step_count),
-        output: OutputPolicy::Step {
-            step: previous.expect("desktop workflow has at least two steps"),
-        },
+        output: OutputPolicy::Step { step: output_step },
     }
 }
 
@@ -169,15 +173,22 @@ mod tests {
     fn authored_workflow_fences_each_assignee_on_the_previous_step() {
         let coordinator = AgentId::new();
         let reviewer = AgentId::new();
-        let step = |name: &str, agent, prompt: &str| StepRequest {
+        let step = |name: &str, agent, prompt: &str, dependencies: &[&str]| StepRequest {
             name: name.into(),
             agent,
             prompt: prompt.into(),
+            dependencies: dependencies.iter().map(|value| (*value).into()).collect(),
         };
         let workflow = plan(vec![
-            (coordinator, step("draft", 0, "Draft a sentence.")),
-            (reviewer, step("review", 1, "Shorten the draft.")),
-            (coordinator, step("final", 0, "Return the shortened draft.")),
+            (coordinator, step("draft", 0, "Draft a sentence.", &[])),
+            (
+                reviewer,
+                step("review", 1, "Shorten the draft.", &["draft"]),
+            ),
+            (
+                coordinator,
+                step("final", 0, "Return the shortened draft.", &["review"]),
+            ),
         ]);
         workflow.validate().unwrap();
         assert_eq!(workflow.steps[0].candidates, [coordinator]);
@@ -194,5 +205,40 @@ mod tests {
         assert_eq!(workflow.max_total_attempts, 3);
         assert_eq!(workflow.max_total_output_tokens, 384);
         assert_eq!(workflow.timeout_ms, 150_000);
+    }
+
+    #[test]
+    fn authored_branch_join_preserves_only_selected_inputs() {
+        let owner = AgentId::new();
+        let steps = [
+            ("seed", vec![]),
+            ("left", vec!["seed".into()]),
+            ("right", vec!["seed".into()]),
+            ("join", vec!["left".into(), "right".into()]),
+        ]
+        .into_iter()
+        .map(|(name, dependencies)| {
+            (
+                owner,
+                StepRequest {
+                    name: name.into(),
+                    agent: 0,
+                    prompt: format!("Execute {name}"),
+                    dependencies,
+                },
+            )
+        })
+        .collect();
+        let workflow = plan(steps);
+        workflow.validate().unwrap();
+        assert_eq!(workflow.steps[2].dependencies, ["seed"]);
+        assert_eq!(workflow.steps[3].dependencies, ["left", "right"]);
+        assert_eq!(workflow.max_total_attempts, 4);
+        assert_eq!(
+            workflow.output,
+            OutputPolicy::Step {
+                step: "join".into()
+            }
+        );
     }
 }

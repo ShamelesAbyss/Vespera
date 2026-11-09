@@ -90,6 +90,7 @@ struct ChainDraft {
     count: Option<usize>,
     steps: Vec<StepRequest>,
     assignee: Option<usize>,
+    pending_prompt: Option<String>,
     input: String,
 }
 
@@ -632,7 +633,9 @@ fn paste_prompt(edit: &mut Edit, read: impl FnOnce() -> Option<String>) {
             fields,
             index: index @ (1 | 2),
         } => &mut fields[*index],
-        Edit::Chain(draft) if draft.assignee.is_some() => &mut draft.input,
+        Edit::Chain(draft) if draft.assignee.is_some() && draft.pending_prompt.is_none() => {
+            &mut draft.input
+        }
         _ => return,
     };
     if let Some(text) = read() {
@@ -777,6 +780,9 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
             (&mut fields[*index], PROMPT_LIMIT, |c| !c.is_control())
         }
         Edit::Chain(draft) if draft.count == Some(draft.steps.len()) => return,
+        Edit::Chain(draft) if draft.pending_prompt.is_some() => (&mut draft.input, 24, |c| {
+            c.is_ascii_digit() || c == ',' || c == ' '
+        }),
         Edit::Chain(draft) if draft.assignee.is_none() => {
             (&mut draft.input, 2, |c| c.is_ascii_digit())
         }
@@ -943,14 +949,44 @@ fn submit_workflow(panel: &mut Panel, fields: [String; 3], mut index: usize) {
                 name: "draft".into(),
                 agent: panel.selected,
                 prompt: draft_prompt,
+                dependencies: vec![],
             },
             StepRequest {
                 name: "review".into(),
                 agent: reviewer.expect("validated reviewer index"),
                 prompt: review_prompt,
+                dependencies: vec!["draft".into()],
             },
         ],
     );
+}
+
+fn parse_predecessors(input: &str, earlier: usize) -> Option<Vec<String>> {
+    if input.trim().is_empty() {
+        return Some(
+            earlier
+                .checked_sub(1)
+                .map(|index| format!("step-{}", index + 1))
+                .into_iter()
+                .collect(),
+        );
+    }
+    if input.trim() == "0" {
+        return Some(vec![]);
+    }
+    let mut numbers = std::collections::BTreeSet::new();
+    for value in input.split(',') {
+        let number = value.trim().parse::<usize>().ok()?;
+        if number == 0 || number > earlier || !numbers.insert(number) {
+            return None;
+        }
+    }
+    Some(
+        numbers
+            .into_iter()
+            .map(|number| format!("step-{number}"))
+            .collect(),
+    )
 }
 
 fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
@@ -959,6 +995,28 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
     };
     if draft.count == Some(draft.steps.len()) {
         start_workflow(panel, draft.steps);
+        return;
+    }
+    if let Some(prompt) = draft.pending_prompt.take() {
+        match parse_predecessors(&draft.input, draft.steps.len()) {
+            Some(dependencies) => {
+                draft.steps.push(StepRequest {
+                    name: format!("step-{}", draft.steps.len() + 1),
+                    agent: draft.assignee.take().expect("prompt has an assigned agent"),
+                    prompt,
+                    dependencies,
+                });
+                draft.input.clear();
+                panel.feedback.clear();
+            }
+            None => {
+                draft.pending_prompt = Some(prompt);
+                panel.feedback =
+                    "Enter earlier step numbers separated by commas, or 0 for no dependencies."
+                        .into();
+            }
+        }
+        panel.draft = Some(Edit::Chain(draft));
         return;
     }
     let error = match (draft.count, draft.assignee) {
@@ -991,11 +1049,16 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
                 _ => Some("Choose a saved agent on the coordinator's provider."),
             }
         }
+        (Some(_), Some(_)) if !draft.input.trim().is_empty() && !draft.steps.is_empty() => {
+            draft.pending_prompt = Some(std::mem::take(&mut draft.input));
+            None
+        }
         (Some(_), Some(agent)) if !draft.input.trim().is_empty() => {
             draft.steps.push(StepRequest {
                 name: format!("step-{}", draft.steps.len() + 1),
                 agent,
                 prompt: std::mem::take(&mut draft.input),
+                dependencies: vec![],
             });
             draft.assignee = None;
             None
@@ -1019,7 +1082,7 @@ fn start_workflow(panel: &mut Panel, steps: Vec<StepRequest>) {
         runtime.block_on(desktop_workflow::run(&dir, roster, steps, workflow_cancel))
     });
     panel.work = Some(Work::Workflow { result, cancel });
-    panel.feedback = "Workflow in progress. Each step waits for the previous result.".into();
+    panel.feedback = "Workflow in progress. Each step waits for its selected dependencies.".into();
 }
 
 fn background<T: Send + 'static>(
@@ -1359,15 +1422,26 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                             });
                         let _ = writeln!(
                             content,
-                            "{} | {owner} | {}",
+                            "{} | {owner} | {} | inputs: {}",
                             step.name,
-                            preview(&step.prompt, 58)
+                            preview(&step.prompt, 40),
+                            if step.dependencies.is_empty() {
+                                "none".into()
+                            } else {
+                                step.dependencies.join(", ")
+                            }
                         );
                     }
-                    content.push_str("Enter runs the workflow. Each step receives the preceding result as untrusted input.");
+                    content.push_str("Enter runs the workflow. Selected dependency results are untrusted input. The last step supplies the output.");
                 } else if let Some(count) = draft.count {
                     let _ = writeln!(content, "\nStep {} of {count}", draft.steps.len() + 1);
-                    if let Some(index) = draft.assignee {
+                    if draft.pending_prompt.is_some() {
+                        let _ = write!(
+                            content,
+                            "Inputs from earlier steps: {}_\nComma-separated step numbers; 0 means independent.\nBlank uses the previous step. Enter continues.",
+                            draft.input
+                        );
+                    } else if let Some(index) = draft.assignee {
                         let owner = panel
                             .roster
                             .as_ref()
@@ -1538,6 +1612,24 @@ mod tests {
         panel.draft = Some(Edit::Endpoint("http://127.0.0.1:8000".into()));
         submit(&mut panel);
         assert!(!panel_provider(&panel).credential_windows);
+    }
+
+    #[test]
+    fn dependency_selection_rejects_forward_duplicate_and_invalid_inputs() {
+        assert_eq!(parse_predecessors("", 2).unwrap(), ["step-2"]);
+        assert_eq!(parse_predecessors("0", 2).unwrap(), Vec::<String>::new());
+        assert_eq!(parse_predecessors("2, 1", 3).unwrap(), ["step-1", "step-2"]);
+        for input in ["3", "1,1", "0,1", "1,", "-1", "text"] {
+            assert!(parse_predecessors(input, 2).is_none());
+        }
+        let mut dependencies = Edit::Chain(ChainDraft {
+            assignee: Some(0),
+            pending_prompt: Some("Prompt".into()),
+            ..default()
+        });
+        paste_prompt(&mut dependencies, || {
+            panic!("dependency selection must not read clipboard")
+        });
     }
 
     #[test]
