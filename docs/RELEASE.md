@@ -110,6 +110,34 @@ Start-Process -FilePath (Resolve-Path target/Vespera-Setup.exe).Path -Wait
 
 Use a higher three-component product version for each MSI upgrade. The `0.1.2` candidate supersedes `0.1.1`. Old-product removal is part of the Windows Installer transaction. Use the same committed candidate for both the MSI and its Setup bundle.
 
+### Sign the Windows installer
+
+Use a fresh output directory and the approved signing service. If the MSI is
+distributed separately, sign it before building Setup so the standalone MSI
+and the embedded payload are identical. For Setup, detach and sign the Burn
+engine, reattach it, then sign the resulting outer executable. Use the
+release's canonical filename for the outer executable. [WiX signing guide](https://docs.firegiant.com/wix/tools/signing/#signing-bundles-at-the-command-line)
+
+```powershell
+$engine = 'target/vespera-burn-engine.exe'
+$setup = "target/Vespera-Setup-$version.exe"
+wix burn detach target/Vespera-Setup.exe -engine $engine
+if ($LASTEXITCODE -ne 0) { throw 'Burn engine detach failed.' }
+# Sign and timestamp $engine with the approved service before reattaching it.
+wix burn reattach target/Vespera-Setup.exe -engine $engine -o $setup
+if ($LASTEXITCODE -ne 0) { throw 'Burn engine reattach failed.' }
+# Sign and timestamp $setup with the approved service before verification.
+Get-AuthenticodeSignature -LiteralPath $engine,$setup |
+    Select-Object Path,Status,SignatureType,SignerCertificate,TimeStamperCertificate
+Get-FileHash -LiteralPath $setup -Algorithm SHA256
+```
+
+Require a `Valid` embedded Authenticode signature and confirm the approved
+publisher and timestamp on a clean Windows qualification host. Extract the
+final bundle and compare the MSI payload with the original MSI used to build
+it. Record the final Setup digest and confirm that GitHub reports the same
+digest before testing the update from an isolated installation.
+
 ## Upgrade and recovery
 
 Stage the new binaries in a fresh directory. Stop Vespera writers before making operator backups. Use `memory-admin backup` for the memory store. For stores without a Vespera backup command, preserve a consistent stopped-state SQLite copy, including associated WAL and SHM files when present. Keep each database with its own backup set. Include the desktop profile's `reduced-motion.enabled` marker when present.

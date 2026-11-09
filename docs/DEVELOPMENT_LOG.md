@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-09 — Windows installer signing handoff
+
+On source checkpoint `14bbca4`, WiX 5.0.2 detached and reattached the unsigned Burn engine in scratch storage. The reassembled bundle yielded one payload whose SHA-256 matched the previously qualified MSI. Windows still reported `NotSigned`. This verifies the bundle mechanics through extraction, with signed execution and updater handoff still pending. The installed `0.1.0` on the qualification host predates the updater and needs a manual bootstrap once an approved signed build is available. [Release signing sequence](RELEASE.md#sign-the-windows-installer)
+
 ## 2026-11-08 — Optimized Swarm and updater package rehearsal
 
 Source `14bbca4fd9fd415d7f78ce87d702f79b60b7d652` built offline as an optimized Windows x64 desktop package. Fresh extraction verified all 47 manifest files. The packaged launcher opened Home with a scratch profile and returned the empty-channel result from **Check for updates**. The packaged Swarm overview measured 7.34 ms p95 across 600 Vulkan updates at 1200×800 on the RTX 4070 Laptop GPU. WiX built the MSI and Setup. Administrative extraction matched 13 MSI files and bundle extraction found the exact MSI. The [release guide](RELEASE.md#swarm-and-updater-windows-x64-packaging-rehearsal) records hashes and the first-deployment sequence.
