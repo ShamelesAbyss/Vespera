@@ -7,11 +7,13 @@ use vespera_core::{
 use vespera_events::Journal;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = PathBuf::from(
-        std::env::args_os()
-            .nth(1)
-            .ok_or("provide a new fixture journal path")?,
-    );
+    let mut args = std::env::args_os().skip(1);
+    let path = PathBuf::from(args.next().ok_or("provide a new fixture journal path")?);
+    let live = match args.next().as_deref() {
+        None => false,
+        Some(flag) if flag == "--live" && args.next().is_none() => true,
+        _ => return Err("expected a new fixture journal path and optional --live".into()),
+    };
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -136,5 +138,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         events.len(),
         path.display()
     );
+    if live {
+        println!(
+            "Open the scratch journal in Swarm, then press Enter here to commit a synthetic message."
+        );
+        let mut line = String::new();
+        while std::io::stdin().read_line(&mut line)? != 0 {
+            let cursor = journal.append(&EventEnvelope::new(
+                "swarm-visual-fixture",
+                0,
+                EventKind::AgentMessageSent {
+                    from_agent_id: first,
+                    to_agent_id: second,
+                },
+            )?)?;
+            println!(
+                "Committed synthetic message at sequence {}",
+                cursor.sequence
+            );
+            line.clear();
+        }
+    }
     Ok(())
 }

@@ -899,6 +899,20 @@ cargo run --locked -p vespera-view --features graphics -- --swarm target/swarm-f
 This journal contains synthetic event metadata, including a four-step branch
 and join and separate failed and open attempts. Use a fresh fixture path.
 
+To inspect a new message in motion, run the fixture writer in one terminal
+and open its journal in a second terminal:
+
+```powershell
+# Terminal 1
+cargo run --locked -p vespera-view --features graphics --example swarm-fixture -- target/swarm-live.sqlite3 --live
+# Terminal 2
+cargo run --locked -p vespera-view --features graphics -- --swarm target/swarm-live.sqlite3 --swarm-capture target/swarm-transit.png --swarm-capture-transit
+```
+
+Once the scene shows the baseline journal, press Enter in terminal 1. The
+writer commits a synthetic message, and the app captures the first observed
+transit around its midpoint. Transit capture requires motion to be enabled.
+
 For a repeatable close-up and update-interval sample, select a fixture agent
 by UUID when starting standalone Swarm:
 

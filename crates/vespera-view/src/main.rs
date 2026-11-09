@@ -71,6 +71,9 @@ struct Options {
     /// Save a PNG from the standalone Swarm view after the journal settles.
     #[arg(long, requires = "swarm", conflicts_with = "atlas")]
     swarm_capture: Option<PathBuf>,
+    /// Capture the first newly observed Swarm transit midway along its route.
+    #[arg(long, requires = "swarm_capture", conflicts_with = "reduced_motion")]
+    swarm_capture_transit: bool,
     /// Select and focus an observed agent on standalone Swarm startup.
     #[arg(long, requires = "swarm", conflicts_with = "atlas")]
     swarm_agent: Option<vespera_core::AgentId>,
@@ -135,6 +138,7 @@ fn main() -> ExitCode {
             path,
             options.reduced_motion,
             options.swarm_capture,
+            options.swarm_capture_transit,
             options.swarm_agent,
             options.swarm_measure_frames,
         ) {

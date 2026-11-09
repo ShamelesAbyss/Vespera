@@ -18,6 +18,7 @@ type Focus = CameraFocus<{ Layer::Swarm as usize }>;
 
 const MAX_OBSERVATIONS: usize = 128;
 const MAX_AGENTS: usize = 24;
+const TRANSIT_SECONDS: f64 = 0.9;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Relation {
@@ -419,6 +420,7 @@ pub(super) fn run(
     path: PathBuf,
     reduced_motion: bool,
     capture: Option<PathBuf>,
+    capture_transit: bool,
     agent: Option<AgentId>,
     measure_frames: Option<u32>,
 ) -> Result<(), JournalError> {
@@ -446,17 +448,32 @@ pub(super) fn run(
     }
     if let Some(path) = capture {
         let mut settled = 0;
-        app.add_systems(Last, move |mut commands: Commands, feed: Res<Feed>| {
-            if settled >= 120 || feed.evidence.status != "Following committed journal" {
-                return;
-            }
-            settled += 1;
-            if settled == 120 {
-                commands
-                    .spawn(Screenshot::primary_window())
-                    .observe(save_to_disk(path.clone()));
-            }
-        });
+        let mut saved = false;
+        app.add_systems(
+            Last,
+            move |mut commands: Commands,
+                  feed: Res<Feed>,
+                  time: Res<Time<Real>>,
+                  transits: Query<&Transit>| {
+                if saved || feed.evidence.status != "Following committed journal" {
+                    return;
+                }
+                let ready = if capture_transit {
+                    transits.iter().any(|transit| {
+                        time.elapsed_secs_f64() - transit.started >= TRANSIT_SECONDS * 0.5
+                    })
+                } else {
+                    settled += 1;
+                    settled >= 120
+                };
+                if ready {
+                    commands
+                        .spawn(Screenshot::primary_window())
+                        .observe(save_to_disk(path.clone()));
+                    saved = true;
+                }
+            },
+        );
     }
     app.run();
     Ok(())
@@ -676,6 +693,26 @@ fn setup(
             Text::new("SWARM / Reading journal"),
             TextFont::from_font_size(16.0),
             TextColor(Color::srgb(0.84, 0.91, 1.0)),
+        )],
+    ));
+    commands.spawn((
+        UiTargetCamera(camera),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(20.0),
+            bottom: px(56.0),
+            width: percent(47.0),
+            max_width: px(530.0),
+            padding: UiRect::all(px(12.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.033, 0.05, 0.088, 0.94)),
+        Pickable::IGNORE,
+        children![(
+            Text::new("CYAN delegation  |  GREEN dependency\nAMBER message  |  PINK receipt\nUpper beacon: runtime  |  Lower beacon: attempt\nAmber accepted  |  Green complete  |  Red failed\nViolet cancelled or suspended\nN select  |  F focus  |  G cycle workflows  |  Tab filter\nT freeze/live  |  [ ] replay  |  R reset  |  WASD pan\nRight drag orbit  |  Scroll zoom"),
+            TextFont::from_font_size(14.0),
+            TextColor(Color::srgb(0.77, 0.86, 0.97)),
+            Pickable::IGNORE,
         )],
     ));
 }
@@ -1024,7 +1061,7 @@ fn update_transits(
     };
     let mut occupied = 0;
     for (entity, transit, mut transform) in &mut transits {
-        let progress = ((now - transit.started) / 0.9) as f32;
+        let progress = ((now - transit.started) / TRANSIT_SECONDS) as f32;
         if enabled
             && same_feed
             && progress < 1.0
@@ -1180,7 +1217,7 @@ fn inspect(
         format!("Workflow focus\n{root}\nBackspace clears workflow focus\n")
     });
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nG cycle workflows (live)\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
