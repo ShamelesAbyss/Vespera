@@ -192,7 +192,7 @@ enum Work {
         Mutex<Receiver<Result<(), AgentTaskStoreError>>>,
         &'static str,
     ),
-    History(Mutex<Receiver<Result<Vec<StoredTaskSummary>, AgentTaskStoreError>>>),
+    History(Mutex<Receiver<HistoryResult>>),
     Inspect(Mutex<Receiver<Result<StoredAgentTask, AgentTaskStoreError>>>),
     Remember(Mutex<Receiver<Result<(), String>>>),
     Task {
@@ -206,12 +206,14 @@ enum Work {
 }
 
 type RegistrationResult = Result<(Roster, usize), &'static str>;
+type HistoryResult = Result<(bool, Vec<StoredTaskSummary>), AgentTaskStoreError>;
 
 #[derive(Default)]
 struct History {
     page: u32,
     tasks: Vec<StoredTaskSummary>,
     completed: Option<TaskId>,
+    suspended: Option<bool>,
 }
 
 #[derive(Resource)]
@@ -526,6 +528,8 @@ fn apply(action: Action, panel: &mut Panel) {
                 | Action::NextAgent
                 | Action::History
                 | Action::Remember
+                | Action::Suspend
+                | Action::Resume
         )
     {
         panel.history = None;
@@ -946,9 +950,14 @@ fn open_history(panel: &mut Panel, page: u32) {
             .try_exists()
             .map_err(|_| AgentTaskStoreError::Database)?
         {
-            return Ok(vec![]);
+            return Ok((false, vec![]));
         }
-        AgentTaskStore::recent(&path, owner, page * TASKS_PER_PAGE, TASKS_PER_PAGE + 1)
+        AgentTaskStore::recent_with_suspension(
+            &path,
+            owner,
+            page * TASKS_PER_PAGE,
+            TASKS_PER_PAGE + 1,
+        )
     })));
 }
 
@@ -1468,7 +1477,13 @@ fn receive_work(mut panel: ResMut<Panel>) {
             }
         },
         Some(Work::Hold(result, message)) => match poll(result) {
-            Ok(Ok(())) => panel.feedback = (*message).into(),
+            Ok(Ok(())) => {
+                if let Some(page) = panel.history.as_ref().map(|history| history.page) {
+                    open_history(&mut panel, page);
+                    return;
+                }
+                panel.feedback = (*message).into();
+            }
             Ok(Err(error)) => panel.feedback = error.to_string(),
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
@@ -1476,9 +1491,10 @@ fn receive_work(mut panel: ResMut<Panel>) {
             }
         },
         Some(Work::History(result)) => match poll(result) {
-            Ok(Ok(tasks)) => {
+            Ok(Ok((suspended, tasks))) => {
                 if let Some(history) = panel.history.as_mut() {
                     history.tasks = tasks;
+                    history.suspended = Some(suspended);
                 }
                 panel.feedback.clear();
             }
@@ -1892,7 +1908,11 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
             "\nRetained tasks  |  Page {}  |  Press a task number for details",
             history.page + 1
         );
-        if history.tasks.is_empty() && panel.work.is_none() {
+        if let Some(suspended) = history.suspended {
+            let status = if suspended { "Suspended" } else { "Clear" };
+            let _ = writeln!(content, "Operator hold at last read  |  {status}");
+        }
+        if history.tasks.is_empty() && history.suspended.is_some() {
             content.push_str("No checkpoints on this page.");
         }
         for (index, task) in history
@@ -1985,6 +2005,72 @@ mod tests {
 
     async fn discover(declaration: ProviderConfig) -> Result<Discovery, RuntimeError> {
         super::discover(declaration, CancellationToken::new()).await
+    }
+
+    #[tokio::test]
+    async fn history_refreshes_the_selected_hold_after_actions_and_restart() {
+        let dir = std::env::temp_dir().join(format!("vespera-desktop-hold-{}", TaskId::new()));
+        let registration = |name: &str| Registration {
+            provider: desktop_agent::provider(ProviderKind::OpenAiCompatible, COMPATIBLE.into()),
+            model: DiscoveredModel {
+                provider_model_name: "fixture".into(),
+                digest: None,
+                size_bytes: None,
+                parameter_size: None,
+                quantization_level: None,
+                family: None,
+            },
+            agent_name: name.into(),
+            role: "Fixture".into(),
+            rebind: None,
+            ram_mib: 1024,
+            vram_mib: 0,
+        };
+        let (first, _) = desktop_agent::register(&dir, None, registration("First"))
+            .await
+            .unwrap();
+        desktop_agent::register(&dir, Some(&first), registration("Second"))
+            .await
+            .unwrap();
+
+        let open = || {
+            let mut app = App::new();
+            app.insert_resource(Layers::new(Layer::Providers));
+            install(&mut app, Some(dir.clone()));
+            let readout = app.world_mut().spawn((Readout, Text::default())).id();
+            (app, readout)
+        };
+        let check = |app: &mut App, entity, action, expected| {
+            apply(action, &mut app.world_mut().resource_mut::<Panel>());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while app.world().resource::<Panel>().work.is_some() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "History update timed out"
+                );
+                app.world_mut().run_system_once(receive_work).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            app.world_mut().run_system_once(readout).unwrap();
+            let text = &app.world().get::<Text>(entity).unwrap().0;
+            assert!(text.contains(expected), "{text}");
+        };
+        let (mut app, entity) = open();
+        let clear = "Operator hold at last read  |  Clear";
+        let suspended = "Operator hold at last read  |  Suspended";
+        check(&mut app, entity, Action::History, clear);
+        assert!(!dir.join("desktop-tasks.sqlite3").exists());
+        check(&mut app, entity, Action::Suspend, suspended);
+        check(&mut app, entity, Action::NextAgent, clear);
+        drop(app);
+
+        let (mut app, entity) = open();
+        check(&mut app, entity, Action::History, suspended);
+        check(&mut app, entity, Action::Resume, clear);
+        drop(app);
+        std::fs::remove_file(dir.join("desktop-tasks.sqlite3")).unwrap();
+        std::fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[cfg(target_os = "windows")]

@@ -678,7 +678,7 @@ Select **Task history** to see the selected agent's retained tasks, newest accep
 
 To retain a completed response, grant **Toggle memory write** for its agent, open **Task history**, choose the completed task by number, and select **Remember task**. To use stored context, grant **Toggle memory read**, select **Run with memory**, enter a literal search phrase, then enter the prompt. The result reports how many matching records were included. A plain **Run agent task** does not use memory. [Desktop memory and permissions](AGENTS.md#desktop-agent-memory)
 
-Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.
+Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. **Task history** shows the hold as of its last read alongside the retained task states. The panel reloads the hold when you change agents or use Suspend or Resume with history open. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.
 
 ### Run a delegated desktop workflow
 

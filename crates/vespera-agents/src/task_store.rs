@@ -180,6 +180,13 @@ impl AgentTaskStore {
     /// Check whether the operator has placed an agent on hold.
     pub fn is_suspended(&self, agent: AgentId) -> Result<bool, AgentTaskStoreError> {
         let connection = self.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        Self::read_suspension(&connection, agent)
+    }
+
+    fn read_suspension(
+        connection: &Connection,
+        agent: AgentId,
+    ) -> Result<bool, AgentTaskStoreError> {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(db)?;
@@ -406,6 +413,30 @@ impl AgentTaskStore {
     ) -> Result<Vec<StoredTaskSummary>, AgentTaskStoreError> {
         let store = Self::connect(path, false, false)?;
         let connection = store.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        Self::read_recent(&connection, owner, offset, limit)
+    }
+
+    /// Read the owner's hold and retained task summaries under the same exclusive connection.
+    pub fn recent_with_suspension(
+        path: &Path,
+        owner: AgentId,
+        offset: u32,
+        limit: u32,
+    ) -> Result<(bool, Vec<StoredTaskSummary>), AgentTaskStoreError> {
+        let store = Self::connect(path, false, false)?;
+        let connection = store.0.lock().map_err(|_| AgentTaskStoreError::Database)?;
+        Ok((
+            Self::read_suspension(&connection, owner)?,
+            Self::read_recent(&connection, owner, offset, limit)?,
+        ))
+    }
+
+    fn read_recent(
+        connection: &Connection,
+        owner: AgentId,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<StoredTaskSummary>, AgentTaskStoreError> {
         let mut statement = connection.prepare(
             "SELECT id, state FROM agent_tasks WHERE owner=?1 ORDER BY rowid DESC LIMIT ?2 OFFSET ?3",
         ).map_err(db)?;
@@ -558,9 +589,12 @@ mod tests {
             .insert(&task(TaskState::Completed), other, None)
             .unwrap();
         store.insert(&recent, owner, None).unwrap();
+        store.set_suspended(owner, true).unwrap();
         drop(store);
 
-        let first = AgentTaskStore::recent(&path, owner, 0, 1).unwrap();
+        let (suspended, first) =
+            AgentTaskStore::recent_with_suspension(&path, owner, 0, 1).unwrap();
+        assert!(suspended);
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].id, recent.id);
         assert_eq!(first[0].state, TaskState::Cancelled);
@@ -569,6 +603,11 @@ mod tests {
         assert_eq!(second.len(), 1);
         assert_eq!(second[0].id, older.id);
         assert!(second[0].interrupted);
+        let (suspended, other_tasks) =
+            AgentTaskStore::recent_with_suspension(&path, other, 0, 1).unwrap();
+        assert!(!suspended);
+        assert_eq!(other_tasks.len(), 1);
+        assert_eq!(other_tasks[0].state, TaskState::Completed);
         std::fs::remove_file(path).unwrap();
     }
 }

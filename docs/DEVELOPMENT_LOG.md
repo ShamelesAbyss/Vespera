@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Show the selected agent's durable hold in task history
+
+Task history reads the selected agent's hold and bounded task page under one SQLite connection. Suspend and Resume refresh the open history. Switching agents reloads their own hold and tasks. The panel labels the hold as of its last read and marks nonterminal retained tasks as interrupted.
+
+The store regression verified paging and hold isolation. The Bevy regression exercised the Providers actions, persisted a hold across a reopened profile, switched agents and checked the generated readout. Windows passed 289 workspace tests and doctests, 54 optimized graphics tests, formatting and strict workspace and graphics Clippy. Foreground capture could not complete because the Windows helper failed to activate the app and the computer-use runtime was unavailable.
+
 ## Milestone 14 — Qualify the unsigned workflow recovery package
 
 Source checkpoint `8adfe1c5acafe4a5770e94adab6e57005dc0daac` produced the verified Windows x64 portable, MSI and Setup payloads. The extracted launcher preserved the Living World across restart, and the extracted viewer continued an interrupted workflow from its committed prefix against a controlled provider fixture. All four Atlas modes rendered. Intelligence Network showed a signed broker attempt matched to live Ollama scheduler evidence before the 1,200-output-token task completed and drained. The candidate has a refreshed CycloneDX SBOM, an exact-version OSV lookup and an internal compliance review bundle. [Package checksums and evidence](RELEASE.md#windows-x64-candidate-with-workflow-recovery)
@@ -10,7 +16,7 @@ The official llama.cpp Windows CPU archive for build `b12230` matched SHA-256 `a
 
 ## Milestone 12 — Keep desktop controls and results reachable in small windows
 
-At source checkpoint `0a8c631a7218a261c7863f46221c915266720049`, Providers and Workflow History scroll with the wheel or Page Up and Page Down. Their content stays between the Vespera header and Atlas navigation. The native Windows acceptance build opened at 740×470 and verified both input paths, a return to the top, a permission control clicked after scrolling, a retained workflow result at the bottom, and navigation back to Home. The acceptance build used the production panel layout with a smaller initial window size and input tracing. The release default stays 1200×800. The 53 default optimized graphics tests, formatting and strict graphics Clippy passed.
+At source checkpoint `0a8c631a7218a261c7863f46221c915266720049`, Providers and Workflow History scroll with the wheel or Page Up and Page Down. Their content stays between the Vespera header and Atlas navigation. The native Windows acceptance build opened at 740×470 and verified both input paths, a return to the top, a permission control clicked after scrolling, a retained workflow result at the bottom, and navigation back to Home. The acceptance build used the production panel layout with a smaller initial window size and input tracing. The release default stays 1200×800. The 53 default optimized graphics tests, formatting and strict graphics Clippy passed. All three hosted source jobs passed on retry. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42672107796/attempts/2)
 
 ## Milestone 12 — Continue an interrupted desktop workflow
 
