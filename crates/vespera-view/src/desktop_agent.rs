@@ -1,16 +1,18 @@
 use std::fs::{self, OpenOptions};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use vespera_agents::{AgentTaskStore, ExecutionOptions};
+use vespera_agents::{AgentTaskStore, ExecutionOptions, MemoryContext};
+use vespera_app::memory::{authorize_remembered_task, configured_authorizer};
 use vespera_app::runtime::{VesperaRuntime, configured_registry};
 use vespera_config::{AppConfig, CONFIG_SCHEMA_VERSION, ProviderConfig};
 use vespera_core::{
-    AgentDefinition, AgentId, AgentIdentity, AgentStatus, Capability, ModelAvailability,
-    ModelDescriptor, ModelId, ModelSelectionPolicy, Permission, ProviderId, ProviderKind,
-    ResourceBudget, ResourceEstimate, Task, TaskId, TaskState,
+    AgentDefinition, AgentId, AgentIdentity, AgentStatus, Capability, MemoryLayer, MemoryRecord,
+    ModelAvailability, ModelDescriptor, ModelId, ModelSelectionPolicy, Permission, ProviderId,
+    ProviderKind, ResourceBudget, ResourceEstimate, Task, TaskId, TaskState,
 };
+use vespera_memory::{MemoryOrigin, MemoryStore, StorageError, StorageLimits};
 use vespera_providers::{CancellationToken, DiscoveredModel};
 
 const APPLICATION_ID: i32 = 0x5644_534b;
@@ -68,6 +70,7 @@ pub(super) struct Registration {
 pub(super) struct FinishedTask {
     pub id: TaskId,
     pub response: String,
+    pub memory_records: Option<usize>,
     pub cleanup_confirmed: bool,
 }
 
@@ -383,10 +386,11 @@ fn save(dir: &Path, expected: Option<i64>, config: AppConfig) -> Result<Roster, 
     Ok(Roster { revision, config })
 }
 
-pub(super) fn set_delegation(
+pub(super) fn set_permission(
     dir: &Path,
     mut roster: Roster,
     selected: usize,
+    permission: Permission,
     allow: bool,
 ) -> Result<(Roster, usize), Failure> {
     let agent = roster
@@ -395,11 +399,80 @@ pub(super) fn set_delegation(
         .get_mut(selected)
         .ok_or("No saved agent selected.")?;
     if allow {
-        agent.permissions.insert(Permission::Delegate);
+        agent.permissions.insert(permission);
     } else {
-        agent.permissions.remove(&Permission::Delegate);
+        agent.permissions.remove(&permission);
     }
     Ok((save(dir, Some(roster.revision), roster.config)?, selected))
+}
+
+const MEMORY_DB: &str = "desktop-memory.sqlite3";
+
+pub(super) fn remember(
+    dir: &Path,
+    revision: i64,
+    owner: AgentId,
+    task: TaskId,
+) -> Result<(), String> {
+    let roster = current_roster(dir, revision)?;
+    let (authority, result) = authorize_remembered_task(
+        roster.config(),
+        owner,
+        &dir.join("desktop-tasks.sqlite3"),
+        task,
+    )
+    .map_err(|error| error.to_string())?;
+    let created_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .ok_or("Could not determine the memory timestamp.")?;
+    let record = MemoryRecord {
+        id: task
+            .to_string()
+            .parse()
+            .map_err(|_| "Invalid source task ID.")?,
+        agent_id: owner,
+        layer: MemoryLayer::Episodic,
+        content: result.response.content,
+        created_at_unix_ms,
+        source_task_id: Some(task),
+    };
+    let store = MemoryStore::open(dir.join(MEMORY_DB), StorageLimits::default(), authority)
+        .map_err(|error| error.to_string())?;
+    match store.insert(owner, record, MemoryOrigin::Generated) {
+        Ok(_) => Ok(()),
+        Err(StorageError::Conflict) => Err("A memory already uses this task's ID.".into()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn current_roster(dir: &Path, revision: i64) -> Result<Roster, Failure> {
+    load(dir)?
+        .filter(|roster| roster.revision == revision)
+        .ok_or("The saved binding changed. Reopen the application.")
+}
+
+fn retrieve_memory(
+    dir: &Path,
+    config: &AppConfig,
+    owner: AgentId,
+    phrase: &str,
+) -> Result<MemoryContext, String> {
+    let authority = configured_authorizer(config, owner, &[Permission::MemoryRead])
+        .map_err(|error| error.to_string())?;
+    let path = dir.join(MEMORY_DB);
+    if !path
+        .try_exists()
+        .map_err(|_| "Could not locate desktop memory.")?
+    {
+        return Err(
+            "Save a completed task with Remember task to initialize desktop memory.".into(),
+        );
+    }
+    let store = MemoryStore::open_read_only(path, StorageLimits::default(), authority)
+        .map_err(|error| error.to_string())?;
+    MemoryContext::retrieve(&store, owner, phrase).map_err(|error| error.to_string())
 }
 
 pub(super) fn set_identity(
@@ -446,17 +519,22 @@ pub(super) async fn run(
     mut roster: Roster,
     selected: usize,
     prompt: String,
+    memory_phrase: Option<String>,
     cancel: CancellationToken,
 ) -> Result<FinishedTask, String> {
-    let store = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
-        .map_err(|_| "Could not acquire the desktop task store.")?;
-    if load(dir)?.is_none_or(|current| current.revision != roster.revision) {
-        return Err("The saved binding changed. Reopen the application.".into());
-    }
+    current_roster(dir, roster.revision)?;
     let (agent, model, provider) = roster
         .selection(selected)
         .ok_or("No saved agent selected.")?;
     let agent = agent.identity.id;
+    let context = memory_phrase
+        .as_deref()
+        .map(|phrase| retrieve_memory(dir, roster.config(), agent, phrase))
+        .transpose()
+        .map_err(|error| format!("Could not retrieve agent memory. {error}"))?;
+    let used_memory = context.is_some();
+    let store = AgentTaskStore::open(&dir.join("desktop-tasks.sqlite3"))
+        .map_err(|_| "Could not acquire the desktop task store.")?;
     if store
         .is_suspended(agent)
         .map_err(|_| "Could not read the agent's operator hold.")?
@@ -497,7 +575,7 @@ pub(super) async fn run(
             runtime.reconcile_startup(cancel.clone()).await?;
         }
         runtime
-            .run_agent(
+            .run_agent_with_context(
                 agent,
                 task,
                 ExecutionOptions {
@@ -506,6 +584,7 @@ pub(super) async fn run(
                     ..ExecutionOptions::default()
                 },
                 false,
+                context,
                 cancel.clone(),
             )
             .await
@@ -524,6 +603,7 @@ pub(super) async fn run(
     match outcome {
         Ok(result) => Ok(FinishedTask {
             id,
+            memory_records: used_memory.then_some(result.memory_context_ids.len()),
             response: result.response.content,
             cleanup_confirmed,
         }),
@@ -621,7 +701,7 @@ mod tests {
     async fn identity_edit_preserves_binding_and_rejects_a_stale_roster() {
         let dir = std::env::temp_dir().join(format!("vespera-desktop-agent-{}", TaskId::new()));
         let (original, _) = register(&dir, None, registration("fixture")).await.unwrap();
-        let (granted, _) = set_delegation(&dir, original, 0, true).unwrap();
+        let (granted, _) = set_permission(&dir, original, 0, Permission::Delegate, true).unwrap();
         let (agent, model, provider) = granted.selection(0).unwrap();
         let (id, model_id, provider_id) = (agent.identity.id, model.id, provider.id);
         assert!(set_identity(&dir, granted.clone(), 0, String::new(), "Reviewer".into()).is_err());
@@ -656,7 +736,7 @@ mod tests {
             .unwrap();
         let owner = roster.selection(0).unwrap().0.identity.id;
         let other = roster.selection(1).unwrap().0.identity.id;
-        let (granted, _) = set_delegation(&dir, roster, 0, true).unwrap();
+        let (granted, _) = set_permission(&dir, roster, 0, Permission::Delegate, true).unwrap();
         let reopened = load(&dir).unwrap().unwrap();
         assert!(
             reopened
@@ -667,7 +747,7 @@ mod tests {
                 .contains(&Permission::Delegate)
         );
         assert!(reopened.selection(1).unwrap().0.permissions.is_empty());
-        assert!(set_delegation(&dir, first, 0, false).is_err());
+        assert!(set_permission(&dir, first, 0, Permission::Delegate, false).is_err());
         set_hold(&dir, owner, true).unwrap();
         let tasks = dir.join("desktop-tasks.sqlite3");
         assert!(AgentTaskStore::inspect_suspension(&tasks, owner).unwrap());
@@ -677,13 +757,14 @@ mod tests {
             granted.clone(),
             0,
             "test".into(),
+            None,
             CancellationToken::new(),
         )
         .await;
         assert!(matches!(blocked, Err(error) if error.contains("Agent is suspended")));
         set_hold(&dir, owner, false).unwrap();
         assert!(!AgentTaskStore::inspect_suspension(&tasks, owner).unwrap());
-        let (revoked, _) = set_delegation(&dir, granted, 0, false).unwrap();
+        let (revoked, _) = set_permission(&dir, granted, 0, Permission::Delegate, false).unwrap();
         assert!(revoked.selection(0).unwrap().0.permissions.is_empty());
         fs::remove_file(tasks).unwrap();
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();

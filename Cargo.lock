@@ -5803,6 +5803,7 @@ dependencies = [
  "vespera-config",
  "vespera-core",
  "vespera-events",
+ "vespera-memory",
  "vespera-orchestrator",
  "vespera-providers",
  "vespera-sdk",

@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Use private agent memory from the desktop
+
+The Providers panel now exposes separate memory read and write grants. Remembering a completed response rechecks the saved roster revision, grant and durable task owner. Each source task has one deterministic memory ID in the desktop database. Phrase recall is opt-in for a single task and records which memories were included as untrusted provider input.
+
+The optimized Windows viewer used a scratch profile with Ollama `hermes3:8b`. The walkthrough denied ungranted access, retained one record after a duplicate save, closed and reopened the application, and completed a task whose recorded memory ID matched the saved source. Revoking read access denied subsequent recall. A second agent with its own read grant completed the same search with zero records. Ollama reported no loaded models after both tasks. The authenticated compatible fixture checked the actual outbound request and verified that the credential did not appear in the profile, task or memory database. The optimized graphics suite passed 53 tests with six opt-in tests skipped. Strict graphics Clippy passed. [Desktop memory controls](AGENTS.md#desktop-agent-memory)
+
 ## Milestone 14 — Verify the optimized Windows installer lifecycle
 
 The disposable Windows runner built the optimized `0.1.1` and `0.1.2` payloads from their own source revisions, verified their manifests, and checked the candidate MSI embedded in Setup. The run passed clean installation, an injected upgrade rollback, successful upgrade, downgrade rejection, uninstall and restoration with the saved world preserved. The tested candidate came from `fd1a464`. A second run is active for the latest desktop changes. [Hosted source and checksums](RELEASE.md#hosted-optimized-windows-installer-qualification)

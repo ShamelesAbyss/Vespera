@@ -676,6 +676,8 @@ Select **Edit agent identity** or press **I** to edit the selected agent's name 
 
 Select **Task history** to see the selected agent's retained tasks, newest accepted first. Use the page controls to browse and press a task number for a prompt and response preview. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID to `agent-task-history` to inspect the full checkpoint. [Durable task ownership](AGENTS.md#durable-task-ownership)
 
+To retain a completed response, grant **Toggle memory write** for its agent, open **Task history**, choose the completed task by number, and select **Remember task**. To use stored context, grant **Toggle memory read**, select **Run with memory**, enter a literal search phrase, then enter the prompt. The result reports how many matching records were included. A plain **Run agent task** does not use memory. [Desktop memory and permissions](AGENTS.md#desktop-agent-memory)
+
 Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.
 
 ### Run a delegated desktop workflow

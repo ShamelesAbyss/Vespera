@@ -29,6 +29,27 @@ same SQLite update as the task outcome. Use the [event recovery command](CLI.md#
 to publish that envelope after a journal outage. Prompts and generated
 responses stay in the private task database.
 
+## Desktop agent memory
+
+Open the Providers panel with **F6** and select a saved agent. The panel
+shows separate read and write grants. Grant write access before opening
+**Task history**, select a completed task by number, and choose **Remember
+task** to copy the committed response into that agent's episodic memory.
+Each retained task can produce one desktop memory record. Its source task
+and owner are checked again when the record is saved.
+
+Grant read access and choose **Run with memory** to enter a phrase and a
+separate prompt. The phrase is limited to 256 bytes and 32 words. The runtime
+passes up to eight matching records, within an 8 KiB context budget, to the
+bound provider as untrusted user input. The task checkpoint records the IDs
+of the records actually included. Regular tasks and workflows do not
+retrieve memory automatically. Rebinding preserves the same agent namespace.
+
+The desktop profile stores these records in `desktop-memory.sqlite3`. Treat
+that file and any SQLite sidecars as private data. Changing a grant affects
+subsequent operations and leaves retained records available if access is
+granted again. See [memory storage and recovery](MEMORY.md).
+
 ## Durable operator suspension
 
 `agent-state` manages an operator hold for a configured agent UUID. Use the

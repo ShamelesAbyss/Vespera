@@ -8,7 +8,7 @@ publish.workspace = true
 license-file.workspace = true
 
 [features]
-graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:reqwest", "dep:ring", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit", "dep:xkbcommon-dl"]
+graphics = ["dep:bevy", "dep:clap", "dep:nvml-wrapper", "dep:png", "dep:reqwest", "dep:ring", "dep:rusqlite", "dep:serde_json", "dep:sysinfo", "dep:tokio", "dep:vespera-agents", "dep:vespera-app", "dep:vespera-config", "dep:vespera-events", "dep:vespera-memory", "dep:vespera-orchestrator", "dep:vespera-providers", "dep:vespera-sdk", "dep:vespera-world", "dep:winit", "dep:xkbcommon-dl"]
 
 [[bin]]
 name = "vespera-view"
@@ -31,6 +31,7 @@ vespera-app = { path = "../vespera-app", optional = true }
 vespera-config = { workspace = true, optional = true }
 vespera-providers = { workspace = true, optional = true }
 vespera-events = { path = "../vespera-events", optional = true }
+vespera-memory = { path = "../vespera-memory", optional = true }
 vespera-orchestrator = { path = "../vespera-orchestrator", optional = true }
 vespera-sdk = { path = "../vespera-sdk", optional = true }
 vespera-world = { path = "../vespera-world", optional = true }

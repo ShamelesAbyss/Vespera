@@ -12,7 +12,7 @@ use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
 use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
 use vespera_config::ProviderConfig;
-use vespera_core::{AgentId, Permission, ProviderKind};
+use vespera_core::{AgentId, Permission, ProviderKind, TaskId};
 use vespera_orchestrator::{OutputPolicy, Workflow};
 use vespera_providers::{
     CancellationToken, DiscoveredModel, ProviderError, ProviderHealthReport,
@@ -54,6 +54,10 @@ enum Action {
     Previous,
     Next,
     Prompt,
+    MemoryPrompt,
+    ToggleMemoryRead,
+    ToggleMemoryWrite,
+    Remember,
     Cancel,
     PreviousAgent,
     NextAgent,
@@ -93,7 +97,8 @@ enum Edit {
         fields: [String; 2],
         index: usize,
     },
-    Prompt(String),
+    MemoryPhrase(String),
+    Prompt(String, Option<String>),
     Workflow {
         fields: [String; 3],
         index: usize,
@@ -189,6 +194,7 @@ enum Work {
     ),
     History(Mutex<Receiver<Result<Vec<StoredTaskSummary>, AgentTaskStoreError>>>),
     Inspect(Mutex<Receiver<Result<StoredAgentTask, AgentTaskStoreError>>>),
+    Remember(Mutex<Receiver<Result<(), String>>>),
     Task {
         result: Mutex<Receiver<Result<FinishedTask, String>>>,
         cancel: CancellationToken,
@@ -205,6 +211,7 @@ type RegistrationResult = Result<(Roster, usize), &'static str>;
 struct History {
     page: u32,
     tasks: Vec<StoredTaskSummary>,
+    completed: Option<TaskId>,
 }
 
 #[derive(Resource)]
@@ -432,6 +439,10 @@ fn setup(mut commands: Commands) {
                         button(Action::Cancel, "Cancel work"),
                         windows_credential_button,
                         button(Action::EditIdentity, "Edit agent identity"),
+                        button(Action::ToggleMemoryRead, "Toggle memory read"),
+                        button(Action::ToggleMemoryWrite, "Toggle memory write"),
+                        button(Action::MemoryPrompt, "Run with memory"),
+                        button(Action::Remember, "Remember task"),
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
@@ -479,6 +490,7 @@ fn apply(action: Action, panel: &mut Panel) {
                 | Action::PreviousAgent
                 | Action::NextAgent
                 | Action::History
+                | Action::Remember
         )
     {
         panel.history = None;
@@ -513,15 +525,29 @@ fn apply(action: Action, panel: &mut Panel) {
             panel.page = 0;
             panel.feedback.clear();
         }
-        Action::Prompt => {
-            if panel.roster.is_some() {
-                panel.draft = Some(Edit::Prompt(String::new()));
-            } else {
-                panel.feedback =
-                    "Discover a model and press its number to register it and bind an agent."
-                        .into();
+        Action::Prompt | Action::MemoryPrompt => {
+            match panel
+                .roster
+                .as_ref()
+                .and_then(|roster| roster.selection(panel.selected))
+            {
+                Some((agent, _, _)) if matches!(action, Action::MemoryPrompt) => {
+                    if agent.permissions.contains(&Permission::MemoryRead) {
+                        panel.feedback.clear();
+                        panel.draft = Some(Edit::MemoryPhrase(String::new()));
+                    } else {
+                        panel.feedback = "Grant memory read to the selected agent first.".into();
+                    }
+                }
+                Some(_) => panel.draft = Some(Edit::Prompt(String::new(), None)),
+                None => {
+                    panel.feedback =
+                        "Discover a model and press its number to register it and bind an agent."
+                            .into()
+                }
             }
         }
+        Action::Remember => remember_task(panel),
         Action::Cancel => {}
         Action::Workflow | Action::Chain => {
             let Some(roster) = &panel.roster else {
@@ -545,19 +571,40 @@ fn apply(action: Action, panel: &mut Panel) {
                 panel.feedback = "Allow delegation for the selected coordinator first.".into();
             }
         }
-        Action::AllowDelegation | Action::RevokeDelegation => {
+        Action::AllowDelegation
+        | Action::RevokeDelegation
+        | Action::ToggleMemoryRead
+        | Action::ToggleMemoryWrite => {
             let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) else {
                 return;
             };
-            let allow = matches!(action, Action::AllowDelegation);
             let selected = panel.selected;
+            let Some((agent, _, _)) = roster.selection(selected) else {
+                return;
+            };
+            let (permission, allow, message) = match action {
+                Action::AllowDelegation => (
+                    Permission::Delegate,
+                    true,
+                    "Delegation granted to the selected agent.",
+                ),
+                Action::RevokeDelegation => (Permission::Delegate, false, "Delegation revoked."),
+                Action::ToggleMemoryRead => (
+                    Permission::MemoryRead,
+                    !agent.permissions.contains(&Permission::MemoryRead),
+                    "Memory read permission updated.",
+                ),
+                _ => (
+                    Permission::MemoryWrite,
+                    !agent.permissions.contains(&Permission::MemoryWrite),
+                    "Memory write permission updated.",
+                ),
+            };
             panel.work = Some(Work::SaveRoster(
-                background(move |_| desktop_agent::set_delegation(&dir, roster, selected, allow)),
-                if allow {
-                    "Delegation granted to the selected agent."
-                } else {
-                    "Delegation revoked."
-                },
+                background(move |_| {
+                    desktop_agent::set_permission(&dir, roster, selected, permission, allow)
+                }),
+                message,
             ));
         }
         Action::Suspend | Action::Resume => {
@@ -823,7 +870,7 @@ fn keyboard(
 
 fn paste_prompt(edit: &mut Edit, read: impl FnOnce() -> Option<String>) {
     let prompt = match edit {
-        Edit::Prompt(prompt) => prompt,
+        Edit::Prompt(prompt, _) => prompt,
         Edit::Workflow {
             fields,
             index: index @ (1 | 2),
@@ -885,11 +932,10 @@ fn inspect_history(panel: &mut Panel, index: usize) {
     let Some((path, owner)) = history_source(panel) else {
         return;
     };
-    let Some(entry) = panel
-        .history
-        .as_ref()
-        .and_then(|history| history.tasks.get(index))
-    else {
+    let Some(entry) = panel.history.as_mut().and_then(|history| {
+        history.completed = None;
+        history.tasks.get(index)
+    }) else {
         return;
     };
     let id = entry.id;
@@ -900,6 +946,22 @@ fn inspect_history(panel: &mut Panel, index: usize) {
             return Err(AgentTaskStoreError::InvalidCheckpoint);
         }
         Ok(task)
+    })));
+}
+
+fn remember_task(panel: &mut Panel) {
+    let Some(task) = panel.history.as_ref().and_then(|history| history.completed) else {
+        panel.feedback = "Open Task history and select a completed task first.".into();
+        return;
+    };
+    let (Some(dir), Some(roster), Some((_, owner))) =
+        (panel.dir.clone(), &panel.roster, history_source(panel))
+    else {
+        return;
+    };
+    let revision = roster.revision;
+    panel.work = Some(Work::Remember(background(move |_| {
+        desktop_agent::remember(&dir, revision, owner, task)
     })));
 }
 
@@ -970,7 +1032,8 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
         Edit::Registration { fields, index, .. } => {
             (&mut fields[*index], 8, |c| c.is_ascii_digit())
         }
-        Edit::Prompt(value) => (value, PROMPT_LIMIT, |c| !c.is_control()),
+        Edit::Prompt(value, _) => (value, PROMPT_LIMIT, |c| !c.is_control()),
+        Edit::MemoryPhrase(value) => (value, 256, |c| !c.is_control()),
         Edit::Workflow { fields, index: 0 } => (&mut fields[0], 2, |c| c.is_ascii_digit()),
         Edit::Workflow { fields, index } => {
             (&mut fields[*index], PROMPT_LIMIT, |c| !c.is_control())
@@ -1120,10 +1183,22 @@ fn submit(panel: &mut Panel) {
                 panel.feedback = "Saving agent identity...".into();
             }
         }
-        Edit::Prompt(prompt) => {
+        Edit::MemoryPhrase(phrase) => {
+            if phrase.trim().is_empty()
+                || phrase.len() > 256
+                || phrase.split_whitespace().count() > 32
+            {
+                panel.feedback = "Enter a phrase of 1 to 256 bytes and at most 32 words.".into();
+                panel.draft = Some(Edit::MemoryPhrase(phrase));
+            } else {
+                panel.feedback.clear();
+                panel.draft = Some(Edit::Prompt(String::new(), Some(phrase)));
+            }
+        }
+        Edit::Prompt(prompt, memory_phrase) => {
             if prompt.trim().is_empty() {
                 panel.feedback = "Enter a prompt before starting a task.".into();
-                panel.draft = Some(Edit::Prompt(prompt));
+                panel.draft = Some(Edit::Prompt(prompt, memory_phrase));
             } else if let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) {
                 let cancel = CancellationToken::new();
                 let task_cancel = cancel.clone();
@@ -1134,6 +1209,7 @@ fn submit(panel: &mut Panel) {
                         roster,
                         selected,
                         prompt,
+                        memory_phrase,
                         task_cancel,
                     ))
                 });
@@ -1381,6 +1457,9 @@ fn receive_work(mut panel: ResMut<Panel>) {
         },
         Some(Work::Inspect(result)) => match poll(result) {
             Ok(Ok(task)) => {
+                if let Some(history) = panel.history.as_mut() {
+                    history.completed = task.result.as_ref().map(|_| task.task.id);
+                }
                 let prompt = preview(&task.task.prompt, 150);
                 let response = task.result.as_ref().map_or_else(
                     || "No committed response".into(),
@@ -1394,6 +1473,14 @@ fn receive_work(mut panel: ResMut<Panel>) {
             Ok(Err(error)) => panel.feedback = error.to_string(),
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => panel.feedback = "The task reader stopped.".into(),
+        },
+        Some(Work::Remember(result)) => match poll(result) {
+            Ok(Ok(())) => {
+                panel.feedback = "Saved the completed response to this agent's memory.".into()
+            }
+            Ok(Err(error)) => panel.feedback = error,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => panel.feedback = "The memory writer stopped.".into(),
         },
         Some(Work::Workflow { result, .. }) => match poll(result) {
             Ok(Ok(finished)) => panel.feedback = workflow_summary(finished, panel.roster.as_ref()),
@@ -1420,6 +1507,10 @@ fn receive_work(mut panel: ResMut<Panel>) {
                         "Cleanup was not confirmed."
                     }
                 );
+                if let Some(count) = task.memory_records {
+                    use std::fmt::Write as _;
+                    let _ = write!(panel.feedback, "\nMemory records included  |  {count}");
+                }
             }
             Ok(Err(error)) => panel.feedback = error,
             Err(TryRecvError::Empty) => return,
@@ -1573,6 +1664,19 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
         if let Some(name) = &provider.credential_env {
             let _ = writeln!(content, "Task credential variable  |  {name}");
         }
+        let permission = |grant| {
+            if agent.permissions.contains(&grant) {
+                "allowed"
+            } else {
+                "denied"
+            }
+        };
+        let _ = writeln!(
+            content,
+            "Memory read {}  |  Memory write {}",
+            permission(Permission::MemoryRead),
+            permission(Permission::MemoryWrite)
+        );
         if provider.credential_windows {
             let _ = writeln!(content, "Task credential  |  Windows Credential Manager");
         }
@@ -1732,7 +1836,16 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                     );
                 }
             }
-            Edit::Prompt(prompt) => {
+            Edit::MemoryPhrase(phrase) => {
+                let _ = write!(
+                    content,
+                    "\nMemory search phrase: {phrase}_\nEnter continues to the task prompt. Only this agent's matching records can be included."
+                );
+            }
+            Edit::Prompt(prompt, memory_phrase) => {
+                if memory_phrase.is_some() {
+                    content.push_str("\nMatching memories will be passed to the bound provider as untrusted input.");
+                }
                 let _ = write!(
                     content,
                     "\nTask prompt: {prompt}_\nEnter runs one task (128 output tokens, 50-second task budget)."
@@ -1933,10 +2046,10 @@ mod tests {
 
     #[test]
     fn paste_only_reads_prompt_fields_and_respects_the_character_limit() {
-        let mut prompt = Edit::Prompt("x".repeat(PROMPT_LIMIT - 4));
+        let mut prompt = Edit::Prompt("x".repeat(PROMPT_LIMIT - 4), None);
         paste_prompt(&mut prompt, || Some("é\n\u{0}β\tz".into()));
         assert!(
-            matches!(prompt, Edit::Prompt(text) if text.chars().count() == PROMPT_LIMIT && text.ends_with("é β "))
+            matches!(prompt, Edit::Prompt(text, _) if text.chars().count() == PROMPT_LIMIT && text.ends_with("é β "))
         );
 
         let mut chain = Edit::Chain(ChainDraft {
@@ -1967,7 +2080,7 @@ mod tests {
             .add_message::<KeyboardInput>()
             .add_message::<KeyboardFocusLost>();
         install(&mut app, None);
-        app.world_mut().resource_mut::<Panel>().draft = Some(Edit::Prompt(String::new()));
+        app.world_mut().resource_mut::<Panel>().draft = Some(Edit::Prompt(String::new(), None));
         // The hosted Linux job supplies a private Xvfb clipboard.
         let expected = if cfg!(target_os = "linux")
             && std::env::var_os("VESPERA_TEST_ISOLATED_X11_CLIPBOARD").is_some()
@@ -2001,7 +2114,7 @@ mod tests {
         }
         app.world_mut().run_system_once(keyboard).unwrap();
         assert!(
-            matches!(&app.world().resource::<Panel>().draft, Some(Edit::Prompt(text)) if text == expected)
+            matches!(&app.world().resource::<Panel>().draft, Some(Edit::Prompt(text, _)) if text == expected)
         );
     }
 
@@ -2247,9 +2360,10 @@ mod tests {
             assert_eq!(provider.credential_env.as_deref(), Some(CREDENTIAL));
             let finished = desktop_agent::run(
                 &dir,
-                roster,
+                roster.clone(),
                 0,
                 "Fixture prompt".into(),
+                None,
                 CancellationToken::new(),
             )
             .await
@@ -2259,8 +2373,54 @@ mod tests {
             let stored = AgentTaskStore::inspect(&tasks, finished.id).unwrap();
             assert_eq!(stored.owner, owner);
             assert_eq!(stored.task.state, vespera_core::TaskState::Completed);
+            let memory = dir.join("desktop-memory.sqlite3");
+            assert!(desktop_agent::remember(&dir, roster.revision, owner, finished.id).is_err());
+            assert!(!memory.exists());
+            let (writer, _) =
+                desktop_agent::set_permission(&dir, roster, 0, Permission::MemoryWrite, true)
+                    .unwrap();
+            let blocked = desktop_agent::run(
+                &dir,
+                writer.clone(),
+                0,
+                "Fixture recall".into(),
+                Some(ANSWER.into()),
+                CancellationToken::new(),
+            )
+            .await;
+            assert!(matches!(blocked, Err(error) if error.contains("memory access denied")));
+            desktop_agent::remember(&dir, writer.revision, owner, finished.id).unwrap();
+            assert!(desktop_agent::remember(&dir, writer.revision, owner, finished.id).is_err());
+            let (reader, _) = desktop_agent::set_permission(
+                &dir,
+                writer.clone(),
+                0,
+                Permission::MemoryRead,
+                true,
+            )
+            .unwrap();
+            assert!(desktop_agent::remember(&dir, writer.revision, owner, finished.id).is_err());
+            let recalled = desktop_agent::run(
+                &dir,
+                reader,
+                0,
+                "Fixture recall".into(),
+                Some(ANSWER.into()),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(recalled.memory_records, Some(1));
+            let recall = AgentTaskStore::inspect(&tasks, recalled.id)
+                .unwrap()
+                .result
+                .unwrap();
+            assert_eq!(
+                recall.memory_context_ids[0].to_string(),
+                finished.id.to_string()
+            );
             let token = std::env::var(CREDENTIAL).unwrap();
-            for file in [dir.join("desktop.sqlite3"), tasks] {
+            for file in [dir.join("desktop.sqlite3"), tasks, memory] {
                 let bytes = std::fs::read(&file).unwrap();
                 assert!(
                     !bytes
@@ -2286,12 +2446,14 @@ mod tests {
                 .unwrap()
         });
         let server = async {
-            for (method, authorized) in [
-                ("GET /v1/models HTTP/1.1", false),
-                ("GET /v1/models HTTP/1.1", true),
-                ("GET /v1/models HTTP/1.1", true),
-                ("GET /v1/models HTTP/1.1", true),
-                ("POST /v1/chat/completions HTTP/1.1", true),
+            for (method, authorized, uses_memory) in [
+                ("GET /v1/models HTTP/1.1", false, false),
+                ("GET /v1/models HTTP/1.1", true, false),
+                ("GET /v1/models HTTP/1.1", true, false),
+                ("GET /v1/models HTTP/1.1", true, false),
+                ("POST /v1/chat/completions HTTP/1.1", true, false),
+                ("GET /v1/models HTTP/1.1", true, false),
+                ("POST /v1/chat/completions HTTP/1.1", true, true),
             ] {
                 let (stream, _) = listener.accept().await.unwrap();
                 let mut stream = BufReader::new(stream);
@@ -2316,10 +2478,11 @@ mod tests {
                     }
                 }
                 assert_eq!(has_auth, authorized);
-                stream
-                    .read_exact(&mut vec![0; content_length])
-                    .await
-                    .unwrap();
+                let mut request = vec![0; content_length];
+                stream.read_exact(&mut request).await.unwrap();
+                let request = String::from_utf8(request).unwrap();
+                assert_eq!(request.contains("untrusted_memory"), uses_memory);
+                assert_eq!(request.contains(ANSWER), uses_memory);
                 let (status, body) = if !authorized {
                     ("401 Unauthorized", r#"{"error":"authentication required"}"#)
                 } else if method.starts_with("GET") {
