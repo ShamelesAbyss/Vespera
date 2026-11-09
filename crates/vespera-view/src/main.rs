@@ -310,7 +310,15 @@ fn broker_client(
     }
 }
 
-async fn observe(
+async fn observe(client: OperatorClient, updates: Feeds, actions: mpsc::Receiver<CancelRequest>) {
+    let primary = updates.primary.clone();
+    tokio::select! {
+        () = primary.closed() => {},
+        () = observe_connected(client, updates, actions) => {},
+    }
+}
+
+async fn observe_connected(
     client: OperatorClient,
     updates: Feeds,
     mut actions: mpsc::Receiver<CancelRequest>,
@@ -399,6 +407,90 @@ async fn observe(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn closing_the_view_cancels_a_stalled_broker_handshake() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = broker_client(
+            listener.local_addr().unwrap(),
+            SigningKey::from_hex(&"42".repeat(32)).unwrap(),
+            None,
+        )
+        .unwrap();
+        let (primary, updates) = mpsc::channel(1);
+        let (_actions, receiver) = mpsc::channel(1);
+        let observer = tokio::spawn(observe(
+            client,
+            Feeds {
+                primary,
+                mirror: None,
+            },
+            receiver,
+        ));
+        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut request = [0; 4096];
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), socket.read(&mut request))
+                .await
+                .unwrap()
+                .unwrap()
+                > 0
+        );
+        // Keep the accepted socket open without answering the session request.
+        drop(updates);
+        tokio::time::timeout(Duration::from_secs(1), observer)
+            .await
+            .unwrap()
+            .unwrap();
+        loop {
+            let count = tokio::time::timeout(Duration::from_secs(1), socket.read(&mut request))
+                .await
+                .unwrap()
+                .unwrap();
+            if count == 0 {
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_the_view_interrupts_the_reconnect_delay() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let client = broker_client(
+            address,
+            SigningKey::from_hex(&"42".repeat(32)).unwrap(),
+            None,
+        )
+        .unwrap();
+        let (primary, mut updates) = mpsc::channel(1);
+        let (_actions, receiver) = mpsc::channel(1);
+        let observer = tokio::spawn(observe(
+            client,
+            Feeds {
+                primary,
+                mirror: None,
+            },
+            receiver,
+        ));
+        let status = tokio::time::timeout(Duration::from_secs(5), updates.recv())
+            .await
+            .unwrap();
+        assert!(matches!(
+            status,
+            Some(Update::Status("Disconnected - reconnecting"))
+        ));
+        drop(updates);
+        // Shutdown must not wait for the two-second reconnect sleep.
+        tokio::time::timeout(Duration::from_secs(1), observer)
+            .await
+            .unwrap()
+            .unwrap();
+    }
     #[test]
     fn broker_tls_requires_an_explicit_broker_and_preserves_mode_conflicts() {
         assert!(Options::try_parse_from(["vespera-view", "--broker-tls-ca", "ca.pem"]).is_err());
