@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-11-08 — Live desktop branch/join and independent checkpoint read
+
+Checkpoint `dc0b42ded70421a55a9001402d95e8b32e068de3` adds a documented opt-in rehearsal of the desktop workflow execution path. A fresh scratch directory received only a copy of the earlier test roster. The first attempt correctly failed provider reconciliation because Ollama was stopped. After starting the installed local Ollama 0.40.15 server, four steps completed in 41.43 seconds including preparation and cleanup. The run reopened its saved plan, confirmed seed-to-left/right and left/right-to-join dependencies, and replayed durable event evidence. Strict graphics Clippy and formatting passed.
+
+A separate CLI process reopened workflow `95e0027f-612d-464b-9504-26b7b66c6ead`, reported completed with `interrupted=false`, and returned the expected dependencies. The provider reported zero resident models after cleanup. The test-owned Ollama server was stopped; original desktop data and candidate packages were untouched.
+
+Native graphical acceptance could not proceed: both computer-use entry points failed initialization with `failed to write kernel assets: The system cannot find the path specified. (os error 3)`. No application screenshot, graphical authoring interaction or rendered Swarm verification is claimed. The updated native executable built successfully, but a usable computer-use environment is still required to finish that walkthrough. The live execution rehearsal does not replace it.
 ## 2026-11-08 — Explicit desktop workflow branches and joins
 
 Checkpoint `3ffe24d0f215c896a2491875869a35d371e8a820` adds predecessor selection after each later prompt in Build workflow. Blank keeps the previous-step dependency; 0 creates an independent step; comma-separated earlier step numbers select branch and join inputs. The review includes dependency names. The last step remains the output, six-step bounds and permissions remain, and Draft + review keeps its original dependency. This controls data flow and does not promise parallel inference.
