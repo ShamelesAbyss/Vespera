@@ -201,9 +201,21 @@ The unsigned `0.1.2` build from `7defb68` verified 49 manifest files, 13 files f
 
 The portable launcher opened the native app from an unrelated working directory. A Living World commit survived a restart byte for byte. The packaged desktop saved discovery from an empty settings file, restored it after restart, discovered models through Ollama, and rejected a remote endpoint. The identity editor reopened the same agent's retained tasks after changing its name and role. The same extraction completed an edited four-step workflow and a new two-step workflow through Ollama. It also repeated the broker database migration and backup rollback against the prior packaged binary.
 
-Windows passed 289 workspace tests and doctests, 53 default optimized graphics tests, formatting, strict workspace and graphics Clippy, and strict workspace rustdoc. The internal SBOM matches the locked inventory and passed CycloneDX schema validation. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42662227600)
+Windows passed 289 workspace tests and doctests, 53 default optimized graphics tests, formatting, strict workspace and graphics Clippy, and strict workspace rustdoc. Foundation, Linux native, and Windows native CI passed for `7defb68`. The internal SBOM matches the locked inventory and passed CycloneDX schema validation. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42662227600)
 
 All four Atlas views opened from the extraction. Intelligence Network matched a signed broker attempt to the live Ollama scheduler task and worker. The 1200×800 Network sample measured a 7.43 ms p95 update interval across 600 Vulkan updates after 120 warmup updates on an RTX 4070 Laptop GPU.
+
+### Hosted optimized Windows installer qualification
+
+The Windows 2025 runner built `0.1.1` from `3d232672abacbfac1f0467cbbc5c64e58157702d` and `0.1.2` from `fd1a46449c05afa4d74cbd9f64bd95e816ce974c`. The run verified both portable manifests and the exact candidate MSI inside Setup. It passed clean Setup installation, rollback after a fault injected following old-product removal, upgrade from the optimized `0.1.1` MSI, downgrade rejection, Setup removal and manual restoration. The runner checked both shortcuts, installed payload hashes and the bytes and revision of the saved world. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42658938008/job/129304919231)
+
+| Hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `ec0c204dbdd7eacbe882bd93d8cc21a9c19c1a3e2ce640862ed985db5fa6c74d` |
+| Candidate MSI | `1be51c8ef5305aaad334342913951ad0b62f9c60bfc4d724e19623ad6a8efebf` |
+| Candidate Setup | `14141138b245da09c474a7fcbaa4e5ad975be3c18dde2f7272ccbb4c76042440` |
+
+A second optimized run was dispatched from `c1e08a2` to cover the desktop settings and identity changes. Its result is pending. [Follow-up run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42664441694)
 
 ### Windows x64 candidate with workflow editing and durable task audit
 

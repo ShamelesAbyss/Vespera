@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Verify the optimized Windows installer lifecycle
+
+The disposable Windows runner built the optimized `0.1.1` and `0.1.2` payloads from their own source revisions, verified their manifests, and checked the candidate MSI embedded in Setup. The run passed clean installation, an injected upgrade rollback, successful upgrade, downgrade rejection, uninstall and restoration with the saved world preserved. The tested candidate came from `fd1a464`. A second run is active for the latest desktop changes. [Hosted source and checksums](RELEASE.md#hosted-optimized-windows-installer-qualification)
+
 ## Milestone 14 — Package desktop settings and identity editing
 
 The unsigned Windows build from `7defb68` passed verification of the portable manifest, administrative MSI extraction and exact Setup payload. Native verification covered first launch, world commit and restart, discovery recovery from an empty settings file, real Ollama discovery, identity editing and task history. All four Atlas views rendered. Intelligence Network showed a live broker and scheduler match. The refreshed SBOM matched the locked dependency inventory and passed schema validation. The optimized installer qualification has a separate hosted workflow at `fd1a464`. [Release checksums](RELEASE.md#windows-x64-candidate-with-saved-desktop-discovery-and-identity-editing)
