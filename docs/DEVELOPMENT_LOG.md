@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 14 — Rehearse preservation of the world, memory and inbox
+
+The disposable installer test now writes a world, an agent-owned memory and a local inbox message through the prior installed CLI. It checks the original bytes after rollback, upgrade, downgrade rejection, uninstall and reinstall. It also reads the retained records through the installed CLI, checks inbox isolation, and verifies backup and restore of the memory record after upgrade. The PowerShell syntax check and isolated fixture checks passed against the packaged CLI at `d7de4c91fceee41dd7352a52551ed75de792e244`, including a negative hash check. The expanded installer lifecycle requires the disposable Windows runner.
+
+The unsigned internal Windows candidate at that source revision passed portable and installer payload verification. The packaged CLI accepted the matching fixed capability policy and refused an unsupported requirement. The packaged Home window launched from an unrelated working directory and exited with code 0. Strict rustdoc and hosted foundation, Linux native and Windows native CI passed. The SBOM passed CycloneDX 1.6 validation. The exact inventory matched the prior 429 dependencies, and a fresh OSV query returned zero matches. [Candidate and hosted run](RELEASE.md#windows-x64-candidate-with-desktop-capability-requirements)
+
 ## Milestone 12 — Preserve model declarations and enforce desktop agent requirements
 
 The Providers panel retains Ollama's capability declarations and displays context, quantization and scheduler estimates. Each agent can save its own required capabilities while keeping a fixed model. The same eligibility check is used for task dispatch, provider scoping, workflow candidates and model comparison. Rebinds preserve the requirement and reject incompatible replacements or refreshes of a shared registration.

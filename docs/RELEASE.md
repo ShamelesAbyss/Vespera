@@ -186,6 +186,19 @@ For a rollback to a build that predates `fixed_with_capabilities`, use a pre-upg
 
 ## Release evidence
 
+### Windows x64 candidate with desktop capability requirements
+
+The optimized unsigned `0.1.2` candidate at `d7de4c91fceee41dd7352a52551ed75de792e244` verified 49 portable manifest files, 13 MSI payload files, and the exact MSI embedded in Setup. The portable launcher opened Home from an unrelated working directory and the window closed with exit code 0. The CLI accepted a declared capability requirement and rejected a missing capability. Foreground operation of the new editor and live inference for the new policy remain open. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42689947277) · [Exact-source installer rehearsal](https://github.com/ShamelesAbyss/Vespera/actions/runs/42690783862)
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `1914978689683432bdca136c24b7828eb56d9231eed4b21d504f242f97e54fdd` |
+| Windows MSI | `b4bf478c856d6f69287f1c6329dbe8a44b6ac28af956b5384ed03638f413a1d1` |
+| Windows Setup | `b3f2e9851a5497c44698fcd779c42549ed82eb285881e3327d3179077e55d2bb` |
+| Internal review ZIP | `63d08afa0f0f18f61d6d4279d612cca298402180d1ba09fc6d5f05031beff97d` |
+
+The review archive includes the validated CycloneDX 1.6 SBOM, 429-crate inventory, collected notices and review queue. The refreshed OSV query returned zero matches for those exact Cargo versions. This result covers the queried records. Independent review and trusted Windows signing remain pending.
+
 - Record the Git revision, Windows or Linux architecture, build profile and package checksums.
 - Verify the fresh-directory walkthrough, headless and graphics builds, provider matrix, permission checks and backup recovery.
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)

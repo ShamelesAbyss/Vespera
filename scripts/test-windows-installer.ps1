@@ -172,6 +172,73 @@ function Assert-Shortcuts {
     }
 }
 
+function Initialize-UserStores($Cli, $Data, $Fixture) {
+    $sender = '33333333-3333-4333-8333-333333333333'
+    $recipient = '44444444-4444-4444-8444-444444444444'
+    $memoryId = '55555555-5555-4555-8555-555555555555'
+    $config = Join-Path $Fixture 'user-stores.toml'
+    $sample = Get-Content -LiteralPath 'config/local.toml' -Raw
+    $parts = $sample -split '\[\[agents\]\]', 2
+    $agent = '[[agents]]' + $parts[1].Replace('permissions = []', 'permissions = ["communicate", "memory_read", "memory_write"]')
+    $other = $agent.Replace($sender, $recipient).Replace('name = "Archivist"', 'name = "Reviewer"')
+    Set-Content -LiteralPath $config -Value ($parts[0] + $agent + [Environment]::NewLine + $other)
+    $content = 'Vespera installer data fixture'
+    $contentFile = Join-Path $Fixture 'user-store-content.txt'
+    [IO.File]::WriteAllText($contentFile, $content)
+    $memory = Join-Path $Data 'desktop-memory.sqlite3'
+    $tasks = Join-Path $Data 'desktop-tasks.sqlite3'
+    $memoryArgs = @('memory', '--config', $config, '--agent', $sender, '--database', $memory)
+    & $Cli @memoryArgs init --json | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the fixture memory.' }
+    & $Cli @memoryArgs add --id $memoryId --content-file $contentFile --json | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not save the fixture memory record.' }
+    $message = & $Cli agent-inbox --config $config --database $tasks --agent $sender send --to $recipient --message-file $contentFile | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $message.logical_tick -ne 1) { throw 'Could not save the fixture inbox message.' }
+    return @{
+        Config = $config
+        Memory = $memory
+        Tasks = $tasks
+        Owner = $sender
+        Recipient = $recipient
+        MemoryId = $memoryId
+        Content = $content
+    }
+}
+
+function Assert-SavedFiles($ExpectedHashes, $Phase) {
+    foreach ($path in $ExpectedHashes.Keys) {
+        if (!(Test-Path -LiteralPath $path -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $path).Hash -ne $ExpectedHashes[$path]) {
+            throw "Installer phase $Phase changed saved file $(Split-Path -Leaf $path)."
+        }
+    }
+}
+
+function Assert-MemoryRecord($Cli, $Stores, $Database) {
+    $memory = & $Cli memory --config $Stores.Config --agent $Stores.Owner --database $Database get --id $Stores.MemoryId --json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $memory.record.record.id -ne $Stores.MemoryId -or
+        $memory.record.record.agent_id -ne $Stores.Owner -or $memory.record.record.content -cne $Stores.Content) {
+        throw 'The installed CLI could not recover the retained memory record.'
+    }
+}
+
+function Assert-UserStores($Cli, $Stores, $World) {
+    $state = & $Cli world --database $World inspect | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $state.revision -ne 3) {
+        throw 'The installed CLI could not read the committed world.'
+    }
+    Assert-MemoryRecord $Cli $Stores $Stores.Memory
+    $inboxArgs = @('agent-inbox', '--config', $Stores.Config, '--database', $Stores.Tasks, '--agent')
+    $inbox = @(& $Cli @inboxArgs $Stores.Recipient list | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0 -or $inbox.Count -ne 1 -or $inbox[0].logical_tick -ne 1 -or
+        $inbox[0].from_agent_id -ne $Stores.Owner -or $inbox[0].to_agent_id -ne $Stores.Recipient -or
+        $inbox[0].content -cne $Stores.Content) {
+        throw 'The installed CLI could not read the retained inbox message.'
+    }
+    $senderInbox = @(& $Cli @inboxArgs $Stores.Owner list | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0 -or $senderInbox.Count -ne 0) { throw 'The retained inbox crossed its owner boundary.' }
+}
+
 if ($Optimized) {
     Invoke-Setup /install 'setup-clean-install'
     Assert-Version $version
@@ -196,7 +263,12 @@ $cli = Join-Path $installed 'bin/vespera.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI could not create the fixture world.' }
 & $cli world --database $world advance --ticks 3 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI could not advance the fixture world.' }
-$worldHash = (Get-FileHash -LiteralPath $world).Hash
+$stores = Initialize-UserStores $cli $data $fixture
+Assert-UserStores $cli $stores $world
+$savedHashes = @{}
+foreach ($path in $world, $stores.Memory, $stores.Tasks) {
+    $savedHashes[$path] = (Get-FileHash -LiteralPath $path).Hash
+}
 if ($Optimized -and (& $cli --version) -ne "vespera $previous") {
     throw 'Installed prior CLI reports an unexpected version.'
 }
@@ -211,13 +283,8 @@ if (!$removal -or !$failure -or $removal.LineNumber -ge $failure.LineNumber) {
 }
 Assert-Version $previous
 Assert-InstalledPayload $previousStage $previousAuthoring
-if ((Get-FileHash -LiteralPath $world).Hash -ne $worldHash) {
-    throw 'Failed upgrade changed the saved world bytes.'
-}
-$rollbackState = & $cli world --database $world inspect | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $rollbackState.revision -ne 3) {
-    throw 'Automatic rollback did not restore the prior installation.'
-}
+Assert-SavedFiles $savedHashes 'failed upgrade'
+Assert-UserStores $cli $stores $world
 
 Invoke-Setup /install 'setup-upgrade'
 Assert-Version $version
@@ -226,29 +293,28 @@ Assert-Shortcuts
 if ($Optimized -and (& $cli --version) -ne "vespera $version") {
     throw 'Installed candidate CLI reports an unexpected version.'
 }
-if ((Get-FileHash -LiteralPath $world).Hash -ne $worldHash) {
-    throw 'Successful upgrade changed the saved world bytes.'
-}
-$upgradedState = & $cli world --database $world inspect | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $upgradedState.revision -ne 3) {
-    throw 'The upgraded installation could not read the saved world.'
-}
+Assert-SavedFiles $savedHashes 'successful upgrade'
+Assert-UserStores $cli $stores $world
+$backup = Join-Path $fixture 'memory-backup.sqlite3'
+$restoredMemory = Join-Path $fixture 'memory-restored.sqlite3'
+$backupReport = & $cli memory-admin backup --database $stores.Memory --output $backup | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or !$backupReport.verified) { throw 'Installed CLI memory backup failed.' }
+$restoreReport = & $cli memory-admin restore --backup $backup --database $restoredMemory | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or !$restoreReport.verified) { throw 'Installed CLI memory restore failed.' }
+Assert-MemoryRecord $cli $stores $restoredMemory
 Invoke-Installer /i $previous 'downgrade' 1603
 Assert-Version $version
 if (!(Select-String -Path "$fixture/downgrade.log" -Pattern 'A newer version of Vespera is already installed' -Quiet)) {
     throw 'The older package did not report the downgrade guard.'
 }
+Assert-SavedFiles $savedHashes 'downgrade rejection'
 Invoke-Setup /uninstall 'setup-remove-candidate'
+Assert-SavedFiles $savedHashes 'candidate uninstall'
 Invoke-Installer /i $previous 'restore-previous'
 Assert-Version $previous
 Assert-InstalledPayload $previousStage $previousAuthoring
-if ((Get-FileHash -LiteralPath $world).Hash -ne $worldHash) {
-    throw 'Installer lifecycle changed the saved world bytes.'
-}
-$state = & $cli world --database $world inspect | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $state.revision -ne 3) {
-    throw 'The restored installation could not read the saved world.'
-}
+Assert-SavedFiles $savedHashes 'prior restore'
+Assert-UserStores $cli $stores $world
 Invoke-Installer /x $previous 'remove-fixture'
-if (!(Test-Path -LiteralPath $world)) { throw 'Uninstall removed the fixture world.' }
-Write-Output "Verified per-user MSI install, automatic rollback after a failed upgrade, Setup bundle upgrade to $version, downgrade rejection, Setup removal, and restore of $previous with the committed world preserved."
+Assert-SavedFiles $savedHashes 'prior uninstall'
+Write-Output "Verified per-user MSI install, automatic rollback after a failed upgrade, Setup bundle upgrade to $version, downgrade rejection, Setup removal, and restore of $previous with world, memory and inbox files preserved. The installed CLI also verified memory backup and restore."
