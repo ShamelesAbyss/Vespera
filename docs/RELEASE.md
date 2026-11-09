@@ -99,6 +99,8 @@ The extracted CLI passed configuration validation and host diagnostics. It read 
 
 In the portable recovery rehearsal, the optimized `0.1.1` CLI created a world at revision 8. The `0.1.2` CLI advanced a copy to revision 9 and replayed revision 8. The older CLI reopened the original backup at revision 8, and its hash stayed unchanged. The hosted Windows job at the `0.1.2` version checkpoint passed the per-user `0.1.1` to `0.1.2` lifecycle with debug MSI fixtures, including downgrade rejection, notice hashes, and restoration of the saved world. [Hosted lifecycle](https://github.com/ShamelesAbyss/Vespera/actions/runs/42531557849/job/128886658103) · [Candidate source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42532064448)
 
+The installer rehearsal also injects a failure into a temporary WiX fixture after successful removal of the old product and before installation finalization. In a separate local per-user fixture, Windows Installer returned `1603` and restored the prior product registration and distinct prior license payload. The restored CLI opened the byte-identical revision 3 world. A subsequent clean upgrade and manual restore also passed. [Rollback checkpoint](https://github.com/ShamelesAbyss/Vespera/commit/140f712316c4dcd5731e9fc7872788c77fde2c99)
+
 ### Earlier Windows x64 candidate evidence
 
 The optimized `0.1.1` archive was built from `3d232672abacbfac1f0467cbbc5c64e58157702d`. All 41 manifest entries verified after fresh extraction. The packaged CLI passed configuration validation and host diagnostics. Windows Installer's administrative extraction matched all 10 staged files carried by the MSI.

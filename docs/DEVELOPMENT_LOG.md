@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Automatic rollback after a failed Windows upgrade
+
+Checkpoint `140f712316c4dcd5731e9fc7872788c77fde2c99` extends the installer rehearsal with a test-only WiX action that aborts an upgrade before finalization. The local run used separately named packages, install and data paths, shortcuts, and registry identifiers. Both product versions used the same optimized executable fixture, with a distinct prior license payload. The MSI log confirmed successful old product removal before the injected `1603` failure. Windows Installer restored the prior registration and license hash, and the restored CLI reopened the byte-identical revision 3 world. The same run then passed the normal upgrade, downgrade rejection, manual restore, and fixture uninstall. The optimized release MSI checksum stayed unchanged.
+
+All three hosted jobs passed for the exact `0.1.2` candidate source `46819b7`. The new failure rehearsal runs in the hosted Windows job on subsequent pushes. [Candidate CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42532064448) · [Failure rehearsal CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42555858349)
+
 ## 2026-11-08 — Owner-approved licensing and Windows 0.1.2 candidate
 
 Christopher Dodd approved Proprietary Freeware License v1.0 as the project's software licensing policy in checkpoint `46819b7886db4cf078c77a588e28c9dad08b6d4e`. The checkpoint preserves the prior ownership, interoperability, redistribution, warranty, and liability sections and adds the user-controlled AI and third-party model terms. Third-party notices stayed byte-identical. The README rendered with the new policy, existing screenshots, and Mermaid diagrams. Independent legal review and third-party rights verification remain public release gates.
