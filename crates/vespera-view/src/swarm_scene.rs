@@ -436,14 +436,14 @@ pub(super) fn install_broker(
     std::thread::spawn(move || {
         while let Some(update) = updates.blocking_recv() {
             match update {
-                Update::Ready(floor) => {
+                Update::Ready { floor, .. } => {
                     observed.prune(floor);
                     observed.status = "Following signed broker feed";
                 }
                 Update::Observation(entry) => observed.push(entry.cursor.sequence, entry.event),
                 Update::Status(status) => observed.status = status,
                 Update::Reset => observed.reset("Broker history changed; rebuilding"),
-                Update::Cancelled(..) | Update::CancelFailed => {}
+                Update::Cancelled(..) | Update::CancelFailed | Update::CancelNotSent => {}
             }
             publish(&send, &observed);
             if send.is_closed() {

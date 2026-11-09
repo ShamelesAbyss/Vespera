@@ -11,11 +11,14 @@ use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 use tokio_tungstenite::{WebSocketStream, client_async_with_config, tungstenite};
 use vespera_core::{BrokerEventCursor, BrokerEventEntry, BrokerStreamEnd, BrokerStreamFrame};
 
-use crate::ClientError;
 use crate::transport::{Transport, error_code};
+use crate::{BrokerSessionId, ClientError};
 
 /// A read-only WebSocket carrying ordered events for one broker principal.
-pub struct EventSubscription(WebSocketStream<Box<dyn SocketIo>>);
+pub struct EventSubscription {
+    socket: WebSocketStream<Box<dyn SocketIo>>,
+    session: BrokerSessionId,
+}
 
 /// Read-only subscription that reconnects from an explicitly acknowledged cursor.
 pub struct ResumableEventSubscription<'a> {
@@ -157,6 +160,7 @@ impl EventSubscription {
         after: Option<BrokerEventCursor>,
     ) -> Result<Self, ClientError> {
         let session = transport.session().await?;
+        let session_id = session.session_id;
         let target = match after {
             Some(cursor) => format!(
                 "{}/events?after={}:{}",
@@ -193,11 +197,19 @@ impl EventSubscription {
             };
             client_async_with_config(request, stream, Some(config))
                 .await
-                .map(|(socket, _)| Self(socket))
+                .map(|(socket, _)| Self {
+                    socket,
+                    session: session_id,
+                })
                 .map_err(handshake_error)
         })
         .await
         .map_err(|_| ClientError::Timeout)?
+    }
+
+    /// Broker session that authenticated this WebSocket.
+    pub fn session_id(&self) -> BrokerSessionId {
+        self.session
     }
 
     /// Receive a frame or return `None` after a clean close. Keep the cursor
@@ -209,7 +221,7 @@ impl EventSubscription {
     }
 
     async fn read(&mut self) -> Result<Option<BrokerStreamFrame>, ClientError> {
-        while let Some(message) = self.0.next().await {
+        while let Some(message) = self.socket.next().await {
             match message.map_err(|_| ClientError::Transport)? {
                 Message::Text(text) => {
                     return serde_json::from_str(&text)
@@ -217,10 +229,10 @@ impl EventSubscription {
                         .map_err(|_| ClientError::InvalidEventFrame);
                 }
                 Message::Close(_) => {
-                    let _ = timeout(Duration::from_secs(2), self.0.flush()).await;
+                    let _ = timeout(Duration::from_secs(2), self.socket.flush()).await;
                     return Ok(None);
                 }
-                Message::Ping(_) => timeout(Duration::from_secs(2), self.0.flush())
+                Message::Ping(_) => timeout(Duration::from_secs(2), self.socket.flush())
                     .await
                     .map_err(|_| ClientError::Timeout)?
                     .map_err(|_| ClientError::Transport)?,

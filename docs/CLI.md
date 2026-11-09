@@ -734,7 +734,7 @@ Press Tab to cycle all tasks, queued and running work, and terminal outcomes. N 
 
 Press T to freeze the Intelligence Network or return live. Press [ to freeze and step back, then use [ and ] to move across captured task transitions. The header shows the viewed sequence, captured range and live position. The window can replay up to 256 locally observed task transitions from a rolling baseline. The capture survives a feed reset. Returning live switches to the new feed.
 
-The view is read-only by default. In live mode, `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. Freezing dismisses any confirmation that has yet to be sent. The inspector displays pending, returned or uncertain outcomes for requests already sent. The task lane changes when the event feed reports the new state.
+The view is read-only by default. In live mode, `--allow-cancel` enables the C confirmation prompt for queued or running tasks. Press Y to send the signed request or Esc to dismiss. Freezing dismisses any confirmation that has yet to be sent. The inspector displays pending, returned or uncertain outcomes for requests already sent. The task lane changes when the event feed reports the new state. Confirmation and the queued request are bound to the observed broker session. A restart dismisses confirmation or reports that cancellation was not sent; reconfirm against the current broker. Authorization rejection or invalid event data stops the subscription and disables cancellation until the connection is reconfigured and the application is relaunched.
 
 ### TLS worker transport
 

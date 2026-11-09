@@ -114,6 +114,15 @@ The operator's task and message events share the same retention window and curso
 
 ### Live WebSocket subscriptions
 
+`EventSubscription::session_id()` identifies the broker session that authenticated
+the stream. Interactive controls can pass it to
+`OperatorClient::cancel_in_session(task_id, session)` to prevent cancellation from
+crossing a broker restart. A changed session returns `ClientError::SessionChanged`
+before posting; the signed request also binds the checked session. The desktop
+uses this guard for Network cancellation and clears confirmation on disconnect.
+The existing `cancel(task_id)` method remains available for explicit current-broker
+operations. Neither method automatically retries a mutation.
+
 Upgrade an HTTP/1.1 `GET /v2/operator/events` or `GET /v2/worker/events` to WebSocket version 13 with the usual WebSocket handshake headers. To resume, append `?after=<stream_id>:<sequence>` with the canonical lowercase hyphenated UUID and decimal sequence. Leave the request body empty. Use the same HMAC authorization header and nonce rules as HTTP actions. In the signature prefix use `GET` instead of `POST` and sign the full path and query exactly as sent. No WebSocket subprotocol or application request frames are required.
 
 Before switching protocols, the server validates the proof, role, cursor and subscription quota. The route returns `400 invalid_upgrade` for a malformed handshake, `400 invalid_cursor` for a malformed query, `401 unauthorized` for a failed proof, `409 foreign_cursor` or `410 cursor_expired` for an invalid resume and `503 subscription_capacity` if all live slots are in use.

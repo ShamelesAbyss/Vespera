@@ -7,14 +7,16 @@ use tokio::sync::mpsc;
 use vespera_core::{AgentId, ExternalTaskChange, TaskId, TaskState};
 use vespera_view::Graph;
 
-use crate::Update as BrokerUpdate;
 use crate::atlas::{Layer, Layers, register};
 use crate::task_timeline::Timeline;
+use crate::{CancelRequest, Update as BrokerUpdate};
+use vespera_sdk::BrokerSessionId;
 
 #[derive(Resource)]
 struct Connection {
     updates: mpsc::Receiver<BrokerUpdate>,
-    cancel: Option<mpsc::Sender<TaskId>>,
+    cancel: Option<mpsc::Sender<CancelRequest>>,
+    session: Option<BrokerSessionId>,
     status: &'static str,
     cancellation: Cancellation,
     timeline: Timeline,
@@ -24,10 +26,11 @@ struct Connection {
 enum Cancellation {
     #[default]
     Idle,
-    Confirm(TaskId),
+    Confirm(TaskId, BrokerSessionId),
     Pending(TaskId),
     Finished(TaskId, TaskState),
     Uncertain,
+    NotSent,
 }
 
 #[derive(Resource, Default)]
@@ -175,7 +178,7 @@ pub(super) fn desktop(title: &str, clear: Color, layer: Layer) -> App {
 
 pub fn run(
     updates: mpsc::Receiver<BrokerUpdate>,
-    cancel: Option<mpsc::Sender<TaskId>>,
+    cancel: Option<mpsc::Sender<CancelRequest>>,
     reduced_motion: bool,
 ) {
     let mut app = desktop(
@@ -190,13 +193,14 @@ pub fn run(
 pub(super) fn install(
     app: &mut App,
     updates: mpsc::Receiver<BrokerUpdate>,
-    cancel: Option<mpsc::Sender<TaskId>>,
+    cancel: Option<mpsc::Sender<CancelRequest>>,
     reduced_motion: bool,
 ) {
     register(app, Layer::Network);
     app.insert_resource(Connection {
         updates,
         cancel,
+        session: None,
         status: "Connecting to broker...",
         cancellation: Cancellation::Idle,
         timeline: Timeline::default(),
@@ -326,7 +330,7 @@ fn receive(
     layers: Res<Layers>,
 ) {
     let active = layers.active == Layer::Network;
-    if !active && matches!(connection.cancellation, Cancellation::Confirm(_)) {
+    if !active && matches!(connection.cancellation, Cancellation::Confirm(..)) {
         connection.cancellation = Cancellation::Idle;
     }
     let earlier = active && keys.just_pressed(KeyCode::BracketLeft);
@@ -347,7 +351,16 @@ fn receive(
             break;
         };
         match update {
-            BrokerUpdate::Ready(discarded_through) => {
+            BrokerUpdate::Ready {
+                floor: discarded_through,
+                session,
+            } => {
+                if connection.session != Some(session)
+                    && matches!(connection.cancellation, Cancellation::Confirm(..))
+                {
+                    connection.cancellation = Cancellation::Idle;
+                }
+                connection.session = Some(session);
                 connection.timeline.ready(discarded_through);
                 connection.status = if discarded_through == 0 {
                     "Connected - live broker"
@@ -358,9 +371,10 @@ fn receive(
             BrokerUpdate::Status(status) => {
                 connection.status = status;
                 if !status.starts_with("Connected") {
+                    connection.session = None;
                     connection.cancellation = match connection.cancellation {
                         Cancellation::Pending(_) => Cancellation::Uncertain,
-                        Cancellation::Confirm(_) => Cancellation::Idle,
+                        Cancellation::Confirm(..) => Cancellation::Idle,
                         state => state,
                     };
                 }
@@ -372,13 +386,15 @@ fn receive(
                 connection.cancellation = Cancellation::Finished(task, state);
             }
             BrokerUpdate::CancelFailed => connection.cancellation = Cancellation::Uncertain,
+            BrokerUpdate::CancelNotSent => connection.cancellation = Cancellation::NotSent,
             BrokerUpdate::Reset => {
+                connection.session = None;
                 connection.timeline.reset();
                 if !connection.timeline.is_frozen() {
                     refresh = true;
                     selection.0 = None;
                 }
-                if matches!(connection.cancellation, Cancellation::Confirm(_)) {
+                if matches!(connection.cancellation, Cancellation::Confirm(..)) {
                     connection.cancellation = Cancellation::Idle;
                 }
             }
@@ -819,7 +835,7 @@ fn inspect(
         None => "Pick a task or worker to inspect it.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
     };
     let receipt = match connection.cancellation {
-        Cancellation::Confirm(id) => format!(
+        Cancellation::Confirm(id, _) => format!(
             "Confirm cancel {}?\nY - confirm   Esc - dismiss",
             short_id(id)
         ),
@@ -828,6 +844,9 @@ fn inspect(
         }
         Cancellation::Finished(id, state) => {
             format!("Broker response: {} is {state}.", short_id(id))
+        }
+        Cancellation::NotSent => {
+            "Cancellation not sent. Reconfirm against the current broker.".into()
         }
         Cancellation::Uncertain => "Cancellation outcome uncertain. Check the broker.".into(),
         Cancellation::Idle if connection.timeline.is_frozen() => {
@@ -869,12 +888,12 @@ fn update_cancellation(
     connection: &mut Connection,
 ) {
     if connection.timeline.is_frozen() || keys.just_pressed(KeyCode::KeyT) {
-        if matches!(connection.cancellation, Cancellation::Confirm(_)) {
+        if matches!(connection.cancellation, Cancellation::Confirm(..)) {
             connection.cancellation = Cancellation::Idle;
         }
         return;
     }
-    let Some(control) = &connection.cancel else {
+    let (Some(control), Some(session)) = (&connection.cancel, connection.session) else {
         return;
     };
     let task = match selected {
@@ -888,22 +907,31 @@ fn update_cancellation(
         _ => None,
     };
     match connection.cancellation {
-        Cancellation::Confirm(id) => {
-            if task != Some(id) || keys.just_pressed(KeyCode::Escape) {
+        Cancellation::Confirm(id, confirmed_session) => {
+            if task != Some(id)
+                || session != confirmed_session
+                || keys.just_pressed(KeyCode::Escape)
+            {
                 connection.cancellation = Cancellation::Idle;
             } else if keys.just_pressed(KeyCode::KeyY) {
-                connection.cancellation =
-                    if connection.status.starts_with("Connected") && control.try_send(id).is_ok() {
-                        Cancellation::Pending(id)
-                    } else {
-                        Cancellation::Uncertain
-                    };
+                connection.cancellation = if connection.status.starts_with("Connected")
+                    && control
+                        .try_send(CancelRequest {
+                            task: id,
+                            session: confirmed_session,
+                        })
+                        .is_ok()
+                {
+                    Cancellation::Pending(id)
+                } else {
+                    Cancellation::Uncertain
+                };
             }
         }
         Cancellation::Pending(_) => {}
         _ if keys.just_pressed(KeyCode::KeyC) && connection.status.starts_with("Connected") => {
             if let Some(id) = task {
-                connection.cancellation = Cancellation::Confirm(id);
+                connection.cancellation = Cancellation::Confirm(id, session);
             }
         }
         _ => {}
@@ -950,6 +978,7 @@ mod tests {
         let mut connection = Connection {
             updates,
             cancel: Some(cancel),
+            session: Some(BrokerSessionId::new_v4()),
             status: "Connected",
             cancellation: Cancellation::Idle,
             timeline: Timeline::default(),
@@ -957,7 +986,7 @@ mod tests {
         let mut keys = ButtonInput::default();
         keys.press(KeyCode::KeyC);
         update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
-        assert!(matches!(connection.cancellation, Cancellation::Confirm(task) if task == id));
+        assert!(matches!(connection.cancellation, Cancellation::Confirm(task, _) if task == id));
         assert!(requests.try_recv().is_err());
         keys.reset_all();
         keys.press(KeyCode::KeyY);
@@ -974,6 +1003,15 @@ mod tests {
         assert!(matches!(connection.cancellation, Cancellation::Idle));
         connection.timeline.toggle();
         keys.reset_all();
+        keys.press(KeyCode::KeyC);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        connection.session = Some(BrokerSessionId::new_v4());
+        keys.reset_all();
+        keys.press(KeyCode::KeyY);
+        update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
+        assert!(requests.try_recv().is_err());
+        assert!(matches!(connection.cancellation, Cancellation::Idle));
+        keys.reset_all();
         keys.press(KeyCode::KeyY);
         update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
         assert!(requests.try_recv().is_err());
@@ -983,7 +1021,13 @@ mod tests {
         keys.reset_all();
         keys.press(KeyCode::KeyY);
         update_cancellation(&keys, Some(NodeKey::Task(id)), &graph, &mut connection);
-        assert_eq!(requests.try_recv().unwrap(), id);
+        assert_eq!(
+            requests.try_recv().unwrap(),
+            CancelRequest {
+                task: id,
+                session: connection.session.unwrap()
+            }
+        );
         assert!(matches!(connection.cancellation, Cancellation::Pending(task) if task == id));
     }
 }

@@ -28,7 +28,7 @@ pub(super) struct Transport {
 
 #[derive(Deserialize)]
 pub(super) struct Session {
-    session_id: Uuid,
+    pub(crate) session_id: Uuid,
     elapsed_ms: u64,
 }
 
@@ -110,11 +110,23 @@ impl Transport {
     }
 
     pub(super) async fn post(&self, action: &impl Serialize) -> Result<Reply, ClientError> {
+        self.post_in_session(action, None).await
+    }
+
+    pub(super) async fn post_in_session(
+        &self,
+        action: &impl Serialize,
+        expected: Option<Uuid>,
+    ) -> Result<Reply, ClientError> {
         let body = serde_json::to_vec(action).map_err(|_| ClientError::Encoding)?;
         if body.len() > MAX_BODY {
             return Err(ClientError::RequestTooLarge);
         }
-        let authorization = self.proof(self.session().await?, "POST", self.path, &body)?;
+        let session = self.session().await?;
+        if expected.is_some_and(|expected| expected != session.session_id) {
+            return Err(ClientError::SessionChanged);
+        }
+        let authorization = self.proof(session, "POST", self.path, &body)?;
         self.client
             .post(self.http_url(self.path))
             .header(AUTHORIZATION, authorization)

@@ -31,6 +31,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use subscription::{EventSubscription, ResumableEventSubscription};
+/// Identity of one running broker session, obtained when opening an event stream.
+pub type BrokerSessionId = Uuid;
 pub use vespera_core::{
     AgentId, BrokerEventCursor, BrokerEventEntry, BrokerEventPage, BrokerStreamEnd,
     BrokerStreamFrame, Capability, EventEnvelope, EventKind, ExternalAttempt, ExternalTaskChange,
@@ -83,6 +85,8 @@ pub enum ClientError {
     Timeout,
     #[error("worker HTTP exchange failed")]
     Transport,
+    #[error("broker session changed before the request was sent")]
+    SessionChanged,
     #[error("worker service sent an unexpected WebSocket frame")]
     InvalidEventFrame,
     #[error("worker HTTP response exceeds the body limit")]
@@ -294,9 +298,26 @@ impl OperatorClient {
     }
 
     pub async fn cancel(&self, task_id: TaskId) -> Result<TaskState, ClientError> {
+        self.cancel_with_session(task_id, None).await
+    }
+
+    /// Cancel an observed task only in the broker session that supplied its view.
+    pub async fn cancel_in_session(
+        &self,
+        task_id: TaskId,
+        session: BrokerSessionId,
+    ) -> Result<TaskState, ClientError> {
+        self.cancel_with_session(task_id, Some(session)).await
+    }
+
+    async fn cancel_with_session(
+        &self,
+        task_id: TaskId,
+        session: Option<BrokerSessionId>,
+    ) -> Result<TaskState, ClientError> {
         let reply: StateReply = self
             .0
-            .post(&OperatorRequest::Cancel { task_id })
+            .post_in_session(&OperatorRequest::Cancel { task_id }, session)
             .await?
             .json(StatusCode::OK)
             .await?;

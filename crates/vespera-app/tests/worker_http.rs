@@ -1080,6 +1080,68 @@ async fn live_frame(stream: &mut EventSubscription) -> BrokerStreamFrame {
 }
 
 #[tokio::test]
+async fn cancellation_cannot_cross_broker_sessions_with_reused_task_ids() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let (process, base) = launch(first, second);
+    let address = base.strip_prefix("http://").unwrap();
+    let operator = OperatorClient::new(
+        address.parse().unwrap(),
+        SigningKey::from_hex(OPERATOR).unwrap(),
+    )
+    .unwrap();
+    let mut stream = operator.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut stream).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    let old_session = stream.session_id();
+    let submission = Submission {
+        task_id: TaskId::new(),
+        prompt: "Session-bound cancellation fixture".into(),
+        required_capabilities: ["text-generation".parse().unwrap()].into(),
+        eligible_workers: [first].into(),
+        lifetime_seconds: 60,
+        max_attempts: 1,
+    };
+    operator.submit(&submission).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut stream).await,
+        BrokerStreamFrame::Event { .. }
+    ));
+    drop(stream);
+    drop(process);
+    let policy = create_policy(first, second);
+    let (_replacement, replacement_base) =
+        launch_command(server_command_at(&policy, None, address), policy);
+    assert_eq!(base, replacement_base);
+    operator.submit(&submission).await.unwrap();
+    assert!(matches!(
+        operator
+            .cancel_in_session(submission.task_id, old_session)
+            .await,
+        Err(ClientError::SessionChanged)
+    ));
+    assert_eq!(
+        operator.inspect(submission.task_id).await.unwrap().state,
+        TaskState::Queued
+    );
+    let mut current = operator.subscribe(None).await.unwrap();
+    assert!(matches!(
+        live_frame(&mut current).await,
+        BrokerStreamFrame::Ready { .. }
+    ));
+    assert_ne!(current.session_id(), old_session);
+    assert_eq!(
+        operator
+            .cancel_in_session(submission.task_id, current.session_id())
+            .await
+            .unwrap(),
+        TaskState::Cancelled
+    );
+}
+
+#[tokio::test]
 async fn resumable_worker_subscription_uses_only_acknowledged_cursors_after_tls_restart() {
     let first = AgentId::new();
     let second = AgentId::new();

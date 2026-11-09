@@ -24,8 +24,8 @@ use bevy::prelude::Color;
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use tokio::sync::mpsc;
 use vespera_sdk::{
-    BrokerEventEntry, BrokerStreamEnd, BrokerStreamFrame, ClientError, OperatorClient, SigningKey,
-    TaskId, TaskState,
+    BrokerEventEntry, BrokerSessionId, BrokerStreamEnd, BrokerStreamFrame, ClientError,
+    OperatorClient, SigningKey, TaskId, TaskState,
 };
 
 #[derive(Parser)]
@@ -73,12 +73,22 @@ struct Options {
 
 #[derive(Clone)]
 enum Update {
-    Ready(u64),
+    Ready {
+        floor: u64,
+        session: BrokerSessionId,
+    },
     Status(&'static str),
     Reset,
     Observation(BrokerEventEntry),
     Cancelled(TaskId, TaskState),
     CancelFailed,
+    CancelNotSent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CancelRequest {
+    task: TaskId,
+    session: BrokerSessionId,
 }
 
 fn main() -> ExitCode {
@@ -263,7 +273,7 @@ impl Feeds {
 fn start_broker(
     address: SocketAddr,
     mirror: Option<mpsc::Sender<Update>>,
-) -> Result<(mpsc::Receiver<Update>, mpsc::Sender<TaskId>), Box<dyn std::error::Error>> {
+) -> Result<(mpsc::Receiver<Update>, mpsc::Sender<CancelRequest>), Box<dyn std::error::Error>> {
     let key = std::env::var("VESPERA_OPERATOR_TOKEN")
         .map_err(|_| "Set VESPERA_OPERATOR_TOKEN to the broker operator signing key.")?;
     let client = OperatorClient::new(address, SigningKey::from_hex(&key)?)?;
@@ -278,39 +288,63 @@ fn start_broker(
     Ok((observations, control))
 }
 
-async fn observe(client: OperatorClient, updates: Feeds, mut actions: mpsc::Receiver<TaskId>) {
+async fn observe(
+    client: OperatorClient,
+    updates: Feeds,
+    mut actions: mpsc::Receiver<CancelRequest>,
+) {
+    const DENIED: Update = Update::Status("Broker authorization denied - check the operator key");
+    const INVALID: Update = Update::Status("Broker sent invalid event data - subscription stopped");
     let mut cursor = None;
     while !updates.primary.is_closed() {
         match client.subscribe(cursor).await {
-            Ok(mut stream) => loop {
-                tokio::select! {
-                    () = updates.primary.closed() => return,
-                    action = actions.recv(), if !actions.is_closed() => {
-                        if let Some(task) = action {
-                            let update = match client.cancel(task).await {
-                                Ok(state) => Update::Cancelled(task, state),
-                                Err(_) => Update::CancelFailed,
-                            };
-                            if updates.send(update).await.is_err() { return; }
+            Ok(mut stream) => {
+                let session = stream.session_id();
+                let mut ready = false;
+                loop {
+                    tokio::select! {
+                        () = updates.primary.closed() => return,
+                        action = actions.recv(), if ready && !actions.is_closed() => {
+                            if let Some(request) = action {
+                                let update = if request.session != session {
+                                    Update::CancelNotSent
+                                } else {
+                                    match client.cancel_in_session(request.task, request.session).await {
+                                        Ok(state) => Update::Cancelled(request.task, state),
+                                        Err(ClientError::SessionChanged) => Update::CancelNotSent,
+                                        Err(_) => Update::CancelFailed,
+                                    }
+                                };
+                                if updates.send(update).await.is_err() { return; }
+                            }
                         }
-                    }
-                    frame = stream.next() => match frame {
-                        Ok(Some(BrokerStreamFrame::Ready { discarded_through, .. })) => {
-                            if updates.send(Update::Ready(discarded_through)).await.is_err() { return; }
+                        frame = stream.next() => match frame {
+                            Ok(Some(BrokerStreamFrame::Ready { discarded_through, .. })) => {
+                                if updates.send(Update::Ready { floor: discarded_through, session }).await.is_err() { return; }
+                                ready = true;
+                            }
+                            Ok(Some(BrokerStreamFrame::Event { entry })) => {
+                                cursor = Some(entry.cursor);
+                                if updates.send(Update::Observation(entry)).await.is_err() { return; }
+                            }
+                            Ok(Some(BrokerStreamFrame::End { reason: BrokerStreamEnd::CursorExpired })) => {
+                                cursor = None;
+                                if updates.send(Update::Reset).await.is_err() { return; }
+                                break;
+                            }
+                            Ok(Some(BrokerStreamFrame::End { reason: BrokerStreamEnd::Unauthorized })) => {
+                                let _ = updates.send(DENIED).await;
+                                return;
+                            }
+                            Err(ClientError::InvalidEventFrame) => {
+                                let _ = updates.send(INVALID).await;
+                                return;
+                            }
+                            _ => break,
                         }
-                        Ok(Some(BrokerStreamFrame::Event { entry })) => {
-                            cursor = Some(entry.cursor);
-                            if updates.send(Update::Observation(entry)).await.is_err() { return; }
-                        }
-                        Ok(Some(BrokerStreamFrame::End { reason: BrokerStreamEnd::CursorExpired })) => {
-                            cursor = None;
-                            if updates.send(Update::Reset).await.is_err() { return; }
-                            break;
-                        }
-                        _ => break,
                     }
                 }
-            },
+            }
             Err(ClientError::Rejected {
                 status: 409 | 410, ..
             }) => {
@@ -318,6 +352,12 @@ async fn observe(client: OperatorClient, updates: Feeds, mut actions: mpsc::Rece
                 if updates.send(Update::Reset).await.is_err() {
                     return;
                 }
+            }
+            Err(ClientError::Rejected {
+                status: 401 | 403, ..
+            }) => {
+                let _ = updates.send(DENIED).await;
+                return;
             }
             Err(_) => {}
         }
