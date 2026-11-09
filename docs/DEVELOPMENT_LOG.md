@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 14 — Refresh internal Windows qualification
+
+The optimized unsigned `0.1.2` package from `f2c3ae3` passed archive extraction, verification of 49 manifest entries, verification of 13 extracted MSI files and a hash match between the standalone and embedded MSI. The launcher opened the extracted desktop with a temporary profile and an unrelated working directory. Native captures showed the official mark on Home and in Living World. A tick committed revision 1, graphical replay showed revision 0 as read-only, and a second launch reopened the live database without changing its bytes. Packaged configuration validation and host diagnostics passed. The prior packaging attempt hit the Windows executable lock while its native test window was open. Closing the test window and rebuilding from the newer committed source resolved it.
+
+Windows formatting, all-target workspace checking, 287 default workspace tests and doctests, strict workspace Clippy, strict rustdoc, and the opt-in synthetic Windows credential test passed. The internal SBOM passed its CycloneDX schema and reference checks. An OSV lookup returned zero matches for 429 exact Cargo versions. The review bundle also records the upstream notice retrieval, the unresolved `constgebra` notice, and the matching WiX source archive. The full installer lifecycle previously passed on the disposable CI runner with generated fixtures. The latest internal artifacts remain unsigned. [Checksums and review scope](RELEASE.md#refreshed-unsigned-windows-x64-candidate)
+
 ## Milestone 14 — Package the live Swarm capture
 
 The portable allowlist includes the live workflow screenshot linked by the staged README. The packager and manifest verifier example tests passed on Windows.

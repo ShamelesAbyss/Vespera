@@ -185,6 +185,22 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Refreshed unsigned Windows x64 candidate
+
+The internal `0.1.2` candidate from [`f2c3ae3`](https://github.com/ShamelesAbyss/Vespera/commit/f2c3ae37e584b03364cee274c871aa8f558b705b) verified all 49 manifest-listed files after a fresh ZIP extraction. An administrative MSI extraction matched all 13 payload hashes. Extracting Setup recovered the exact tested MSI. Both installer formats reported `NotSigned`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `882dbb013cffaecf0cb02ba604389287c07dd0d3b95d0588cb84feb9090fdaf0` |
+| Standalone MSI | `3380300bb512a5e721db413e57cd22e798d7d1957882fb936ece9136ff540f1e` |
+| Setup EXE | `36d54786fc5843e97709af09656eb6b71b30debf84ffe4594eaa62a28a9c8e87` |
+
+The packaged CLI passed version, configuration and host diagnostics. The portable launcher opened from a different working directory. The app showed the official mark on Home and in Living World. The walkthrough created a starter world, committed revision 1, replayed revision 0, and reopened the unchanged database bytes after a clean restart. Installer lifecycle evidence comes from generated fixtures on a disposable Windows runner. The locally extracted candidate ran from an isolated profile. [Passing fixture run at `d5e9593`](https://github.com/ShamelesAbyss/Vespera/actions/runs/42648787743) · [Candidate CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42651585473)
+
+The internal review bundle contains the schema-validated CycloneDX 1.6 SBOM, dependency inventory, notice collection and OSV lookup. The graph records 443 Cargo packages, of which 429 are third-party, and seven known native, asset and installer components. OSV returned zero matches for the exact 429 crates.io versions queried. That lookup covers the crates.io records returned by the service. The earlier internal first-party security review had partial coverage.
+
+Upstream Git revisions supplied source notices for 16 of the 17 crates with no collected notice in the crate archive. `constgebra 0.1.4` remains in the review queue. The internal bundle includes the WiX source archive at `aa65968c419420d32e3e1b647aea0082f5ca5b78`, matching the reported compiler revision. Public distribution still requires independent security and licensing review, artifact-specific attribution, branding provenance and trusted signing.
+
 ### Windows x64 headless source rehearsal
 
 The optimized `0.1.2` CLI was built offline from
