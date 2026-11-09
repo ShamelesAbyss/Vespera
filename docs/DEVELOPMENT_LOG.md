@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Interactive Swarm workflow cycling and replay
+
+Checkpoint `71cb4c4acaf4a95cb112eec0daec6f3ddd0c2345` cycles a selected agent's distinct linked workflow roots newest first with G. The earlier live walkthrough showed that choosing the latest root alone could leave the preceding branch-and-join workflow inaccessible from that agent. Windows graphics Clippy, the native build, formatting, and all four Swarm regressions passed.
+
+Native input and window capture worked for this rehearsal. In the synthetic journal, pointer selection and F focused the clicked construct and T restored live sequence 19. Stepping back to sequence 16 removed the later message, receipt and running evidence. In the rebuilt view, three G presses reached the completed four-step branch and join with three visible agents and eight observations. At frozen sequence 9 it showed five observations and no root outcome. Advancing to sequence 10 added all three join observations together and showed acceptance without terminal evidence. The inspector's control legend can run below the window in longer replay states. Live transit capture, concurrent inference validation and the updater remain open.
+
 ## 2026-11-08 — Swarm workflow focus and native close-up measurement
 
 Checkpoint `f64f1614c67dcc54e27351237cc558d0d3de222b` lets an operator focus the selected agent's latest linked workflow with G in live Swarm. Standalone startup supports repeatable UUID selection and a focused timing sample. Windows strict graphics Clippy, the desktop suite (38 passed, three opt-in skips) and the expanded workflow focus regression passed.
