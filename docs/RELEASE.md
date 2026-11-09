@@ -87,6 +87,13 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 
 ### Validated Windows x64 candidate
 
+The candidate artifacts below are pinned to their recorded source revision.
+Later source checkpoints add resumable SDK subscriptions, session-bound desktop
+cancellation, explicit Atlas TLS trust and prompt broker-observer shutdown.
+Those changes are not included in these ZIP/MSI/Setup files. Build from current
+source to use them; a replacement optimized package must repeat the artifact,
+installation and graphical acceptance checks before inheriting candidate status.
+
 The optimized `0.1.2` internal candidate was built from `46819b7886db4cf078c77a588e28c9dad08b6d4e`. The portable ZIP verified all 45 manifest entries after extraction, including the owner-approved license. Administrative MSI extraction matched all 13 payload files against the stage. WiX extracted the Setup bundle and confirmed that its embedded MSI matched the standalone MSI byte for byte. The MSI and Setup are unsigned.
 
 | Internal artifact | SHA-256 |

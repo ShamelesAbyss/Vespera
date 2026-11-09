@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-08 — Integrated source regression pass after desktop broker fixes
+
+Source checkpoint `6e21e3363012d002619dcb36dcf2ef5147f5a86d` passed a fresh Windows `cargo test --workspace --locked --offline`, including the CLI, broker, persistence, scale/replay and SDK documentation suites. Environment-dependent ignored tests retained their existing opt-in status. Strict workspace/all-targets Clippy passed, and workspace Rustdoc passed with `RUSTDOCFLAGS=-D warnings`. Formatting passed. Graphics-feature tests remain separately recorded in the preceding desktop checkpoints; this headless workspace pass does not substitute for rendering or installation tests.
+
+Hosted CI has completed successfully for session-bound cancellation source `5d96fa229710df66e1e3a41b6723fbff3a7fad50` ([run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42568584356)). Newer source runs were still in progress when inspected. The release guide now explicitly distinguishes the older optimized candidate from the later subscription, TLS and shutdown changes. Existing candidate artifacts were not rebuilt or overwritten, and public release gates remain open.
 ## 2026-11-08 — Agent and orchestration documentation reconciliation
 
 Checkpoint `9410a9cf51576ab4990a0652b662610ff0bde179` removes obsolete future-work claims for durable task results, opt-in memory context, bounded automatic decomposition, workflow history and terminal event publication. The guides now distinguish the local trusted runtime from the separately authenticated broker and retain the absence of automatic buffer migration, arbitrary tool execution and open-ended autonomous execution. Links point to the implemented CLI and storage procedures.
