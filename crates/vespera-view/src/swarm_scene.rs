@@ -229,6 +229,20 @@ impl Evidence {
             })
     }
 
+    fn latest_workflow(&self, agent: AgentId) -> Option<TaskId> {
+        self.edges.iter().rev().find_map(|edge| {
+            if edge.from != agent && edge.to != agent {
+                return None;
+            }
+            match edge.relation {
+                Relation::Delegation { workflow, .. } | Relation::Dependency { workflow, .. } => {
+                    workflow
+                }
+                _ => None,
+            }
+        })
+    }
+
     fn for_workflow(mut self, root: TaskId) -> Self {
         let mut tasks = BTreeSet::from([root]);
         self.edges.retain(|edge| match edge.relation {
@@ -395,9 +409,31 @@ pub(super) fn run(
     path: PathBuf,
     reduced_motion: bool,
     capture: Option<PathBuf>,
+    agent: Option<AgentId>,
+    measure_frames: Option<u32>,
 ) -> Result<(), JournalError> {
     let mut app = desktop("Vespera | Swarm", HAZE, Layer::Swarm);
     install_journal(&mut app, path, reduced_motion)?;
+    if agent.is_some() {
+        let mut requested = agent;
+        app.add_systems(
+            Update,
+            (move |mut layout: ResMut<Layout>, mut orbit: Single<&mut Orbit>| {
+                if let Some(id) = requested
+                    && let Some((_, point)) = layout.agents.get(&id)
+                {
+                    orbit.focus_on(*point + Vec3::Y * 1.40, 9.0);
+                    layout.selected = Some(id);
+                    requested = None;
+                }
+            })
+            .after(navigate)
+            .before(camera::<{ Layer::Swarm as usize }>),
+        );
+    }
+    if let Some(frames) = measure_frames {
+        crate::scene_measurement::install(&mut app, frames as usize);
+    }
     if let Some(path) = capture {
         let mut settled = 0;
         app.add_systems(Last, move |mut commands: Commands, feed: Res<Feed>| {
@@ -649,6 +685,14 @@ fn sync(
     let later = keys.just_pressed(KeyCode::BracketRight) && feed.frozen.is_some();
     if selected_workflow.0.is_some() && keys.just_pressed(KeyCode::Backspace) {
         selected_workflow.0 = None;
+    } else if feed.frozen.is_none()
+        && keys.just_pressed(KeyCode::KeyG)
+        && let Some(root) = layout
+            .selected
+            .and_then(|agent| feed.evidence.latest_workflow(agent))
+        && selected_workflow.0 != Some(root)
+    {
+        selected_workflow.0 = Some(root);
     }
     let focus_changed = selected_workflow.is_changed();
     if !(changed || toggle || earlier || later || focus_changed) {
@@ -660,7 +704,6 @@ fn sync(
     }
     if focus_changed {
         feed.frozen = None;
-        layout.selected = None;
         layout.filter = Filter::All;
     } else if toggle {
         feed.frozen = if feed.frozen.is_some() {
@@ -690,6 +733,9 @@ fn sync(
         Frozen::projection,
     );
     let agents = feed.evidence.visible_agents();
+    if focus_changed && layout.selected.is_some_and(|id| !agents.contains(&id)) {
+        layout.selected = None;
+    }
     layout.agents.retain(|id, (entity, _)| {
         if agents.contains(id) {
             return true;
@@ -779,9 +825,12 @@ fn navigate(
             .copied();
     }
     if keys.just_pressed(KeyCode::KeyF) {
-        focus.point = layout
-            .selected
-            .and_then(|id| layout.agents.get(&id).map(|(_, point)| *point));
+        focus.point = layout.selected.and_then(|id| {
+            layout
+                .agents
+                .get(&id)
+                .map(|(_, point)| *point + Vec3::Y * 1.40)
+        });
     }
 }
 
@@ -1121,7 +1170,7 @@ fn inspect(
         format!("Workflow focus\n{root}\nBackspace clears workflow focus\n")
     });
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nG focus workflow (live)\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
@@ -1171,7 +1220,10 @@ mod tests {
                 evidence.push(index as u64 * 3 + offset, event);
             }
         }
+        assert_eq!(evidence.latest_workflow(owner), Some(roots[1]));
+        assert_eq!(evidence.latest_workflow(peers[0]), Some(roots[0]));
         let focused = evidence.for_workflow(roots[0]);
+        assert_eq!(focused.latest_workflow(owner), Some(roots[0]));
         assert_eq!(focused.edges.len(), 1);
         assert_eq!(focused.visible_agents(), BTreeSet::from([owner, peers[0]]));
         assert_eq!(focused.outcome(roots[0], 0), Some(TaskState::Completed));

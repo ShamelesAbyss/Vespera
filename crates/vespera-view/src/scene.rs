@@ -126,6 +126,11 @@ impl Default for Orbit {
 }
 
 impl Orbit {
+    pub(super) fn focus_on(&mut self, point: Vec3, distance: f32) {
+        self.zoom_goal = None;
+        self.transition = Some((point, distance));
+    }
+
     pub(super) fn with_distance(distance: f32) -> Self {
         Self {
             distance,
@@ -698,8 +703,7 @@ pub(super) fn camera<const L: usize>(
     if keys.just_pressed(KeyCode::KeyF)
         && let Some(focus) = focus.point
     {
-        orbit.zoom_goal = None;
-        orbit.transition = Some((focus, if L == Layer::World as usize { 6.5 } else { 9.0 }));
+        orbit.focus_on(focus, if L == Layer::World as usize { 6.5 } else { 9.0 });
     }
     if buttons.pressed(MouseButton::Right) {
         orbit.yaw -= motion.delta.x * 0.006;

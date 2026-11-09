@@ -71,6 +71,12 @@ struct Options {
     /// Save a PNG from the standalone Swarm view after the journal settles.
     #[arg(long, requires = "swarm", conflicts_with = "atlas")]
     swarm_capture: Option<PathBuf>,
+    /// Select and focus an observed agent on standalone Swarm startup.
+    #[arg(long, requires = "swarm", conflicts_with = "atlas")]
+    swarm_agent: Option<vespera_core::AgentId>,
+    /// Print a bounded native update-interval sample in standalone Swarm.
+    #[arg(long, requires = "swarm", conflicts_with = "atlas", value_parser = clap::value_parser!(u32).range(60..=3600))]
+    swarm_measure_frames: Option<u32>,
     /// Inspect accepted mailbox messages on the signed operator feed.
     #[arg(long, conflicts_with_all = ["swarm", "allow_cancel", "world", "machine"])]
     swarm_broker: bool,
@@ -125,7 +131,13 @@ fn main() -> ExitCode {
         };
     }
     if let Some(path) = options.swarm {
-        return match swarm_scene::run(path, options.reduced_motion, options.swarm_capture) {
+        return match swarm_scene::run(
+            path,
+            options.reduced_motion,
+            options.swarm_capture,
+            options.swarm_agent,
+            options.swarm_measure_frames,
+        ) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");

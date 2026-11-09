@@ -869,6 +869,10 @@ append order, including when separate runs observe the same agent UUID.
 
 Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan conduits represent delegations. A local ring represents a same-agent observation. Repeated observations between the same agents share a conduit of their evidence type. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
 
+Press G in live mode to focus the selected agent's latest linked workflow.
+Backspace returns to the full journal. Entering workflow focus keeps the
+selected agent when it is part of the filtered evidence.
+
 The Swarm Foundry uses a fixed architectural gallery and faceted agent constructs.
 Construct silhouettes and accents derive from agent UUIDs. In the standalone
 journal view, append **`--swarm-capture <new-file.png>`** to save a native window
@@ -893,6 +897,16 @@ cargo run --locked -p vespera-view --features graphics -- --swarm target/swarm-f
 
 This journal contains synthetic event metadata, including a four-step branch
 and join and separate failed and open attempts. Use a fresh fixture path.
+
+For a repeatable close-up and update-interval sample, select a fixture agent
+by UUID when starting standalone Swarm:
+
+```powershell
+cargo run --locked -p vespera-view --features graphics -- --swarm target/swarm-fixture.sqlite3 --swarm-agent 10000000-0000-4000-8000-000000000003 --reduced-motion --swarm-capture target/swarm-close.png --swarm-measure-frames 600
+```
+
+Keep the window focused for the sample. The report describes application
+update intervals, adapter and backend, and process resident memory.
 
 To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
 
