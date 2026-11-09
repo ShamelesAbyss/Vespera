@@ -9,6 +9,7 @@ mod machine_scene;
 mod provider_scene;
 mod scene;
 mod scene_measurement;
+mod swarm_art;
 mod swarm_scene;
 mod task_timeline;
 mod workflow_history_scene;
@@ -67,6 +68,9 @@ struct Options {
     /// Inspect observed agent relationships from an existing local event journal.
     #[arg(long, conflicts_with = "machine")]
     swarm: Option<PathBuf>,
+    /// Save a PNG from the standalone Swarm view after the journal settles.
+    #[arg(long, requires = "swarm", conflicts_with = "atlas")]
+    swarm_capture: Option<PathBuf>,
     /// Inspect accepted mailbox messages on the signed operator feed.
     #[arg(long, conflicts_with_all = ["swarm", "allow_cancel", "world", "machine"])]
     swarm_broker: bool,
@@ -121,7 +125,7 @@ fn main() -> ExitCode {
         };
     }
     if let Some(path) = options.swarm {
-        return match swarm_scene::run(path, options.reduced_motion) {
+        return match swarm_scene::run(path, options.reduced_motion, options.swarm_capture) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");

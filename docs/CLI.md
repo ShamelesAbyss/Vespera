@@ -854,7 +854,7 @@ cargo run --locked -p vespera-view --features graphics -- --swarm data/events.sq
 
 The workflow publishes only delegations that the runtime accepted. Each record carries the attempt and agent IDs and the root workflow correlation. The delegation records and root terminal event commit in one batch after execution and cleanup. Choose retention large enough to retain the whole batch if you need all its records. The journal stores no workflow prompts or generated outputs in this batch.
 
-For live evidence, append `--observe-workflow --event-journal data/events.sqlite3` to the workflow command. Use one of `--observe-workflow` and `--record-delegations`. Live mode records acceptance and known terminal task state separately. Without a workflow store, it records the root outcome after cleanup. Accepted attempts carry the IDs of predecessor results included in their input. These records establish prompt assembly and delegation, while the attempt outcome describes local task execution. Select the Dependencies filter to isolate green arrows. Interrupted publication can leave an accepted attempt without terminal evidence. Use a unique root task ID for each run.
+For live evidence, append `--observe-workflow --event-journal data/events.sqlite3` to the workflow command. Use one of `--observe-workflow` and `--record-delegations`. Live mode records acceptance and known terminal task state separately. Without a workflow store, it records the root outcome after cleanup. Accepted attempts carry the IDs of predecessor results included in their input. These records establish prompt assembly and delegation, while the attempt outcome describes local task execution. Select the Dependencies filter to isolate green conduits. Interrupted publication can leave an accepted attempt without terminal evidence. Use a unique root task ID for each run.
 
 Add `--workflow-store <PATH>` to commit the original audit envelopes with
 the workflow state. Live mode then publishes the committed envelopes as
@@ -867,7 +867,13 @@ shows the status sequence. Frozen replay shows only statuses and outcomes
 through the selected sequence. A shared journal displays observations in
 append order, including when separate runs observe the same agent UUID.
 
-Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan arrows represent delegations, and a cyan box represents self-delegation. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
+Click an agent or press N to cycle observed agents. Use F to focus, R to reset, right-drag to orbit, WASD to pan and scroll to zoom. Tab filters links by evidence type. Cyan conduits represent delegations. A local ring represents a same-agent observation. Repeated observations between the same agents share a conduit of their evidence type. The inspector shows the latest matching sequence, peer, attempt and workflow outcome when available. Journal mode follows new committed records without a broker key.
+
+The Swarm Foundry uses a fixed architectural gallery and faceted agent constructs.
+Construct silhouettes and accents derive from agent UUIDs. In the standalone
+journal view, append **`--swarm-capture <new-file.png>`** to save a native window
+capture after 120 updates following the committed journal. Choose a new file
+path in an existing directory.
 
 To observe live worker messages, use broker mode with the operator signing key in `VESPERA_OPERATOR_TOKEN` and a running loopback broker.
 
@@ -875,7 +881,7 @@ To observe live worker messages, use broker mode with the operator signing key i
 cargo run --locked -p vespera-view --features graphics -- --swarm-broker --broker 127.0.0.1:8765
 ```
 
-Amber arrows show an accepted inbox enqueue from the authenticated sender to an approved recipient. With broker receipts enabled, pink arrows point from the acknowledging recipient back to the sender. The inspector shows the peer, observed operation and signed feed sequence. Journal and broker modes use separate sources. Contention evidence remains roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
+Amber conduits show an accepted inbox enqueue from the authenticated sender to an approved recipient. With broker receipts enabled, pink conduits run from the acknowledging recipient back to the sender. The inspector shows the peer, observed operation and signed feed sequence. Journal and broker modes use separate sources. Contention evidence remains roadmap work. [Worker message contract](PROTOCOL.md#worker-messages)
 
 In either Swarm mode, press T to freeze the current evidence window or return live. Press [ to freeze and step back, then use [ and ] to move between retained observations and the captured range boundaries. The inspector displays the viewed sequence and the live source position separately. New events continue to arrive while frozen. An attempt's terminal state appears only once the viewed sequence includes its terminal event.
 

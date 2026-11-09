@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use tokio::sync::{mpsc, watch};
 use vespera_core::{AgentId, AgentStatus, EventEnvelope, EventKind, TaskId, TaskState};
 use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
@@ -11,6 +12,7 @@ use vespera_events::{Cursor, Journal, JournalError, MAX_PAGE};
 use crate::Update;
 use crate::atlas::{Layer, Layers, register};
 use crate::scene::{CameraFocus, Orbit, camera, desktop};
+use crate::swarm_art::{Foundry, HAZE};
 
 type Focus = CameraFocus<{ Layer::Swarm as usize }>;
 
@@ -364,19 +366,30 @@ impl Filter {
     }
 }
 
-#[derive(Resource)]
-struct AgentMesh(Handle<Mesh>, Handle<StandardMaterial>);
-
 #[derive(Component)]
 struct Readout;
 
-pub(super) fn run(path: PathBuf, reduced_motion: bool) -> Result<(), JournalError> {
-    let mut app = desktop(
-        "Vespera | Swarm",
-        Color::srgb(0.018, 0.025, 0.047),
-        Layer::Swarm,
-    );
+pub(super) fn run(
+    path: PathBuf,
+    reduced_motion: bool,
+    capture: Option<PathBuf>,
+) -> Result<(), JournalError> {
+    let mut app = desktop("Vespera | Swarm", HAZE, Layer::Swarm);
     install_journal(&mut app, path, reduced_motion)?;
+    if let Some(path) = capture {
+        let mut settled = 0;
+        app.add_systems(Last, move |mut commands: Commands, feed: Res<Feed>| {
+            if settled >= 120 || feed.evidence.status != "Following committed journal" {
+                return;
+            }
+            settled += 1;
+            if settled == 120 {
+                commands
+                    .spawn(Screenshot::primary_window())
+                    .observe(save_to_disk(path.clone()));
+            }
+        });
+    }
     app.run();
     Ok(())
 }
@@ -413,11 +426,7 @@ pub(super) fn install_desktop(app: &mut App, dir: PathBuf, reduced_motion: bool)
 }
 
 pub(super) fn run_broker(updates: mpsc::Receiver<Update>, reduced_motion: bool) {
-    let mut app = desktop(
-        "Vespera | Swarm",
-        Color::srgb(0.018, 0.025, 0.047),
-        Layer::Swarm,
-    );
+    let mut app = desktop("Vespera | Swarm", HAZE, Layer::Swarm);
     install_broker(&mut app, updates, reduced_motion);
     app.run();
 }
@@ -471,8 +480,8 @@ fn install(
     .init_resource::<WorkflowSelection>()
     .insert_resource(Focus {
         point: None,
-        home_point: Vec3::new(2.0, 0.0, 0.0),
-        home_distance: 19.0,
+        home_point: Vec3::new(3.0, 0.7, 0.0),
+        home_distance: 17.5,
         reduced_motion,
     })
     .add_systems(Startup, setup)
@@ -482,7 +491,8 @@ fn install(
             sync,
             navigate,
             camera::<{ Layer::Swarm as usize }>,
-            draw,
+            sync_routes,
+            draw_selection,
             inspect,
         )
             .chain()
@@ -540,10 +550,9 @@ fn setup(
     layers: Res<Layers>,
     brand: Res<crate::branding::Brand>,
 ) {
-    commands.insert_resource(AgentMesh(
-        meshes.add(Sphere::new(0.48)),
-        materials.add(Color::srgb(0.51, 0.43, 0.85)),
-    ));
+    let art = Foundry::new(&mut meshes, &mut materials);
+    art.hall(&mut commands, layers.parent(Layer::Swarm).0);
+    commands.insert_resource(art);
     let camera = commands
         .spawn((
             Layer::Swarm,
@@ -552,8 +561,21 @@ fn setup(
                 ..default()
             },
             Camera3d::default(),
-            Tonemapping::None,
-            DebandDither::Disabled,
+            Tonemapping::AcesFitted,
+            DebandDither::Enabled,
+            AmbientLight {
+                color: Color::srgb(0.72, 0.80, 1.0),
+                brightness: 1150.0,
+                ..default()
+            },
+            DistanceFog {
+                color: HAZE,
+                falloff: FogFalloff::Linear {
+                    start: 18.0,
+                    end: 43.0,
+                },
+                ..default()
+            },
             Orbit::at_home(&focus),
         ))
         .id();
@@ -561,10 +583,12 @@ fn setup(
     commands.spawn((
         layers.parent(Layer::Swarm),
         DirectionalLight {
-            illuminance: 5500.0,
+            illuminance: 6700.0,
+            color: Color::srgb(1.0, 0.86, 0.72),
+            shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_rotation(Quat::from_rotation_x(-0.85)),
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.63, -0.95, 0.0)),
     ));
     commands.spawn((
         UiTargetCamera(camera),
@@ -590,7 +614,7 @@ fn sync(
     mut commands: Commands,
     mut feed: ResMut<Feed>,
     mut layout: ResMut<Layout>,
-    mesh: Res<AgentMesh>,
+    art: Res<Foundry>,
     keys: Res<ButtonInput<KeyCode>>,
     layers: Res<Layers>,
     mut selected_workflow: ResMut<WorkflowSelection>,
@@ -654,21 +678,20 @@ fn sync(
     for (index, id) in agents.into_iter().enumerate() {
         let x = (index % columns) as f32 - (columns - 1) as f32 / 2.0;
         let z = (index / columns) as f32 - rows.saturating_sub(1) as f32 / 2.0;
-        let point = Vec3::new(x * 2.1, 0.55, z * 2.3);
+        let point = Vec3::new(x * 3.65, 0.04, z * 3.65);
         if let Some((entity, prior)) = layout.agents.get_mut(&id) {
             if *prior != point {
                 commands
                     .entity(*entity)
-                    .insert(Transform::from_translation(point));
+                    .insert(Transform::from_translation(point).with_scale(Vec3::splat(1.24)));
                 *prior = point;
             }
         } else {
             let entity = commands
                 .spawn((
                     layers.parent(Layer::Swarm),
-                    Mesh3d(mesh.0.clone()),
-                    MeshMaterial3d(mesh.1.clone()),
-                    Transform::from_translation(point),
+                    Visibility::Inherited,
+                    Transform::from_translation(point).with_scale(Vec3::splat(1.24)),
                 ))
                 .observe(move |click: On<PointerClick>, mut layout: ResMut<Layout>| {
                     if click.button == PointerButton::Primary {
@@ -676,6 +699,7 @@ fn sync(
                     }
                 })
                 .id();
+            art.agent(&mut commands, entity, id);
             layout.agents.insert(id, (entity, point));
         }
     }
@@ -715,43 +739,75 @@ fn navigate(
     }
 }
 
-fn draw(feed: Res<Feed>, layout: Res<Layout>, mut gizmos: Gizmos) {
-    for edge in feed
+#[derive(Default)]
+struct RouteCache {
+    root: Option<Entity>,
+    spans: Vec<(Vec3, Vec3, usize)>,
+}
+
+fn sync_routes(
+    mut commands: Commands,
+    feed: Res<Feed>,
+    layout: Res<Layout>,
+    layers: Res<Layers>,
+    art: Res<Foundry>,
+    mut cache: Local<RouteCache>,
+) {
+    if !feed.is_changed() && !layout.is_changed() {
+        return;
+    }
+    let mut unique = BTreeSet::new();
+    let spans: Vec<_> = feed
         .evidence
         .edges
         .iter()
-        .filter(|edge| layout.filter.includes(edge))
-    {
-        let (Some((_, from)), Some((_, to))) =
-            (layout.agents.get(&edge.from), layout.agents.get(&edge.to))
-        else {
-            continue;
-        };
-        let (color, height) = match edge.relation {
-            Relation::Delegation { .. } => (Color::srgb(0.3, 0.85, 1.0), 0.15),
-            Relation::Dependency { .. } => (Color::srgb(0.43, 0.96, 0.51), 0.34),
-            Relation::Message => (Color::srgb(1.0, 0.62, 0.23), -0.12),
-            Relation::MessageAcknowledged => (Color::srgb(0.98, 0.44, 0.83), 0.46),
-        };
-        let offset = Vec3::Y * height;
-        if edge.from == edge.to {
-            gizmos.cube(
-                Transform::from_translation(*from + offset).with_scale(Vec3::splat(1.2)),
-                color,
-            );
-            continue;
-        }
-        let direction = (*to - *from).normalize();
-        let tip = *to - direction * 0.62 + offset;
-        let side = direction.cross(Vec3::Y) * 0.18;
-        let base = tip - direction * 0.36;
-        gizmos.line(*from + direction * 0.5 + offset, tip, color);
-        gizmos.line(tip, base + side, color);
-        gizmos.line(tip, base - side, color);
+        .filter_map(|edge| {
+            if !layout.filter.includes(edge) {
+                return None;
+            }
+            let lane = match edge.relation {
+                Relation::Delegation { .. } => 0,
+                Relation::Dependency { .. } => 1,
+                Relation::Message => 2,
+                Relation::MessageAcknowledged => 3,
+            };
+            if !unique.insert((edge.from, edge.to, lane)) {
+                return None;
+            }
+            Some((
+                layout.agents.get(&edge.from)?.1,
+                layout.agents.get(&edge.to)?.1,
+                lane,
+            ))
+        })
+        .collect();
+    if spans == cache.spans {
+        return;
     }
+    if let Some(root) = cache.root.take() {
+        commands.entity(root).despawn();
+    }
+    if !spans.is_empty() {
+        let root = commands
+            .spawn((
+                layers.parent(Layer::Swarm),
+                Transform::default(),
+                Visibility::Inherited,
+            ))
+            .id();
+        for &(from, to, lane) in &spans {
+            art.route(&mut commands, root, from, to, lane);
+        }
+        cache.root = Some(root);
+    }
+    cache.spans = spans;
+}
+
+fn draw_selection(layout: Res<Layout>, mut gizmos: Gizmos) {
     if let Some((_, point)) = layout.selected.and_then(|id| layout.agents.get(&id)) {
         gizmos.cube(
-            Transform::from_translation(*point).with_scale(Vec3::splat(1.02)),
+            Transform::from_translation(*point + Vec3::Y * 0.24)
+                .with_scale(Vec3::new(1.76, 0.16, 1.76)),
             Color::WHITE,
         );
     }
