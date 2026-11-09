@@ -176,6 +176,8 @@ Rehearse the new binaries on copies of the backed-up stores. Verify the catalog,
 
 For rollback, use the previous binaries with their pre-upgrade backups and compatible configuration. Preserve the upgraded stores separately for reconciliation. Reopening an upgraded live database with an older binary is only supported where the subsystem explicitly documents compatibility.
 
+The operator task audit upgrades broker storage to schema 4. For a rollback to a broker that uses schema 3, restore its pre-upgrade database backup. [Broker migration and cursor scope](PROTOCOL.md#broker-event-replay)
+
 A profile using Windows Credential Manager stores the source choice and endpoint. The Windows account supplies the credential independently of the profile backup. Use the pre-upgrade profile with builds that predate the `credential_windows` field.
 
 ## Release evidence
@@ -184,6 +186,22 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Verify the fresh-directory walkthrough, headless and graphics builds, provider matrix, permission checks and backup recovery.
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
+
+### Windows x64 candidate with workflow editing and durable task audit
+
+The unsigned `0.1.2` build from `35ead88` verified 49 files after portable ZIP extraction, 13 MSI payloads and the exact MSI recovered from Setup. The MSI and Setup report `NotSigned`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `404b19ff0dca0f1e154438c69a117a5b6f6e75a5251ec11041c9bcd65a4c08b2` |
+| Standalone MSI | `6e9055bb9c4fd643ffc38487a471aa6986bd87e29324d151a7edb0e55638ab94` |
+| Setup EXE | `5cc5f24e290a7cd4e47c976a8e53ec81589935ec1c28d2a50fb87a1a1975c290` |
+
+The extracted launcher opened with an isolated profile, displayed the official mark, and reopened Living World at its committed revision with matching database bytes. A separate run from the extraction edited a retained branching plan, executed the copy through Ollama and retained the original checkpoint. It also authored and executed a new two-step workflow. The earlier packaged broker created a real schema 3 database. The new binary preserved the mixed feed and pending inbox during migration to schema 4, seeded the new task audit, and resumed its cursor after restart. The earlier binary reopened the pre-upgrade backup.
+
+The extracted desktop switched through all four Atlas views. Intelligence Network matched the current Ollama scheduler task and worker with the broker attempt. At 1200×800 on the RTX 4070 Laptop GPU, the Network view recorded a 7.50 ms p95 update interval over 600 Vulkan updates after 120 warmup updates.
+
+Windows formatting, workspace all-target checks, 289 workspace tests and doctests, strict Clippy and rustdoc, and 49 default optimized graphics tests passed. The internal review bundle carries the schema-validated SBOM for this revision and the matching locked dependency inventory. Signing, independent review and the outstanding attribution requirements remain public release gates. [Candidate CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42656388657)
 
 ### Refreshed unsigned Windows x64 candidate
 

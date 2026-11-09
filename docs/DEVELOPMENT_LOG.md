@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Qualify the workflow editor and broker audit package
+
+The Windows x64 unsigned build from `35ead88` verified 49 portable files, 13 MSI payloads and the exact MSI embedded in Setup. The extracted app committed and replayed a Living World revision and reopened the database byte for byte. Both the edited branching workflow and a newly authored two-step workflow completed with Ollama from the extracted binaries. The earlier portable broker supplied the schema 3 migration fixture. The upgraded broker preserved its mixed cursor and inbox, resumed the task audit after restart, and the earlier broker read the consistent pre-upgrade backup. Workspace validation passed 289 tests and doctests plus strict Clippy and rustdoc. The refreshed SBOM passed schema validation and matched the previous locked third-party inventory. [Release checksums](RELEASE.md#windows-x64-candidate-with-workflow-editing-and-durable-task-audit)
+
 ## Milestone 12 — Edit workflow drafts and retained plans
 
 The workflow review accepts a step number to reopen its prefilled fields. Workflow history can copy a retained plan into that editor, resolving assignments by agent identity against the current roster. A new execution receives a fresh workflow ID.
