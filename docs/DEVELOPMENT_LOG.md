@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-08 — Agent and orchestration documentation reconciliation
+
+Checkpoint `9410a9cf51576ab4990a0652b662610ff0bde179` removes obsolete future-work claims for durable task results, opt-in memory context, bounded automatic decomposition, workflow history and terminal event publication. The guides now distinguish the local trusted runtime from the separately authenticated broker and retain the absence of automatic buffer migration, arbitrary tool execution and open-ended autonomous execution. Links point to the implemented CLI and storage procedures.
+
+The current execution and composition source was inspected, and the Windows CLI regressions `agent_memory_context_and_generated_result_round_trip` and `workflow_decomposition_executes_only_validated_steps_on_the_authorized_roster` both passed. Referenced section headings and the Git diff were checked. This documentation checkpoint adds no new runtime capability or live-provider qualification.
 ## 2026-11-08 — Prompt desktop broker shutdown
 
 Checkpoint `b8edb0200e6368652e227cd673cc9a2c2acf961a` gives the primary desktop receiver ownership of the full broker observation lifetime. Closing it drops outstanding subscription, HTTP, publication and reconnect futures rather than waiting for their transport deadlines. Requests are not retried during shutdown; an interrupted cancellation still requires independent broker inspection to establish its remote outcome.
