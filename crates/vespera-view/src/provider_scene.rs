@@ -409,21 +409,15 @@ fn setup(mut commands: Commands) {
     commands
         .spawn((
             UiTargetCamera(camera),
-            Node {
-                width: percent(100),
-                height: percent(100),
-                padding: UiRect::all(px(32)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(15),
-                ..default()
-            },
-            children![
+            atlas::ScrollPanel(Layer::Providers),
+            atlas::scroll_panel(),
+            children![(atlas::scroll_content(), children![
                 (
                     Text::new("Models & Providers"),
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Enter  Discover  |  S  Save setup  |  P  Run task  |  G  Draft + review  |  C  Workflow  |  Esc  Cancel  |  F5  Home"),
+                    Text::new("Enter Discover  |  S Save setup  |  P Run task  |  G Draft + review  |  C Workflow  |  Esc Cancel  |  PgUp/PgDn Scroll"),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -431,6 +425,7 @@ fn setup(mut commands: Commands) {
                         column_gap: px(10),
                         row_gap: px(10),
                         flex_wrap: FlexWrap::Wrap,
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     children![
@@ -447,6 +442,7 @@ fn setup(mut commands: Commands) {
                         column_gap: px(10),
                         row_gap: px(10),
                         flex_wrap: FlexWrap::Wrap,
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     children![
@@ -463,6 +459,7 @@ fn setup(mut commands: Commands) {
                         column_gap: px(10),
                         row_gap: px(10),
                         flex_wrap: FlexWrap::Wrap,
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     children![
@@ -484,7 +481,7 @@ fn setup(mut commands: Commands) {
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
-            ],
+            ])],
         ))
         .observe(
             |event: On<PointerClick>,

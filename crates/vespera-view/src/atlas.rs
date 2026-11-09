@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::input::InputSystems;
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::ui::prelude::UiPickingCamera;
 use vespera_core::AgentId;
@@ -101,9 +102,64 @@ fn visibility(active: bool) -> Visibility {
 #[derive(Component)]
 struct LayerBar;
 
+#[derive(Component)]
+pub(super) struct ScrollPanel(pub Layer);
+
+pub(super) fn scroll_panel() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        top: px(64),
+        bottom: px(86),
+        overflow: Overflow::scroll_y(),
+        flex_direction: FlexDirection::Column,
+        ..default()
+    }
+}
+
+pub(super) fn scroll_content() -> Node {
+    Node {
+        padding: UiRect::axes(px(32), px(16)),
+        flex_direction: FlexDirection::Column,
+        flex_shrink: 0.0,
+        row_gap: px(14),
+        ..default()
+    }
+}
+
 pub(super) fn navigation(app: &mut App) {
     app.add_systems(Startup, setup)
-        .add_systems(PreUpdate, switch.after(InputSystems));
+        .add_systems(PreUpdate, switch.after(InputSystems))
+        .add_systems(Update, scroll);
+}
+
+fn scroll(
+    layers: Res<Layers>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut wheel: MessageReader<MouseWheel>,
+    mut panels: Query<(&ScrollPanel, &ComputedNode, &mut ScrollPosition)>,
+) {
+    let delta: f32 = wheel
+        .read()
+        .map(|event| match event.unit {
+            MouseScrollUnit::Line => -event.y * 36.0,
+            MouseScrollUnit::Pixel => -event.y,
+        })
+        .sum();
+    for (panel, node, mut position) in &mut panels {
+        if panel.0 != layers.active {
+            continue;
+        }
+        let scale = node.inverse_scale_factor();
+        let viewport = node.size().y * scale;
+        let max = ((node.content_size().y - node.size().y) * scale).max(0.0);
+        let page = f32::from(keys.just_pressed(KeyCode::PageDown))
+            - f32::from(keys.just_pressed(KeyCode::PageUp));
+        let next = (position.y + delta + page * viewport * 0.8).clamp(0.0, max);
+        if position.y != next {
+            position.y = next;
+        }
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -234,6 +290,7 @@ mod tests {
     fn only_the_visible_desktop_camera_can_pick_ui() {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
+            .add_message::<MouseWheel>()
             .insert_resource(Layers::new(Layer::Home));
         let world = app.world_mut();
         let home = world.spawn((Layer::Home, Camera::default())).id();
@@ -267,6 +324,7 @@ mod tests {
     fn navigation_selects_only_installed_layers_and_activates_one_camera() {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
+            .add_message::<MouseWheel>()
             .insert_resource(Layers::new(Layer::Machine));
         let world = app.world_mut();
         let machine = world.spawn((Layer::Machine, Camera::default())).id();

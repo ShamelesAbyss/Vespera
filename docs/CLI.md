@@ -710,6 +710,8 @@ Use **Ctrl+V** in a task or workflow prompt to append text from the system clipb
 
 ### Browse retained desktop workflows
 
+Use the mouse wheel or **Page Up** and **Page Down** in the Providers and Workflow History panels to reach content below the window. The Vespera header and Atlas navigation remain visible. **Up** and **Down** in Workflow History still select checkpoints.
+
 Open **Workflow history** from Home or press **F7**. Use **Newer workflow** and **Older workflow**, or **Up** and **Down**, to inspect retained checkpoints in acceptance order. The panel shows the root ID, status, coordinator, step owners, and a preview of the selected response. Nonterminal records are marked interrupted after the writer exits. If the database is busy, use **Refresh** or **R** after the writer finishes. The history reader does not start providers.
 
 Select **Open in Swarm** or press **Enter** to focus the journal view on the selected root workflow. **Backspace** clears the focus. Use **F7** to return to Workflow history. The CLI's `workflow-history` command prints the full private checkpoint.

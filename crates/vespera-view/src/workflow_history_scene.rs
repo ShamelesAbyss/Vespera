@@ -69,21 +69,15 @@ fn setup(mut commands: Commands) {
     commands
         .spawn((
             UiTargetCamera(camera),
-            Node {
-                width: percent(100),
-                height: percent(100),
-                padding: UiRect::all(px(32)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(14),
-                ..default()
-            },
-            children![
+            atlas::ScrollPanel(Layer::Workflows),
+            atlas::scroll_panel(),
+            children![(atlas::scroll_content(), children![
                 (
                     Text::new("Workflow history"),
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Up and Down browse. E edits a copy. U resumes an interrupted run. F5 returns Home."),
+                    Text::new("Up and Down browse. E edits a copy. U resumes an interrupted run. PgUp/PgDn scroll."),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -91,6 +85,7 @@ fn setup(mut commands: Commands) {
                         column_gap: px(10),
                         row_gap: px(10),
                         flex_wrap: FlexWrap::Wrap,
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     children![
@@ -104,7 +99,7 @@ fn setup(mut commands: Commands) {
                     ],
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
-            ],
+            ])],
         ))
         .observe(
             |event: On<PointerClick>,

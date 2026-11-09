@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 12 — Keep desktop controls and results reachable in small windows
+
+Providers and Workflow History now scroll with the wheel or Page Up and Page Down. Their content stays between the Vespera header and Atlas navigation. The native Windows acceptance build opened at 740×470 and verified both input paths, a return to the top, a retained workflow result at the bottom, and navigation back to Home. The acceptance build used the production panel layout with a smaller initial window size and input tracing. The release default stays 1200×800. The 53 default optimized graphics tests, formatting and strict graphics Clippy passed.
+
 ## Milestone 12 — Continue an interrupted desktop workflow
 
 Workflow history now continues the selected retained plan through the existing recovery engine. The desktop checks the exact plan, committed attempts, deadline, current roster and operator holds before execution. The original workflow ID, committed results and event projection are preserved.
