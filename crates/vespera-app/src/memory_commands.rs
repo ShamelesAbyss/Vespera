@@ -205,7 +205,7 @@ pub(crate) async fn run(args: MemoryArgs) -> Result<(), AppError> {
     if json {
         println!("{}", serde_json::to_string_pretty(&output.value)?);
     } else {
-        println!("{}", output.text);
+        println!("{}", crate::commands::terminal_text(&output.text));
     }
     if output.missing {
         return Err(AppError::MemoryNotFound);

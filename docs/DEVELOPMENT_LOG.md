@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Safe CLI rendering of provider text
+
+Human-readable agent and workflow output escapes terminal control characters from providers. Memory output applies the same rule when displaying persisted content. Line feeds, tabs and ordinary Unicode remain readable. JSON values and stored content are preserved. The control-character regression, all 95 default app tests and strict app Clippy passed on Windows. The separate Windows credential and non-loopback TLS rehearsals are opt-in.
+
 ## Milestone 10 — Durable inbox capacity by sender
 
 New mailbox entries use a per-sender share of the recipient's 32 pending slots. Durable recovery preserves authorized pending entries and exact retry behavior after a policy change. The Windows integration regression restarts a broker with 18 queued entries, adds a second approved sender, checks that the second sender can deliver, verifies FIFO, and confirms the original sender can enqueue again after acknowledgement. All 14 worker HTTP tests and strict Clippy for the API and app passed. Integer division can leave slots unused. With more than 32 approved senders, the shared cap still limits simultaneous pending messages to 32.

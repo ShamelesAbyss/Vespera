@@ -4,6 +4,7 @@ use crate::{
     AgentInboxAction, AgentStateAction, AppError, RunAgentArgs, RunWorkflowArgs, event_commands,
 };
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::future::Future;
@@ -32,6 +33,37 @@ use vespera_orchestrator::{
 };
 use vespera_providers::CancellationToken;
 use vespera_scheduler::StartupResidencyReport;
+
+pub(crate) fn terminal_text(content: &str) -> Cow<'_, str> {
+    fn needs_escaping(character: char) -> bool {
+        character.is_control() && !matches!(character, '\n' | '\t')
+    }
+
+    if !content.contains(needs_escaping) {
+        return Cow::Borrowed(content);
+    }
+    let mut escaped = String::with_capacity(content.len());
+    for character in content.chars() {
+        if needs_escaping(character) {
+            escaped.extend(character.escape_debug());
+        } else {
+            escaped.push(character);
+        }
+    }
+    Cow::Owned(escaped)
+}
+
+#[cfg(test)]
+#[test]
+fn human_output_escapes_terminal_controls() {
+    let ordinary = "Plan →\n\tstep";
+    assert!(matches!(terminal_text(ordinary), Cow::Borrowed(_)));
+    assert_eq!(terminal_text(ordinary), ordinary);
+    assert_eq!(
+        terminal_text("\u{1b}[2J\u{9d}52;c;data\u{7}\roverwrite\n"),
+        "\\u{1b}[2J\\u{9d}52;c;data\\u{7}\\roverwrite\n"
+    );
+}
 
 #[derive(Serialize)]
 struct WorkflowRunReport {
@@ -474,7 +506,7 @@ pub(crate) async fn run_workflow(args: RunWorkflowArgs) -> Result<(), AppError> 
         }
         if let Some(report) = &workflow {
             if let Some(result) = report.selected_result() {
-                println!("{}", result.response.content);
+                println!("{}", terminal_text(&result.response.content));
             }
             println!(
                 "Workflow {}: {:?}; attempts {}; failure {:?}",
@@ -965,7 +997,7 @@ pub(crate) async fn run_agent(args: RunAgentArgs) -> Result<(), AppError> {
             println!("Stored memory {id}");
         }
         if let Some(execution) = &execution {
-            println!("{}", execution.response.content);
+            println!("{}", terminal_text(&execution.response.content));
             println!(
                 "Task {}: {:?}; model {}; provider {}",
                 task_id, execution.task.state, execution.model_id, execution.provider_id
