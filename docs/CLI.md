@@ -672,6 +672,8 @@ Select **Run agent task** or press **P** while the panel has no active editor. E
 
 The desktop saves up to 16 agents in `desktop.sqlite3` under the desktop data directory. Use **Previous agent** and **Next agent** to select the agent that will run the task. To keep its identity and bind it to another model, select **Rebind selected**, then choose the model. Tasks use the selected agent's saved endpoint even if discovery is pointed elsewhere. New agents start without optional grants.
 
+Select **Edit agent identity** or press **I** to edit the selected agent's name and role. Press **Enter** after each field. The saved agent keeps its identity key, model binding and grants, so its existing task history is still available. **Capabilities** shows the capabilities of the agent's bound model.
+
 Select **Task history** to see the selected agent's retained tasks, newest accepted first. Use the page controls to browse and press a task number for a prompt and response preview. The task database `desktop-tasks.sqlite3` in the same directory contains private prompts and outcomes. Pass that database path and the task ID to `agent-task-history` to inspect the full checkpoint. [Durable task ownership](AGENTS.md#durable-task-ownership)
 
 Use **Suspend** and **Resume** to set or clear the selected agent's durable operator hold. A held agent cannot start a task. Use **Allow delegation** or **Revoke delegation** to change the agent's delegation permission. The grant is saved with the agent profile and is separate from its hold.

@@ -58,6 +58,7 @@ enum Action {
     PreviousAgent,
     NextAgent,
     NewAgent,
+    EditIdentity,
     Rebind,
     History,
     AllowDelegation,
@@ -87,6 +88,10 @@ enum Edit {
         fields: [String; 4],
         index: usize,
         rebind: Option<AgentId>,
+    },
+    Identity {
+        fields: [String; 2],
+        index: usize,
     },
     Prompt(String),
     Workflow {
@@ -426,6 +431,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Chain, "Build workflow"),
                         button(Action::Cancel, "Cancel work"),
                         windows_credential_button,
+                        button(Action::EditIdentity, "Edit agent identity"),
                     ]
                 ),
                 (Readout, Text::default(), TextFont::from_font_size(16.0)),
@@ -594,6 +600,21 @@ fn apply(action: Action, panel: &mut Panel) {
         Action::NewAgent => {
             panel.rebind = false;
             panel.feedback = "Select a discovered model number to create a new agent.".into();
+        }
+        Action::EditIdentity => {
+            if let Some((agent, _, _)) = panel
+                .roster
+                .as_ref()
+                .and_then(|roster| roster.selection(panel.selected))
+            {
+                panel.feedback.clear();
+                panel.draft = Some(Edit::Identity {
+                    fields: [agent.identity.name.clone(), agent.identity.role.clone()],
+                    index: 0,
+                });
+            } else {
+                panel.feedback = "Select a saved agent to edit its identity.".into();
+            }
         }
         Action::Rebind => {
             panel.rebind = panel.roster.is_some();
@@ -766,6 +787,8 @@ fn keyboard(
                     apply(Action::Workflow, &mut panel);
                 } else if event.key_code == KeyCode::KeyC {
                     apply(Action::Chain, &mut panel);
+                } else if event.key_code == KeyCode::KeyI {
+                    apply(Action::EditIdentity, &mut panel);
                 } else if let Some(index) =
                     NUMBER_KEYS.iter().position(|key| *key == event.key_code)
                 {
@@ -943,6 +966,7 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
             index: index @ (0 | 1),
             ..
         } => (&mut fields[*index], 64, |c| !c.is_control()),
+        Edit::Identity { fields, index } => (&mut fields[*index], 64, |c| !c.is_control()),
         Edit::Registration { fields, index, .. } => {
             (&mut fields[*index], 8, |c| c.is_ascii_digit())
         }
@@ -1075,6 +1099,25 @@ fn submit(panel: &mut Panel) {
                     "Registered the model and saved the agent binding.",
                 ));
                 panel.feedback = "Validating the model and saving the agent binding...".into();
+            }
+        }
+        Edit::Identity { fields, index } => {
+            if fields[index].trim().is_empty() {
+                panel.feedback = "Enter a nonempty value.".into();
+                panel.draft = Some(Edit::Identity { fields, index });
+            } else if index == 0 {
+                panel.feedback.clear();
+                panel.draft = Some(Edit::Identity { fields, index: 1 });
+            } else if let (Some(dir), Some(roster)) = (panel.dir.clone(), panel.roster.clone()) {
+                let [name, role] = fields;
+                let selected = panel.selected;
+                panel.work = Some(Work::SaveRoster(
+                    background(move |_| {
+                        desktop_agent::set_identity(&dir, roster, selected, name, role)
+                    }),
+                    "Agent name and role saved.",
+                ));
+                panel.feedback = "Saving agent identity...".into();
             }
         }
         Edit::Prompt(prompt) => {
@@ -1505,7 +1548,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     {
         let _ = writeln!(
             content,
-            "Agent {} of {}  |  {}  |  {}  |  Delegation {}\nBound model  |  {}\nTask endpoint  |  {}",
+            "Agent {} of {}  |  {}  |  {}  |  Delegation {}\nBound model  |  {}\nCapabilities  |  {}\nTask endpoint  |  {}",
             panel.selected + 1,
             roster.len(),
             agent.identity.name,
@@ -1516,6 +1559,15 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                 "denied"
             },
             model.identifier.chars().take(90).collect::<String>(),
+            preview(
+                &model
+                    .capabilities
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                90
+            ),
             provider.endpoint
         );
         if let Some(name) = &provider.credential_env {
@@ -1565,6 +1617,10 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                     labels[*index],
                     fields[*index]
                 );
+            }
+            Edit::Identity { fields, index } => {
+                let label = ["Agent name", "Agent role"][*index];
+                let _ = write!(content, "\n{label}: {}_\nEnter continues.", fields[*index]);
             }
             Edit::Workflow { fields, index } => {
                 if *index == 0

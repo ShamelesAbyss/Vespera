@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 12 — Edit a saved agent's name and role
+
+The desktop identity editor updates the selected agent through the existing roster revision check and displays the capabilities of the bound model. The native Windows walkthrough edited the name and role, reopened the application, and opened the same agent's retained tasks. The isolated roster comparison showed exactly the two intended fields changed. The task database matched byte for byte. The 52 default optimized graphics tests passed, including a regression for stale roster writes, along with formatting and strict graphics Clippy.
+
 ## Milestone 12 — Restore desktop discovery setup
 
 **Save setup** stores the discovery adapter, loopback endpoint and credential source separately from the agent roster. The desktop validates the endpoint before applying it. Settings writes run on the provider worker and use a bounded SQLite row. Windows verification used an isolated profile with no registered agents, reopened the saved configuration, and discovered 12 models through a live Ollama endpoint. The database stored the credential reference without the fixture token. The app rejected a remote endpoint, then reopened with a separate agent binding and preserved its roster bytes after saving discovery again. The 51 default optimized graphics tests and strict graphics Clippy passed.

@@ -402,6 +402,27 @@ pub(super) fn set_delegation(
     Ok((save(dir, Some(roster.revision), roster.config)?, selected))
 }
 
+pub(super) fn set_identity(
+    dir: &Path,
+    mut roster: Roster,
+    selected: usize,
+    name: String,
+    role: String,
+) -> Result<(Roster, usize), Failure> {
+    let agent = roster
+        .config
+        .agents
+        .get_mut(selected)
+        .ok_or("No saved agent selected.")?;
+    agent.identity.name = name;
+    agent.identity.role = role;
+    agent
+        .identity
+        .validate()
+        .map_err(|_| "Enter a valid agent name and role.")?;
+    Ok((save(dir, Some(roster.revision), roster.config)?, selected))
+}
+
 pub(super) fn set_hold(
     dir: &Path,
     agent: AgentId,
@@ -592,6 +613,36 @@ mod tests {
         assert_eq!(model.identifier, "second");
         assert_eq!(reopened.selection(1).unwrap().0.identity.id, second_agent);
         assert_eq!(reopened.selection(1).unwrap().1.identifier, "first");
+        fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn identity_edit_preserves_binding_and_rejects_a_stale_roster() {
+        let dir = std::env::temp_dir().join(format!("vespera-desktop-agent-{}", TaskId::new()));
+        let (original, _) = register(&dir, None, registration("fixture")).await.unwrap();
+        let (granted, _) = set_delegation(&dir, original, 0, true).unwrap();
+        let (agent, model, provider) = granted.selection(0).unwrap();
+        let (id, model_id, provider_id) = (agent.identity.id, model.id, provider.id);
+        assert!(set_identity(&dir, granted.clone(), 0, String::new(), "Reviewer".into()).is_err());
+        set_identity(
+            &dir,
+            granted.clone(),
+            0,
+            "Updated".into(),
+            "Reviewer".into(),
+        )
+        .unwrap();
+        assert!(set_identity(&dir, granted, 0, "Stale".into(), "Coordinator".into()).is_err());
+
+        let reopened = load(&dir).unwrap().unwrap();
+        let (agent, model, provider) = reopened.selection(0).unwrap();
+        assert_eq!(agent.identity.id, id);
+        assert_eq!(agent.identity.name, "Updated");
+        assert_eq!(agent.identity.role, "Reviewer");
+        assert!(agent.permissions.contains(&Permission::Delegate));
+        assert_eq!(model.id, model_id);
+        assert_eq!(provider.id, provider_id);
         fs::remove_file(dir.join("desktop.sqlite3")).unwrap();
         fs::remove_dir(dir).unwrap();
     }
