@@ -8,7 +8,6 @@ use bevy::input::{
     keyboard::{KeyboardFocusLost, KeyboardInput},
 };
 use bevy::prelude::*;
-use bevy::ui::prelude::UiPickingCamera;
 use bevy::window::{ExitSystems, PrimaryWindow, WindowCloseRequested};
 use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, StoredTaskSummary};
 use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
@@ -198,7 +197,6 @@ fn setup(mut commands: Commands) {
         .spawn((
             Layer::Providers,
             Camera2d,
-            UiPickingCamera,
             Camera {
                 is_active: false,
                 ..default()

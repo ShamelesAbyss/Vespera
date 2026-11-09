@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
-use bevy::ui::prelude::{UiPickingCamera, UiPickingSettings};
+use bevy::ui::prelude::UiPickingSettings;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use vespera_world::{World as Simulation, WorldStore};
 
@@ -222,7 +222,6 @@ fn setup(
         .spawn((
             Layer::Home,
             Camera2d,
-            UiPickingCamera,
             Camera {
                 is_active: layers.active == Layer::Home,
                 ..default()

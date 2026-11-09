@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Desktop pointer routing and live branching workflow
+
+On the unsigned Windows package at `d5e9593`, Home navigation accepted clicks but inactive desktop cameras could intercept provider buttons. Atlas now enables Bevy UI picking only on the active desktop camera. A navigation regression checks the marker when switching from Home to Providers and then to the Machine scene. The optimized Windows graphics suite and strict graphics Clippy passed.
+
+The rebuilt native window used an isolated profile. It edited the loopback endpoint by mouse, discovered the local Ollama inventory, saved three agents on `hermes3:8b` and granted delegation to the coordinator. The native editor previewed and ran four steps with inputs `[]`, `[1]`, `[1]` and `[2,3]`. The run completed in 10,606 ms. The CLI reopened all four completed attempts and their saved plan. Ollama reported zero resident models after cleanup. The workflow history initially reported that the database was in use while execution was still active. After restart, it displayed the retained result. **Open in Swarm** selected the matching workflow and showed three agents and eight observed links. Freezing and stepping back kept the live cursor separate. The opt-in live branch and join test and the NVIDIA telemetry test also passed. [Native capture](../assets/screenshots/swarm-live-workflow.png)
+
 ## Milestone 14 — Pin CI action revisions
 
 The Linux and Windows jobs use full commit SHAs for checkout and Rust toolchain setup. The pins match the then-current upstream `v4` and `master` refs. Both upstream action manifests resolved at those revisions, all six references passed a full-SHA check, and the workflow diff changes only action references.

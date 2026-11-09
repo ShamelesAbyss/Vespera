@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
+use bevy::ui::prelude::UiPickingCamera;
 use vespera_core::AgentId;
 
 #[derive(Clone, Copy, Component, PartialEq, Eq, PartialOrd, Ord)]
@@ -188,6 +189,15 @@ fn switch(
     }
     for (camera_entity, layer, mut camera) in &mut cameras {
         camera.is_active = *layer == layers.active;
+        // Bevy's UI picker can hit nodes on an inactive camera.
+        if matches!(layer, Layer::Home | Layer::Providers | Layer::Workflows) {
+            let mut camera_entity = commands.entity(camera_entity);
+            if camera.is_active {
+                camera_entity.insert(UiPickingCamera);
+            } else {
+                camera_entity.remove::<UiPickingCamera>();
+            }
+        }
         if camera.is_active {
             commands
                 .entity(*entity)
@@ -219,6 +229,39 @@ fn switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_visible_desktop_camera_can_pick_ui() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(Layers::new(Layer::Home));
+        let world = app.world_mut();
+        let home = world.spawn((Layer::Home, Camera::default())).id();
+        let providers = world.spawn((Layer::Providers, Camera::default())).id();
+        let machine = world.spawn((Layer::Machine, Camera::default())).id();
+        for layer in [Layer::Home, Layer::Providers, Layer::Machine] {
+            register(&mut app, layer);
+        }
+        navigation(&mut app);
+        app.update();
+        assert!(app.world().get::<UiPickingCamera>(home).is_some());
+        assert!(app.world().get::<UiPickingCamera>(providers).is_none());
+
+        app.world_mut()
+            .resource_mut::<Layers>()
+            .request(Layer::Providers);
+        app.update();
+        assert!(app.world().get::<UiPickingCamera>(home).is_none());
+        assert!(app.world().get::<UiPickingCamera>(providers).is_some());
+
+        app.world_mut()
+            .resource_mut::<Layers>()
+            .request(Layer::Machine);
+        app.update();
+        for camera in [home, providers, machine] {
+            assert!(app.world().get::<UiPickingCamera>(camera).is_none());
+        }
+    }
 
     #[test]
     fn navigation_selects_only_installed_layers_and_activates_one_camera() {

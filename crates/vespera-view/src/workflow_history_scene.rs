@@ -3,7 +3,6 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use bevy::prelude::*;
-use bevy::ui::prelude::UiPickingCamera;
 use vespera_core::TaskId;
 use vespera_orchestrator::{StoredWorkflow, StoredWorkflowSummary, WorkflowStore};
 
@@ -57,7 +56,6 @@ fn setup(mut commands: Commands) {
         .spawn((
             Layer::Workflows,
             Camera2d,
-            UiPickingCamera,
             Camera {
                 is_active: false,
                 ..default()

@@ -62,9 +62,9 @@ An agent keeps its identity when you change its model. The registry records whic
 
 ![Swarm close-up showing an amber message transit and its matching observation in the inspector](assets/screenshots/swarm-transit.png)
 
-![Swarm focused on a completed four-step branch and join across three agents](assets/screenshots/swarm-branch-join.png)
+![Swarm focused on a completed Ollama workflow with three agents and eight observed links](assets/screenshots/swarm-live-workflow.png)
 
-*Captured in the Windows app using a synthetic journal. The close-up shows a newly committed fixture message at the midpoint of its conduit. Workflow focus isolates the four-step fixture and its completed outcome.* [Swarm controls and fixture](docs/CLI.md#swarm-view)
+*The overview and message close-up use a synthetic journal. The final capture shows the retained journal of a four-step workflow authored and executed in the Windows app with Ollama.* [Swarm controls and fixture](docs/CLI.md#swarm-view)
 
 </details>
 
@@ -83,7 +83,7 @@ An agent keeps its identity when you change its model. The registry records whic
 | --- | --- |
 | **Providers** | Native Ollama and OpenAI-compatible HTTP adapters with bounded chat, streaming, health and discovery. LM Studio Bionic has live compatibility evidence. Native Ollama also supplies model metadata, supported load and unload, and residency observations. [Provider contracts](docs/PROVIDERS.md) |
 | **Model inventory and compute** | Strict TOML or a revision-fenced SQLite model catalog. Bounded priority queues, owned leases, context limits, explicit RAM and VRAM estimates, optional host ceilings and Ollama residency reconciliation. [Registry](docs/REGISTRY.md) · [Scheduler](docs/SCHEDULER.md) |
-| **Agents and orchestration** | Stable identities, fixed or capability-based model policies, permission-gated delegation, operator holds, durable tasks and inboxes. Run an authored workflow or bounded model-assisted decomposition. The desktop supports up to 16 saved agents and a same-provider draft-and-review workflow. [Agent runtime](docs/AGENTS.md) · [Orchestration](docs/ORCHESTRATION.md) |
+| **Agents and orchestration** | Stable identities, fixed or capability-based model policies, permission-gated delegation, operator holds, durable tasks and inboxes. Run an authored workflow or bounded model-assisted decomposition. The desktop supports up to 16 saved agents, same-provider draft and review, and an editor for workflows with explicit dependencies. [Agent runtime](docs/AGENTS.md) · [Orchestration](docs/ORCHESTRATION.md) |
 | **Persistent memory and events** | Private SQLite memory namespaces, bounded phrase retrieval, consolidation with lineage, backup and restore, and opt-in memory context. A separate event journal retains sanitized observations with cursors and checkpoint recovery. [Memory](docs/MEMORY.md) · [Events](docs/CLI.md#local-task-outcome-journal) |
 | **External workers** | An authenticated broker and Rust SDK with signed HTTP actions, fenced leases, cancellation, scoped replay and live WebSockets. Broker SQLite recovery and opt-in TLS are available. [Implemented protocol](docs/PROTOCOL.md#implemented-loopback-worker-api) |
 | **Intelligence Atlas** | Machine shows host and opted-in scheduler evidence. Intelligence Network shows signed broker tasks and workers. Swarm follows committed desktop workflow observations, or reads delegation, dependencies and messages from configured sources. Select, inspect, navigate and replay retained evidence. [Atlas controls](docs/CLI.md#switch-layers-in-atlas) |
