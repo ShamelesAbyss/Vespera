@@ -393,6 +393,83 @@ async fn worker_mailboxes_enforce_direction_ownership_quota_and_revocation() {
 }
 
 #[tokio::test]
+async fn mailbox_reserves_capacity_for_other_senders_after_policy_change() {
+    let first = AgentId::new();
+    let recipient = AgentId::new();
+    let other = AgentId::new();
+    let other_key = fresh_token();
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let policy = routed_policy(first, recipient);
+    let (process, base) = launch_command(server_command(&policy, Some(&db.0)), policy);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let mut pending = Vec::new();
+    for _ in 0..18 {
+        let id = Uuid::new_v4();
+        sender
+            .send_message(recipient, id, "earlier delivery")
+            .await
+            .unwrap();
+        pending.push(id);
+    }
+    drop(process);
+
+    let policy = routed_policy(first, recipient);
+    let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
+    access["workers"].as_array_mut().unwrap().push(json!({
+        "id": other,
+        "capabilities": ["text-generation"],
+        "token_env": "TEST_OTHER_MAILBOX_TOKEN",
+        "message_targets": [recipient],
+    }));
+    std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
+    let mut command = server_command(&policy, Some(&db.0));
+    command.env("TEST_OTHER_MAILBOX_TOKEN", &other_key);
+    let (_restarted, base) = launch_command(command, policy);
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let receiver =
+        WorkerClient::new(endpoint, recipient, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let peer =
+        WorkerClient::new(endpoint, other, SigningKey::from_hex(&other_key).unwrap()).unwrap();
+
+    sender
+        .send_message(recipient, pending[0], "earlier delivery")
+        .await
+        .unwrap();
+    assert!(matches!(
+        sender
+            .send_message(recipient, Uuid::new_v4(), "over share")
+            .await,
+        Err(ClientError::Rejected {
+            status: 503,
+            code: Some(ErrorCode::InboxCapacity)
+        })
+    ));
+    let peer_id = Uuid::new_v4();
+    peer.send_message(recipient, peer_id, "other sender")
+        .await
+        .unwrap();
+    let inbox = receiver.inbox().await.unwrap();
+    assert_eq!(
+        inbox
+            .iter()
+            .map(|message| message.message_id)
+            .collect::<Vec<_>>(),
+        pending.iter().copied().chain([peer_id]).collect::<Vec<_>>()
+    );
+    for id in pending.into_iter().take(3) {
+        receiver.acknowledge_message(first, id).await.unwrap();
+    }
+    sender
+        .send_message(recipient, Uuid::new_v4(), "capacity regained")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy() {
     let first = AgentId::new();
     let second = AgentId::new();

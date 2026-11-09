@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 10 — Durable inbox capacity by sender
+
+New mailbox entries use a per-sender share of the recipient's 32 pending slots. Durable recovery preserves authorized pending entries and exact retry behavior after a policy change. The Windows integration regression restarts a broker with 18 queued entries, adds a second approved sender, checks that the second sender can deliver, verifies FIFO, and confirms the original sender can enqueue again after acknowledgement. All 14 worker HTTP tests and strict Clippy for the API and app passed. Integer division can leave slots unused. With more than 32 approved senders, the shared cap still limits simultaneous pending messages to 32.
+
 ## Milestone 10 — Broker live-feed capacity isolation
 
 The signed event service reserves two operator streams and six worker streams, with at most two streams per worker. Closing a stream releases both its pool and worker permits. Windows tests verified that saturating one worker leaves a second worker and the operator able to receive ready frames, that ordinary HTTP remains available, and that a full worker pool cannot consume operator slots. The 13 worker HTTP integration tests, 13 API and SDK unit tests, SDK doctest, formatting, and strict Clippy passed.

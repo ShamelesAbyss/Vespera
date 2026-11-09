@@ -64,7 +64,9 @@ Application errors carry `{"error":"code"}`.
 
 The access policy can grant a worker outgoing routes through its `message_targets` array of approved worker UUIDs. Omission grants no routes. Grants are directional and self-routes are rejected. The signed principal determines the sender. An inbox entry has `sender`, `message_id` and `content`. Only its recipient can read or acknowledge it.
 
-Clients supply a non-nil message UUID and up to 2,048 UTF-8 bytes of nonblank content. Inboxes retain 32 pending entries in arrival order and return 503 when full. Reading preserves the entry until acknowledgement. Acknowledgement is idempotent. Retrying the same sender, recipient, message ID and content is idempotent while pending or among the last 64 acknowledgements in that inbox. Changing content under a retained ID returns 409.
+Clients supply a non-nil message UUID and up to 2,048 UTF-8 bytes of nonblank content. Each inbox retains up to 32 pending entries in arrival order. For new messages, each approved sender can occupy up to 32 slots divided by the number of approved senders routed to that inbox, rounded down with a minimum of one. The shared 32-entry limit still applies. Either limit returns `503 inbox_capacity`. Messages retained under an earlier policy can drain in order even when they exceed the current sender quota.
+
+Reading preserves the entry until acknowledgement. Acknowledgement is idempotent. Retrying the same sender, recipient, message ID and content is idempotent while pending or among the last 64 acknowledgements in that inbox, even at capacity. Changing content under a retained ID returns 409.
 
 With `--broker-db`, pending entries and the last 64 acknowledgement fingerprints per recipient survive restart. The stored acknowledgement contains the sender, message ID and a SHA-256 digest. Without a database, inboxes reset on restart. Revocation clears entries and fingerprints to and from that worker. On startup, the broker discards entries and fingerprints that the current access policy no longer authorizes. Restoring a removed grant does not resurrect them. Inbox delivery uses polling.
 

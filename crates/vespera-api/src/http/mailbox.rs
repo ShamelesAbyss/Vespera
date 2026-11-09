@@ -158,6 +158,12 @@ impl Mailboxes {
         if id.is_nil() || content.len() > MAX_CONTENT || content.trim().is_empty() {
             return Err(HttpError(StatusCode::BAD_REQUEST, "invalid_input"));
         }
+        let routed_senders = self
+            .approved
+            .values()
+            .filter(|mailbox| mailbox.targets.contains(&recipient))
+            .count();
+        let sender_limit = (MAX_PENDING / routed_senders).max(1);
         let inbox = &mut self.approved.get_mut(&recipient).ok_or(UNAUTHORIZED)?.inbox;
         let conflict = HttpError(StatusCode::CONFLICT, "message_conflict");
         if let Some(previous) = inbox
@@ -178,7 +184,14 @@ impl Mailboxes {
                 .then_some(false)
                 .ok_or(conflict);
         }
-        if inbox.pending.len() == MAX_PENDING {
+        if inbox.pending.len() == MAX_PENDING
+            || inbox
+                .pending
+                .iter()
+                .filter(|message| message.sender == sender)
+                .count()
+                >= sender_limit
+        {
             return Err(HttpError(StatusCode::SERVICE_UNAVAILABLE, "inbox_capacity"));
         }
         inbox.pending.push_back(Message {
