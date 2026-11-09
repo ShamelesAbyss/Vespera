@@ -21,13 +21,13 @@ use vespera_providers::{
 
 use crate::atlas::{self, Layer, Layers};
 use crate::desktop_agent::{self, FinishedTask, Registration, Roster};
+use crate::desktop_settings::{self, ENDPOINT_LIMIT};
 use crate::desktop_workflow::{self, FinishedWorkflow, MAX_CHAIN_STEPS, StepRequest};
 use crate::home_scene::button;
 
 const MODELS_PER_PAGE: usize = 8;
 const TASKS_PER_PAGE: u32 = 8;
 const PROMPT_LIMIT: usize = 1200;
-const ENDPOINT_LIMIT: usize = 160;
 const OLLAMA: &str = "http://127.0.0.1:11434";
 const COMPATIBLE: &str = "http://127.0.0.1:1234/v1";
 const NUMBER_KEYS: [KeyCode; 8] = [
@@ -50,6 +50,7 @@ enum Action {
     #[cfg(target_os = "windows")]
     WindowsCredential,
     Discover,
+    SaveDiscovery,
     Previous,
     Next,
     Prompt,
@@ -176,6 +177,7 @@ enum Work {
         cancel: CancellationToken,
     },
     SaveRoster(Mutex<Receiver<RegistrationResult>>, &'static str),
+    SaveDiscovery(Mutex<Receiver<Result<(), &'static str>>>),
     Hold(
         Mutex<Receiver<Result<(), AgentTaskStoreError>>>,
         &'static str,
@@ -280,16 +282,31 @@ impl Panel {
 pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
     atlas::register(app, Layer::Providers);
     let restored = dir.as_deref().map_or(Ok(None), desktop_agent::load);
-    let (roster, feedback) = match restored {
+    let (roster, mut feedback) = match restored {
         Ok(roster) => (roster, String::new()),
         Err(error) => (None, error.into()),
     };
-    let (kind, endpoint, credential, credential_windows) = roster
+    let saved = match dir.as_deref().map_or(Ok(None), desktop_settings::load) {
+        Ok(saved) => saved,
+        Err(error) => {
+            if !feedback.is_empty() {
+                feedback.push('\n');
+            }
+            feedback.push_str(error);
+            None
+        }
+    };
+    let (kind, endpoint, credential, credential_windows) = saved
         .as_ref()
-        .and_then(|roster| roster.selection(0))
+        .or_else(|| {
+            roster
+                .as_ref()?
+                .selection(0)
+                .map(|(_, _, provider)| provider)
+        })
         .map_or_else(
             || (ProviderKind::Ollama, OLLAMA.into(), None, false),
-            |(_, _, provider)| {
+            |provider| {
                 (
                     provider.kind,
                     provider.endpoint.clone(),
@@ -356,7 +373,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Enter  Discover  |  P  Run task  |  G  Draft + review  |  C  Build workflow  |  Esc  Cancel  |  F5  Home"),
+                    Text::new("Enter  Discover  |  S  Save setup  |  P  Run task  |  G  Draft + review  |  C  Workflow  |  Esc  Cancel  |  F5  Home"),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -372,6 +389,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Edit, "Edit endpoint"),
                         button(Action::Credential, "Credential reference"),
                         button(Action::Discover, "Test & discover"),
+                        button(Action::SaveDiscovery, "Save setup"),
                     ]
                 ),
                 (
@@ -584,6 +602,18 @@ fn apply(action: Action, panel: &mut Panel) {
                     "Select a discovered model number to rebind the selected agent.".into();
             }
         }
+        Action::SaveDiscovery => {
+            let Some(dir) = panel.dir.clone() else {
+                panel.feedback =
+                    "Saving discovery settings requires a local data directory.".into();
+                return;
+            };
+            let settings = panel_provider(panel);
+            panel.work = Some(Work::SaveDiscovery(background(move |_| {
+                desktop_settings::save(&dir, &settings)
+            })));
+            panel.feedback = "Saving discovery settings...".into();
+        }
         Action::Discover => {
             let declaration = panel_provider(panel);
             let cancel = CancellationToken::new();
@@ -728,6 +758,8 @@ fn keyboard(
                     apply(Action::Cancel, &mut panel);
                 } else if event.key_code == KeyCode::Enter {
                     apply(Action::Discover, &mut panel);
+                } else if event.key_code == KeyCode::KeyS {
+                    apply(Action::SaveDiscovery, &mut panel);
                 } else if event.key_code == KeyCode::KeyP {
                     apply(Action::Prompt, &mut panel);
                 } else if event.key_code == KeyCode::KeyG {
@@ -965,6 +997,12 @@ fn submit(panel: &mut Panel) {
     };
     match edit {
         Edit::Endpoint(endpoint) => {
+            let declaration = desktop_agent::provider(panel.kind, endpoint.clone());
+            if desktop_agent::config(declaration).validate().is_err() {
+                panel.feedback = "Endpoint rejected. Enter a loopback HTTP or HTTPS URL.".into();
+                panel.draft = Some(Edit::Endpoint(endpoint));
+                return;
+            }
             if panel.endpoint != endpoint {
                 panel.credential = None;
                 panel.credential_windows = false;
@@ -972,6 +1010,7 @@ fn submit(panel: &mut Panel) {
             panel.endpoint = endpoint;
             panel.outcome = None;
             panel.page = 0;
+            panel.feedback.clear();
         }
         Edit::Credential(name) => {
             if !name.is_empty() && !desktop_agent::credential_name(&name) {
@@ -1268,6 +1307,14 @@ fn receive_work(mut panel: ResMut<Panel>) {
                 panel.feedback = "The registration worker stopped.".into()
             }
         },
+        Some(Work::SaveDiscovery(result)) => match poll(result) {
+            Ok(Ok(())) => panel.feedback = "Discovery setup saved for future launches.".into(),
+            Ok(Err(error)) => panel.feedback = error.into(),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panel.feedback = "The discovery settings worker stopped.".into()
+            }
+        },
         Some(Work::Hold(result, message)) => match poll(result) {
             Ok(Ok(())) => panel.feedback = (*message).into(),
             Ok(Err(error)) => panel.feedback = error.to_string(),
@@ -1483,7 +1530,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
     }
     if let Some(edit) = &panel.draft {
         match edit {
-            Edit::Endpoint(_) => content.push_str("\nEnter saves the endpoint."),
+            Edit::Endpoint(_) => content.push_str("\nEnter applies the endpoint for this session."),
             Edit::Credential(name) => {
                 let _ = write!(
                     content,

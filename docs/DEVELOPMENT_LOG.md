@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 12 — Restore desktop discovery setup
+
+**Save setup** stores the discovery adapter, loopback endpoint and credential source separately from the agent roster. The desktop validates the endpoint before applying it. Settings writes run on the provider worker and use a bounded SQLite row. Windows verification used an isolated profile with no registered agents, reopened the saved configuration, and discovered 12 models through a live Ollama endpoint. The database stored the credential reference without the fixture token. The app rejected a remote endpoint, then reopened with a separate agent binding and preserved its roster bytes after saving discovery again. The 51 default optimized graphics tests and strict graphics Clippy passed.
+
 ## Milestone 14 — Qualify the workflow editor and broker audit package
 
 The Windows x64 unsigned build from `35ead88` verified 49 portable files, 13 MSI payloads and the exact MSI embedded in Setup. The extracted app committed and replayed a Living World revision and reopened the database byte for byte. Both the edited branching workflow and a newly authored two-step workflow completed with Ollama from the extracted binaries. The earlier portable broker supplied the schema 3 migration fixture. The upgraded broker preserved its mixed cursor and inbox, resumed the task audit after restart, and the earlier broker read the consistent pre-upgrade backup. Workspace validation passed 289 tests and doctests plus strict Clippy and rustdoc. The refreshed SBOM passed schema validation and matched the previous locked third-party inventory. [Release checksums](RELEASE.md#windows-x64-candidate-with-workflow-editing-and-durable-task-audit)
