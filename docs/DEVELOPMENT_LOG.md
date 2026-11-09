@@ -18,7 +18,7 @@ The optimized Windows viewer used a scratch profile with Ollama `hermes3:8b`. Th
 
 ## Milestone 14 — Verify the optimized Windows installer lifecycle
 
-The disposable Windows runner built the optimized `0.1.1` and `0.1.2` payloads from their own source revisions, verified their manifests, and checked the candidate MSI embedded in Setup. The run passed clean installation, an injected upgrade rollback, successful upgrade, downgrade rejection, uninstall and restoration with the saved world preserved. The tested candidate came from `fd1a464`. A second run is active for the latest desktop changes. [Hosted source and checksums](RELEASE.md#hosted-optimized-windows-installer-qualification)
+The disposable Windows runner built the optimized `0.1.1` and `0.1.2` payloads from their own source revisions, verified their manifests, and checked the candidate MSI embedded in Setup. The run passed clean installation, an injected upgrade rollback, successful upgrade, downgrade rejection, uninstall and restoration with the saved world preserved. The tested candidate came from `fd1a464`. The follow-up run also passed for `c1e08a2`, which includes the desktop settings and identity changes. The separate run at `146dfb0` covers the desktop memory package. [Hosted source and checksums](RELEASE.md#hosted-optimized-windows-installer-qualification)
 
 ## Milestone 14 — Package desktop settings and identity editing
 

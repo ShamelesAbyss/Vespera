@@ -231,7 +231,13 @@ The Windows 2025 runner built `0.1.1` from `3d232672abacbfac1f0467cbbc5c64e58157
 | Candidate MSI | `1be51c8ef5305aaad334342913951ad0b62f9c60bfc4d724e19623ad6a8efebf` |
 | Candidate Setup | `14141138b245da09c474a7fcbaa4e5ad975be3c18dde2f7272ccbb4c76042440` |
 
-A second optimized run was dispatched from `c1e08a2` to cover the desktop settings and identity changes. Its result is pending. [Follow-up run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42664441694)
+A second optimized run passed the same lifecycle from the `0.1.1` baseline to `0.1.2` from `c1e08a2225b2b7d2620c91492bb0372f6750aff5`. It verified clean Setup installation, rollback after the injected failure, successful Setup upgrade, downgrade rejection, removal and restoration with the committed world preserved. [Passing follow-up](https://github.com/ShamelesAbyss/Vespera/actions/runs/42664441694/job/129324218699)
+
+| Follow-up hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `a3b6866e7bec187b144baacf37451cd781c52fae8b99e9f67e4e31eed831bacc` |
+| Candidate MSI | `9cb9edd12bba620c5ef72d7da075c54702a84b50d0d2476d96d0b7742d525676` |
+| Candidate Setup | `0a4fe58d17202e688437a0961147ae15d191b19941d6bcf76892cbaefc03d9f0` |
 
 ### Windows x64 candidate with workflow editing and durable task audit
 
