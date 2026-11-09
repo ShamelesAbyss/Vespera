@@ -34,7 +34,7 @@ struct Sample {
 }
 
 #[derive(Clone, Default)]
-enum SchedulerObservation {
+pub(super) enum SchedulerObservation {
     #[default]
     NoSource,
     Unavailable,
@@ -83,6 +83,19 @@ fn read_scheduler_sample(path: &Path) -> Option<SchedulerSample> {
 pub(super) struct Telemetry(watch::Receiver<Option<Sample>>);
 
 impl Telemetry {
+    pub(super) fn scheduler_observation(&self) -> SchedulerObservation {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(SchedulerObservation::NoSource, |sample| {
+                if sample.observed.elapsed() < INTERVAL * 3 {
+                    sample.scheduler.clone()
+                } else {
+                    SchedulerObservation::Stale
+                }
+            })
+    }
+
     pub fn home_summary(&self) -> Option<String> {
         let sample = self.0.borrow();
         let sample = sample

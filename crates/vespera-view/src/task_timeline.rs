@@ -35,6 +35,7 @@ struct Window {
     floor: u64,
     head: u64,
     generation: u64,
+    ready: bool,
 }
 
 struct Frozen {
@@ -51,6 +52,7 @@ pub(super) struct Timeline {
 
 impl Timeline {
     pub fn ready(&mut self, discarded_through: u64) {
+        self.window.ready = true;
         if self.window.head == 0 {
             self.window.floor = discarded_through;
             self.window.head = discarded_through;
@@ -83,6 +85,12 @@ impl Timeline {
 
     pub fn is_frozen(&self) -> bool {
         self.frozen.is_some()
+    }
+
+    pub fn has_replay_source(&self) -> bool {
+        self.frozen
+            .as_ref()
+            .is_some_and(|frozen| frozen.window.ready)
     }
 
     pub fn source_changed(&self) -> bool {
@@ -161,6 +169,20 @@ impl Timeline {
 mod tests {
     use super::*;
     use vespera_core::{BrokerEventCursor, EventEnvelope, TaskState};
+
+    #[test]
+    fn frozen_window_remembers_whether_a_broker_was_observed() {
+        let mut timeline = Timeline::default();
+        timeline.toggle();
+        assert!(!timeline.has_replay_source());
+        timeline.ready(0);
+        assert!(!timeline.has_replay_source());
+        timeline.toggle();
+        timeline.toggle();
+        assert!(timeline.has_replay_source());
+        timeline.reset();
+        assert!(timeline.has_replay_source());
+    }
 
     #[test]
     fn capture_replays_exact_prefix_after_rollover_and_live_reset() {

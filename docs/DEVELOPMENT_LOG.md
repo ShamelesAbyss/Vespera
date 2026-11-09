@@ -1,5 +1,11 @@
 # Development log
 
+## Neural Universe Region A — Central Orchestrator
+
+Intelligence Network now has a selectable layered core. Broker events pass through the existing timeline projection, and Atlas reads the existing local scheduler watcher independently. Native Windows verification used an isolated broker to submit, claim, and complete a test task. Replaying sequence 2 restored the running core while the live feed remained at sequence 3. A real Ollama `hermes3:8b` task lit the core through one admitted scheduler permit while the broker reported no running work. Its finished snapshot cleared the active signal. The inspector reports the sources separately.
+
+The Windows optimized graphics build, 46 default tests, formatting, and strict Clippy passed. A 600-update Vulkan sample at 1200×800 on the RTX 4070 Laptop GPU measured 7.51 ms p95 and 26.75 ms maximum. The measurement preceded the Ollama run. Concurrent-inference timing and 2560×1440 qualification for this region remain open.
+
 ## Broker connection admission hardening
 
 The broker limits each peer IP to 16 of the 32 connection slots and releases its share when the connection closes. Unknown principals and stale or foreign sessions fail before the body read. A five-second body deadline bounds stalled requests while full HMAC verification still precedes dispatch. Windows passed 13 HTTP integration tests, 12 API and SDK unit tests, the SDK doctest, and strict Clippy for the affected crates. Clients sharing an address share its cap. Distributed connection exhaustion and separate-host qualification remain outside this test.

@@ -49,9 +49,9 @@ An agent keeps its identity when you change its model. The registry records whic
 <details>
 <summary>Inspect broker activity in the Intelligence Network</summary>
 
-![Intelligence Network showing separated task nodes, two workers, and recent broker observations](assets/screenshots/atlas-network.jpg)
+![Intelligence Network focused on the layered orchestrator core during a local scheduler admission](assets/screenshots/atlas-network.jpg)
 
-*Captured in the Windows `0.1.1` candidate against the stabilization broker. The header reports 47 completed tasks and one cancellation from persisted test activity. The inspector shows recent observations and reports unavailable resource measurements explicitly.* [Atlas controls](docs/CLI.md#switch-layers-in-atlas)
+*Captured in the native Windows app. The isolated broker recorded a completed test task while a separate local Ollama run held one scheduler permit. The inspector reports each source separately.* [Atlas controls](docs/CLI.md#switch-layers-in-atlas)
 
 </details>
 

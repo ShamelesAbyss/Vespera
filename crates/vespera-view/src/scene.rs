@@ -12,6 +12,8 @@ use crate::task_timeline::Timeline;
 use crate::{CancelRequest, Update as BrokerUpdate};
 use vespera_sdk::BrokerSessionId;
 
+mod orchestrator;
+
 #[derive(Resource)]
 struct Connection {
     updates: mpsc::Receiver<BrokerUpdate>,
@@ -43,6 +45,7 @@ struct Scene {
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum NodeKey {
+    Orchestrator,
     Task(TaskId),
     Worker(AgentId),
 }
@@ -213,10 +216,11 @@ pub(super) fn install(
     .init_resource::<Scene>()
     .init_resource::<Selection>()
     .init_resource::<Filter>()
+    .init_resource::<orchestrator::Evidence>()
     .insert_resource(Focus {
         point: None,
         home_point: Vec3::new(2.65, 0.0, -1.25),
-        home_distance: 25.0,
+        home_distance: 21.0,
         reduced_motion,
     })
     .add_systems(Startup, setup)
@@ -229,6 +233,8 @@ pub(super) fn install(
             focus_selection,
             camera::<{ Layer::Network as usize }>,
             draw_links,
+            orchestrator::project,
+            orchestrator::render,
             inspect,
         )
             .chain()
@@ -270,6 +276,7 @@ fn setup(
             Layer::Network,
             Camera {
                 is_active: layers.active == Layer::Network,
+                clear_color: ClearColorConfig::Custom(Color::srgb(0.008, 0.011, 0.023)),
                 ..default()
             },
             Camera3d::default(),
@@ -286,13 +293,14 @@ fn setup(
         layers.parent(Layer::Network),
         Mesh3d(meshes.add(Cuboid::new(25.0, 0.1, 68.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.038, 0.05, 0.082),
+            base_color: Color::srgb(0.018, 0.024, 0.041),
             unlit: true,
             ..default()
         })),
         Transform::from_xyz(0.0, -0.2, 23.0),
         Pickable::IGNORE,
     ));
+    orchestrator::spawn(&mut commands, &mut meshes, &mut materials, &layers);
     commands.spawn((
         UiTargetCamera(camera),
         StatusStrip,
@@ -431,6 +439,9 @@ fn navigate(
             Filter::Outcomes => Filter::All,
         };
     }
+    if keys.just_pressed(KeyCode::KeyO) {
+        selection.0 = Some(NodeKey::Orchestrator);
+    }
     let mut candidates: Vec<_> = if keys.just_pressed(KeyCode::KeyN) {
         scene
             .graph
@@ -497,7 +508,7 @@ fn layout(graph: &Graph) -> BTreeMap<NodeKey, Vec3> {
         let row = (slot / 16) as f32;
         positions.insert(
             NodeKey::Worker(id),
-            Vec3::new(x, 1.5 + row * 0.42, -3.2 - row * 1.45),
+            Vec3::new(x, 1.5 + row * 0.42, -4.15 - row * 1.45),
         );
     }
     positions
@@ -529,6 +540,7 @@ fn sync_scene(
     });
     for (&key, &location) in &positions {
         let (mesh, index, visible) = match key {
+            NodeKey::Orchestrator => continue,
             NodeKey::Task(id) => (
                 &palette.task,
                 lane(scene.graph.tasks[&id].state),
@@ -609,7 +621,7 @@ fn draw_links(
     nodes: Query<&Transform, With<NodeKey>>,
     mut gizmos: Gizmos,
 ) {
-    let grid = Color::srgb(0.075, 0.11, 0.19);
+    let grid = Color::srgb(0.042, 0.062, 0.105);
     for index in -6..=6 {
         let x = index as f32 * 2.0;
         gizmos.line(Vec3::new(x, -0.14, -11.0), Vec3::new(x, -0.14, 57.0), grid);
@@ -657,6 +669,7 @@ fn draw_links(
     }
     if let Some(key) = selection.0
         && match key {
+            NodeKey::Orchestrator => false,
             NodeKey::Task(id) => scene
                 .graph
                 .tasks
@@ -677,7 +690,13 @@ fn draw_links(
 }
 
 fn focus_selection(graph: Res<Scene>, selection: Res<Selection>, mut focus: ResMut<Focus>) {
-    focus.point = selection.0.and_then(|key| graph.layout.get(&key).copied());
+    focus.point = selection.0.and_then(|key| {
+        if key == NodeKey::Orchestrator {
+            Some(orchestrator::CENTER)
+        } else {
+            graph.layout.get(&key).copied()
+        }
+    });
 }
 
 pub(super) fn camera<const L: usize>(
@@ -772,7 +791,7 @@ fn inspect(
     selection: Res<Selection>,
     filter: Res<Filter>,
     (keys, layers): (Res<ButtonInput<KeyCode>>, Res<Layers>),
-    mut connection: ResMut<Connection>,
+    (mut connection, core): (ResMut<Connection>, Res<orchestrator::Evidence>),
     mut inspector: Single<&mut Text, (With<Inspector>, Without<StatusStrip>)>,
     mut status: Single<&mut Text, (With<StatusStrip>, Without<Inspector>)>,
 ) {
@@ -799,6 +818,7 @@ fn inspect(
         status.0 = headline;
     }
     let detail = match selection.0 {
+        Some(NodeKey::Orchestrator) => core.detail(&connection),
         Some(NodeKey::Task(id)) => {
             if let Some(task) = scene.graph.tasks.get(&id) {
                 let attempt = task.attempt.map_or_else(
@@ -836,7 +856,7 @@ fn inspect(
                 format!("WORKER  {id}\n{running} running / {seen} attributed tasks\nLatest observed attempts only")
             }
         }
-        None => "Pick a task or worker to inspect it.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
+        None => "Pick the orchestrator, a task, or a worker.\nCyan links: observed running attempts.\nDim links: selected attempt history.".into(),
     };
     let receipt = match connection.cancellation {
         Cancellation::Confirm(id, _) => format!(
@@ -873,7 +893,7 @@ fn inspect(
         .collect::<Vec<_>>()
         .join("\n");
     let text = format!(
-        "INSPECTOR\n\n{detail}\n\n{receipt}\n\nRECENT OBSERVATIONS\n{}\n\nResource measurements unavailable\n\nT - freeze / live   [ ] - step\nTab - filter   N - next task\nB - next worker   F - focus\nRight drag - orbit   R - reset\nWheel - zoom   WASD - pan",
+        "INSPECTOR\n\n{detail}\n\n{receipt}\n\nRECENT OBSERVATIONS\n{}\n\nT - freeze / live   [ ] - step\nTab - filter   N - next task\nO - orchestrator   B - next worker\nF - focus   R - reset\nRight drag - orbit\nWheel - zoom   WASD - pan",
         if activity.is_empty() {
             "No task observations at this sequence"
         } else {
