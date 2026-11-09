@@ -55,6 +55,25 @@ $authoring = Get-Content -LiteralPath 'packaging/windows/vespera.wxs' -Raw
 Set-Content -LiteralPath $rollbackAuthoring -Value $authoring.Replace('</Package>', $failureAction)
 Build-Msi $stage $version (Join-Path $fixture 'rollback-fault.msi') $rollbackAuthoring
 
+$bootstrapper = 'WixToolset.BootstrapperApplications.wixext'
+& "$fixture/tools/wix.exe" extension add -g "$bootstrapper/5.0.2"
+if ($LASTEXITCODE -ne 0) { throw 'Could not install the pinned WiX bootstrapper extension.' }
+$candidateMsi = Join-Path $fixture "$version.msi"
+$setup = Join-Path $fixture "Vespera-Setup-$version.exe"
+& "$fixture/tools/wix.exe" build -arch x64 -ext $bootstrapper -d "Stage=$stage" -d "Version=$version" `
+    -d "Msi=$candidateMsi" -o $setup 'packaging/windows/setup.wxs'
+if ($LASTEXITCODE -ne 0) { throw 'Setup bundle build failed.' }
+
+function Invoke-Setup($Operation, $Phase) {
+    $log = Join-Path $fixture "$Phase.log"
+    $setupArguments = '{0} /quiet /norestart /log "{1}"' -f $Operation, $log
+    $process = Start-Process -FilePath $setup -ArgumentList $setupArguments -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        Get-Content -LiteralPath $log -Tail 45 -ErrorAction Continue
+        throw "Setup phase $Phase returned $($process.ExitCode)."
+    }
+}
+
 function Invoke-Installer($Operation, $ProductVersion, $Phase, $Expected = 0) {
     $log = Join-Path $fixture "$Phase.log"
     $package = (Resolve-Path -LiteralPath (Join-Path $fixture "$ProductVersion.msi")).Path
@@ -119,7 +138,7 @@ if ($LASTEXITCODE -ne 0 -or $rollbackState.revision -ne 3) {
     throw 'Automatic rollback did not restore the prior installation.'
 }
 
-Invoke-Installer /i $version 'upgrade'
+Invoke-Setup /install 'setup-upgrade'
 Assert-Version $version
 foreach ($notice in 'LICENSE','THIRD_PARTY_NOTICES.md','licenses/FiraMono-LICENSE.txt','licenses/windows-x64-cargo-inventory.txt') {
     if ((Get-FileHash -LiteralPath (Join-Path $installed $notice)).Hash -ne
@@ -132,7 +151,7 @@ Assert-Version $version
 if (!(Select-String -Path "$fixture/downgrade.log" -Pattern 'A newer version of Vespera is already installed' -Quiet)) {
     throw 'The older package did not report the downgrade guard.'
 }
-Invoke-Installer /x $version 'remove-candidate'
+Invoke-Setup /uninstall 'setup-remove-candidate'
 Invoke-Installer /i $previous 'restore-previous'
 Assert-Version $previous
 if ((Get-FileHash -LiteralPath $world).Hash -ne $worldHash) {
@@ -144,4 +163,4 @@ if ($LASTEXITCODE -ne 0 -or $state.revision -ne 3) {
 }
 Invoke-Installer /x $previous 'remove-fixture'
 if (!(Test-Path -LiteralPath $world)) { throw 'Uninstall removed the fixture world.' }
-Write-Output "Verified per-user MSI install, automatic rollback after a failed upgrade, upgrade to $version, downgrade rejection, and restore of $previous with the committed world preserved."
+Write-Output "Verified per-user MSI install, automatic rollback after a failed upgrade, Setup bundle upgrade to $version, downgrade rejection, Setup removal, and restore of $previous with the committed world preserved."
