@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 14 — Address the local Windows certification findings
+
+The installed development MSIX completed an Ollama 0.40.15 task on `hermes3:8b` and preserved its task database after upgrade. The provider reported 103 completion tokens and confirmed the model was unloaded. A separate fixture verified restart at a committed workflow boundary, one follow-up request, and byte-identical world, task, workflow and memory databases after the upgrade.
+
+The first Windows App Certification Kit report returned **Warning**. It flagged the viewer's optional blocked-executable check and missing DPI declaration. The Store build now excludes the classic installer module and embeds PerMonitorV2. Windows Manifest Tool verified the embedded declaration. PE import inspection found one `CreateProcessW` import in the previous Store viewer and zero in the revised viewer. MakeAppx and the Store-feature graphics tests passed. [Store validation scope](MICROSOFT_STORE.md#development-installation)
+
 ## Milestone 14 — Validate MSIX publisher and package family together
 
 The MSIX packager now asks Windows to derive the package family from the supplied manifest name and publisher. It rejects a mismatched Partner Center family before the build or staging directory is created. The negative fixture refused a syntactically valid but incorrect family. A development build matched the family reported by Windows for the locally installed test app. Draft privacy text and the public issue tracker are recorded for owner review. [Store identity and listing](MICROSOFT_STORE.md)

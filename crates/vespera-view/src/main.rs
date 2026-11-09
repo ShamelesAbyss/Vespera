@@ -3,6 +3,7 @@ mod branding;
 mod desktop_agent;
 mod desktop_evidence;
 mod desktop_settings;
+#[cfg_attr(all(windows, feature = "store"), path = "store_update.rs")]
 mod desktop_update;
 mod desktop_workflow;
 mod experiment_scene;

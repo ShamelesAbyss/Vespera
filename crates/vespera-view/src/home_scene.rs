@@ -180,19 +180,23 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) -> std::proce
         Update,
         (actions, finish_open, readouts, update_motion, update_status).chain(),
     );
+    #[cfg(not(all(windows, feature = "store")))]
     let handoff = app.world().resource::<Updates>().handoff.clone();
     if app.run() != AppExit::Success {
         return std::process::ExitCode::FAILURE;
     }
-    let setup = handoff
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    if let Some(setup) = setup
-        && let Err(error) = setup.launch()
+    #[cfg(not(all(windows, feature = "store")))]
     {
-        eprintln!("Could not open verified Vespera Setup: {error}");
-        return std::process::ExitCode::FAILURE;
+        let setup = handoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(setup) = setup
+            && let Err(error) = setup.launch()
+        {
+            eprintln!("Could not open verified Vespera Setup: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
     }
     std::process::ExitCode::SUCCESS
 }

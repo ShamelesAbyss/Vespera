@@ -18,7 +18,7 @@ Also confirm that **Packages** accepts a Windows Desktop x64 MSIX for this draft
 
 ## Build an unsigned MSIX
 
-Use PowerShell 7 on a Windows x64 host with the pinned Rust toolchain, MSVC build tools and Windows SDK MakeAppx. Run from the repository root.
+Use PowerShell 7 on a Windows x64 host with the pinned Rust toolchain, MSVC build tools, Windows SDK MakeAppx and Manifest Tool. Run from the repository root.
 
 ```powershell
 ./scripts/package-windows-store.ps1 -Development -Version 1.0.0.0 -Output target/store-development
@@ -33,7 +33,8 @@ Each output directory must be new. Development uses a separate package family an
 | Runtime | Full-trust packaged desktop app at medium integrity, with `runFullTrust` and the Microsoft Visual C++ Desktop framework dependency. The MSIX does not bundle a driver or model server. |
 | Storage | WinRT `ApplicationData.LocalFolder` supplies the package's per-user LocalState. A package upgrade keeps the family and data. Copy backed-up data explicitly when migrating between the classic and Store distributions. Export important data before removing the MSIX. |
 | Provider access | The desktop uses its existing loopback provider declarations and credential references. The provider daemon is installed and managed independently. No firewall rule, AppContainer loopback exemption or external executable installation is part of the MSIX. |
-| Child processes | The package starts the viewer directly. Store builds use Microsoft Store updates and suppress Vespera's standalone Setup handoff. |
+| Child processes | The package starts the viewer directly. The standalone updater and its Setup handoff are excluded from the Store viewer at build time. |
+| Display scaling | The Store executable embeds a PerMonitorV2 DPI declaration. The packager checks the embedded Win32 manifest before creating the MSIX. |
 | Operating system | The manifest targets Windows Desktop x64 with a Windows 10 build 19041 API floor. Test the current supported Windows editions and drivers separately before declaring support. |
 
 The existing Windows MSI, Setup EXE and portable ZIP have their own release pipeline. Microsoft Store package signing occurs through the Store workflow and applies to the Store package. [MSIX container behavior](https://learn.microsoft.com/windows/msix/msix-containerization-overview) · [Desktop CRT framework](https://learn.microsoft.com/troubleshoot/developer/visualstudio/cpp/libraries/c-runtime-packages-desktop-bridge) · [MSIX signing](https://learn.microsoft.com/windows/msix/package/signing-package-overview)
@@ -46,7 +47,11 @@ Install using `Add-AppxPackage`, open **Vespera Nexus Studio (Development)** fro
 
 The Windows development rehearsal built and unpacked both versions with SDK 10.0.26100.0. SignTool signed isolated copies with a temporary non-exportable certificate. Windows installed both versions and started the branded native viewer from the package identity. A fresh profile committed a Living World tick, discovered an Ollama-protocol loopback fixture, registered two agents, and completed a two-agent workflow. It recalled the first agent's owned response in a later provider request. Swarm showed two agents and three observed links from the committed journal. The upgrade reopened world revision 1 and preserved the world, task, workflow and memory database bytes. The development package and certificate were removed after each run.
 
-The clean-source unsigned packages were built at `399c2d015eae6aac506dcd02624a6caba258085c`. Both had 14 payload files verified through MakeAppx and the upgrade payload matched the installed test payload. The internal review ZIP contains the development package, listing tile, screenshot, CycloneDX 1.6 SBOM and collected notices. OSV returned zero matches for the 429 exact Cargo versions queried. Live packaged model inference, controlled-interruption recovery on MSIX, Windows App Certification Kit results and the real Store identity remain separate qualification gates.
+Two additional installed rehearsals exercised real inference and workflow recovery. Ollama 0.40.15 on the Windows test host ran `hermes3:8b` through the packaged viewer. The completed task reported 103 output tokens and the provider confirmed the model was absent after cleanup. A controlled loopback fixture then stopped the viewer after its first workflow attempt committed. Restart continued the same workflow with the original committed attempt and one new provider request. Upgrade again preserved the world, tasks, workflow and memory bytes.
+
+The first Windows App Certification Kit report returned **Warning**. The DPI check could not verify the viewer and the optional blocked-executables check flagged its process-launch import. The next build embeds PerMonitorV2 and excludes the standalone updater. Windows Manifest Tool extracted the declaration and PE import inspection confirmed that `CreateProcessW` was absent. Microsoft Store certification and the actual Partner Center identity remain open.
+
+The original clean-source unsigned packages were built at `399c2d015eae6aac506dcd02624a6caba258085c`. Both had 14 payload files verified through MakeAppx and the upgrade payload matched the installed test payload. The internal review ZIP contains the development package, listing tile, screenshot, CycloneDX 1.6 SBOM and collected notices. OSV returned zero matches for the 429 exact Cargo versions queried.
 
 | Internal artifact | SHA-256 |
 | --- | --- |

@@ -14,10 +14,26 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RC");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory"));
     fs::copy(icon, out.join("vespera.ico")).expect("stage the official Windows icon");
-    fs::write(out.join("vespera.rc"), "1 ICON \"vespera.ico\"\n")
-        .expect("write Windows resource script");
     let target = env::var("TARGET").expect("Cargo build target");
-    let (mut command, resource) = if target.ends_with("-msvc") {
+    let msvc = target.ends_with("-msvc");
+    let mut resources = String::from("1 ICON \"vespera.ico\"\n");
+    if env::var_os("CARGO_FEATURE_STORE").is_some() {
+        let manifest = "windows-store.manifest";
+        println!("cargo:rerun-if-changed={manifest}");
+        let staged = out.join(manifest);
+        fs::copy(manifest, &staged).expect("stage the Windows Store application manifest");
+        if msvc {
+            println!("cargo:rustc-link-arg-bin=vespera-view=/MANIFEST:EMBED");
+            println!(
+                "cargo:rustc-link-arg-bin=vespera-view=/MANIFESTINPUT:{}",
+                staged.display()
+            );
+        } else {
+            resources.push_str("1 24 \"windows-store.manifest\"\n");
+        }
+    }
+    fs::write(out.join("vespera.rc"), resources).expect("write Windows resource script");
+    let (mut command, resource) = if msvc {
         let command = env::var_os("RC").map_or_else(
             || {
                 cc::windows_registry::find_tool(&target, "rc.exe")
@@ -31,7 +47,7 @@ fn main() {
         let command = Command::new(env::var_os("RC").unwrap_or_else(|| "windres".into()));
         (command, "vespera-icon.o")
     };
-    if target.ends_with("-msvc") {
+    if msvc {
         command.args(["/nologo", "/fo", resource, "vespera.rc"]);
     } else {
         command.args(["-O", "coff", "-i", "vespera.rc", "-o", resource]);

@@ -92,6 +92,10 @@ $makeAppx = Get-ChildItem -LiteralPath $sdkBin -Directory |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
     Select-Object -First 1
 if (!$makeAppx) { throw 'Install the Windows SDK with x64 MakeAppx.' }
+$manifestTool = Join-Path (Split-Path -Parent $makeAppx) 'mt.exe'
+if (!(Test-Path -LiteralPath $manifestTool -PathType Leaf)) {
+    throw 'Install the Windows SDK with x64 Manifest Tool.'
+}
 
 Push-Location -LiteralPath $root
 try {
@@ -129,7 +133,16 @@ try {
     $payload = Join-Path $outputPath 'payload'
     $brand = Join-Path $payload 'Branding'
     New-Item -ItemType Directory -Path $brand,(Join-Path $payload 'bin'),(Join-Path $payload 'licenses'),(Join-Path $payload 'config'),(Join-Path $payload 'assets/world/space-base') | Out-Null
-    Copy-Item -LiteralPath $built.executable -Destination (Join-Path $payload 'bin/vespera-view.exe')
+    $viewer = Join-Path $payload 'bin/vespera-view.exe'
+    Copy-Item -LiteralPath $built.executable -Destination $viewer
+    $embeddedManifest = Join-Path $outputPath 'viewer-win32.manifest'
+    & $manifestTool "-inputresource:$viewer;#1" "-out:$embeddedManifest"
+    if ($LASTEXITCODE -ne 0) { throw 'The Store viewer has no readable Win32 application manifest.' }
+    [xml]$viewerManifest = Get-Content -LiteralPath $embeddedManifest -Raw
+    $dpi = $viewerManifest.SelectSingleNode("//*[local-name()='dpiAwareness' and namespace-uri()='http://schemas.microsoft.com/SMI/2016/WindowsSettings']")
+    if (!$dpi -or $dpi.InnerText.Trim() -cne 'PerMonitorV2') {
+        throw 'The Store viewer must declare PerMonitorV2 DPI awareness.'
+    }
     Copy-Item -LiteralPath 'LICENSE','THIRD_PARTY_NOTICES.md' -Destination $payload
     Copy-Item -LiteralPath 'licenses/FiraMono-LICENSE.txt','licenses/windows-x64-cargo-inventory.txt' -Destination (Join-Path $payload 'licenses')
     Copy-Item -LiteralPath 'assets/world/ATTRIBUTION.md' -Destination (Join-Path $payload 'assets/world')
@@ -196,7 +209,7 @@ try {
         packageFamilyName = $family
         expectedPackageFamilyName = $identity.packageFamilyName
         packageSha256 = $hash
-        viewerSha256 = (Get-FileHash -LiteralPath (Join-Path $payload 'bin/vespera-view.exe')).Hash.ToLowerInvariant()
+        viewerSha256 = (Get-FileHash -LiteralPath $viewer).Hash.ToLowerInvariant()
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputPath 'build-evidence.json')
     Write-Output "$hash  $package"
 } finally { Pop-Location }
