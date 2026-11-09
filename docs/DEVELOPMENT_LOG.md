@@ -1,5 +1,11 @@
 # Development log
 
+## Milestones 13 and 14 — Qualify the desktop experiment package
+
+The optimized package at `353857889c989ef0d02033d1d9cf438e24839230` passed archive and installer payload verification, native Home launch and clean close. The packaged CLI validated the bundled configuration, ran doctor, and replayed the builder comparison's six arms. A separate repeat matched every deterministic outcome and verified that the runner refused to overwrite an existing evidence directory. The source passed 289 workspace tests and doctests, 56 optimized graphics tests, strict graphics Clippy, formatting and strict workspace rustdoc. The native foreground walkthrough remains open. [Package evidence](RELEASE.md#windows-x64-candidate-with-desktop-world-experiments)
+
+The hosted optimized installer lifecycle passed for the earlier `50a73a8` desktop hold checkpoint. The current experiment source has its own hosted installer run. [Hosted checksums](RELEASE.md#hosted-optimized-windows-installer-qualification)
+
 ## Milestones 12 and 13 — Run starter-world comparisons from the desktop
 
 Home opens the World Experiments panel with F8. Forager and builder suspension use the same paired-world runner as the CLI. Each run stores a versioned report and six replay databases under a new directory. The panel reopens the newest completed report, and partial directories without a published report stay available for inspection.

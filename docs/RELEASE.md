@@ -189,6 +189,19 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
 
+### Windows x64 candidate with desktop world experiments
+
+The unsigned `0.1.2` build from `353857889c989ef0d02033d1d9cf438e24839230` verified 49 portable manifest files, 13 administrative MSI payload files and the exact MSI embedded in Setup. Both installers report an unsigned status.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `f526b9c8abafbbb6834f352f344601bfad565b7c6a6ccda45f8213a2fd459983` |
+| Standalone MSI | `6051ab4b25de7c3017a244a32482094392be94a02f74979285eb65bb2fa0436c` |
+| Setup EXE | `791270126387133770f38cb96e1dac0ba13a77e9384ce1dc31c4e39212b958a1` |
+| Internal review bundle | `c89318283dfed613ff585f255b4bc045d61b58b9ed5d3662a1f6f30217b7ed0d` |
+
+The launcher opened a fresh Home window from a different working directory and the viewer closed cleanly. The packaged CLI passed sample configuration validation and doctor, then ran and replayed all six builder-comparison arms. The Bevy regression separately verified the desktop report, replay provenance and isolation from the live world. Foreground activation prevented the F8 walkthrough. CycloneDX schema validation passed and OSV returned zero matches for the 429 exact crates.io versions queried. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42687048820) · [Exact-source installer run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42687091668)
+
 ### Windows x64 candidate with desktop messaging
 
 The unsigned `0.1.2` build from `33ab12bfc3532b1a695600b6f7efeca950475306` verified 49 portable manifest files, 13 administrative MSI payload files, and the exact MSI embedded in Setup.
@@ -276,6 +289,14 @@ The same disposable Windows lifecycle passed from the optimized `0.1.1` baseline
 | Prior MSI | `1c0bffa575dac7739f6351afe35c79ae19aa9e851431146132e1fe8dd08f1d22` |
 | Candidate MSI | `360c610ac55af562fbdcae4542ee967e7f0db4db9e4e6b7a0ead4983811ab908` |
 | Candidate Setup | `d47f85bdf9658c17e0ab60e107d71a50ed08fc2547f6c371fc643c2ec19c816a` |
+
+The hosted lifecycle also passed for the desktop hold source `50a73a819ad232f5464c0c8586b2fdde94c9e13d`, using the same optimized `0.1.1` baseline revision. The runner verified clean Setup installation, an injected failed-upgrade rollback, the subsequent successful upgrade, downgrade rejection, removal and restore with the committed world preserved. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42682678512/job/129381132289)
+
+| Desktop hold hosted artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `c95d4039fc691b2443e1acd1049fb03e8b2b7cda924b6601e38a4f3524a61659` |
+| Candidate MSI | `dac571436393030d0062a53723496fe2989f804345771e71ba7e69ff5c48ebf8` |
+| Candidate Setup | `55ab709edb74d07c529bd352440549c86d6f70992d83aa5d3cef4ce3da9520d5` |
 
 ### Windows x64 candidate with workflow editing and durable task audit
 
