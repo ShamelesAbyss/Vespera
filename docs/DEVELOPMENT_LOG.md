@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-08 — Swarm and concurrent local inference on Windows
+
+The native Swarm build from `fdd117d24a8019a3c85950f99ac0f03ff3a680a1` ran a 600-update focused overview sample after 120 warmup updates at 1200×800 using Vulkan on the RTX 4070 Laptop GPU. The three-agent journal was synthetic. At the same time an isolated loopback Ollama 0.40.15 instance generated 1,400 tokens with the fully GPU-resident `hermes3:8b` model at 2,048 context. Provider evaluation ran from `07:40:57.843Z` through `07:41:35.079Z`. The view's sample was collected at `07:41:08.826Z`, within that interval. An initial sequential launch attempt missed overlap and was discarded.
+
+Application update intervals during the overlapping run were 9.57 ms median, 10.85 ms p95, 13.23 ms p99 and 21.82 ms maximum. Swarm used 520 MiB process resident memory. One device-wide sample showed 6,619 MiB used of 8,188 MiB at 96% GPU utilization. The provider reported 4,750,049,279 bytes of model VRAM. This verifies one model and workload on one host. It does not establish performance for other model sizes or GPUs. The model was unloaded and the isolated server stopped after the test.
+
+The README now shows the native overview and the close-up of a moving synthetic message, with both captures identified as fixtures. Local packages include the two referenced images. The main-menu updater remains open.
+
 ## 2026-11-08 — Native Swarm message transit capture
 
 Checkpoint `fdd117d24a8019a3c85950f99ac0f03ff3a680a1` separates the controls and color legend from the provenance inspector. The first Windows capture exposed missing bullet glyphs in the bundled font, so the final panel uses plain separators. The opt-in fixture writer commits a synthetic message on Enter into its own new scratch journal. Standalone Swarm can capture the first observed transit at its midpoint.

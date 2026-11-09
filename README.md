@@ -56,6 +56,17 @@ An agent keeps its identity when you change its model. The registry records whic
 </details>
 
 <details>
+<summary>Explore three agents in the Swarm Foundry</summary>
+
+![Native Swarm Foundry overview showing three agent constructs and colored evidence conduits](assets/screenshots/swarm-foundry.png)
+
+![Swarm close-up showing an amber message transit and its matching observation in the inspector](assets/screenshots/swarm-transit.png)
+
+*Captured in the Windows app using a labeled synthetic journal. The close-up shows a newly committed fixture message at the midpoint of its conduit. The inspector shows the matching sequence and peer.* [Swarm controls and fixture](docs/CLI.md#swarm-view)
+
+</details>
+
+<details>
 <summary>See a completed two-agent desktop workflow</summary>
 
 ![A completed draft and delegated review in the Vespera desktop](assets/screenshots/desktop-workflow.jpg)
@@ -133,7 +144,7 @@ cargo run --locked -p vespera-view --features graphics --bin vespera-view
 
 For an authenticated loopback server, choose **Credential reference** to use a launch environment variable. On Windows, **Windows credential** can read a generic credential provisioned in Windows Credential Manager for that adapter and endpoint. [Provider setup](docs/CLI.md#discover-local-models-in-the-desktop)
 
-Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. Grant delegation to a coordinator, then use **G** for **Draft + review** or **C** to author and preview a workflow with two to six sequential steps. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow builder](docs/CLI.md#author-a-sequential-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
+Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. Grant delegation to a coordinator, then use **G** for **Draft + review** or **C** to author and preview a workflow with two to six steps and explicit dependencies. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow builder](docs/CLI.md#author-a-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 
 To explore the island, choose **Create or resume world** on Home. Right-drag to orbit, scroll to zoom, and use **WASD** to pan. Click an entity to inspect it. **F** focuses the camera and **R** returns to the overview. **Space** commits one tick and **P** toggles playback. [Living World controls and replay](docs/WORLD_VISUALS.md)
 
