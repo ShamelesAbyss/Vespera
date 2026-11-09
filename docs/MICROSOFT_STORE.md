@@ -44,7 +44,15 @@ Use an isolated Windows test machine or disposable test user with the required x
 
 Install using `Add-AppxPackage`, open **Vespera Nexus Studio (Development)** from Start, and check the branded Home frame. Exercise provider discovery, inference, agent and workflow execution, retained memory, simulation, close and restart. Upgrade using the newer MSIX and confirm the same package family, retained revision, settings and owned records. Run the Windows App Certification Kit on the candidate and retain its report separately from functional evidence.
 
-The Windows development rehearsal built and unpacked both versions with SDK 10.0.26100.0. SignTool signed isolated copies with a temporary non-exportable certificate. Windows installed both versions and started the branded native viewer from the package identity. The first version committed a Living World tick to LocalState. The upgrade reopened the world at revision 1 with identical database bytes. A separate rehearsal discovered an Ollama-protocol loopback fixture, registered a model and agent, and retained a completed task whose database bytes also survived upgrade. The fixture verifies the packaged network and runtime paths. Live model inference, Windows App Certification Kit results and the real Store identity remain separate qualification gates. The development installation and certificate were removed after each run.
+The Windows development rehearsal built and unpacked both versions with SDK 10.0.26100.0. SignTool signed isolated copies with a temporary non-exportable certificate. Windows installed both versions and started the branded native viewer from the package identity. A fresh profile committed a Living World tick, discovered an Ollama-protocol loopback fixture, registered two agents, and completed a two-agent workflow. It recalled the first agent's owned response in a later provider request. Swarm showed two agents and three observed links from the committed journal. The upgrade reopened world revision 1 and preserved the world, task, workflow and memory database bytes. The development package and certificate were removed after each run.
+
+The clean-source unsigned packages were built at `399c2d015eae6aac506dcd02624a6caba258085c`. Both had 14 payload files verified through MakeAppx and the upgrade payload matched the installed test payload. The internal review ZIP contains the development package, listing tile, screenshot, CycloneDX 1.6 SBOM and collected notices. OSV returned zero matches for the 429 exact Cargo versions queried. Live packaged model inference, controlled-interruption recovery on MSIX, Windows App Certification Kit results and the real Store identity remain separate qualification gates.
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Development MSIX `1.0.0.0` | `e023014df87ae78703928cac8cc13acef07955e389c2768c6c431165d93f183d` |
+| Development MSIX `1.0.1.0` | `b66d5bfabfb3105125ccb11956e26af0d4023483264f72dfa3ff2356c46b8d0f` |
+| Development review ZIP | `0702bc40f95a4eac46c29cd61009ffbba863798de6a58ee96a0c4e321c55d5b1` |
 
 ## Draft Store listing
 
