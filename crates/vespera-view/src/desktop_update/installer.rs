@@ -82,7 +82,10 @@ fn approved_redirect(url: &reqwest::Url) -> bool {
         )
 }
 
-pub(super) async fn prepare(candidate: Candidate) -> Result<VerifiedSetup, &'static str> {
+pub(super) async fn prepare(
+    candidate: Candidate,
+    signer_pins: &str,
+) -> Result<VerifiedSetup, &'static str> {
     let client = reqwest::Client::builder()
         .https_only(true)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -129,10 +132,14 @@ pub(super) async fn prepare(candidate: Candidate) -> Result<VerifiedSetup, &'sta
             .map_err(|_| "Could not write the staged installer.")?;
     }
     drop(file);
-    verify(staging, &candidate)
+    verify(staging, &candidate, signer_pins)
 }
 
-fn verify(staging: Staging, candidate: &Candidate) -> Result<VerifiedSetup, &'static str> {
+fn verify(
+    staging: Staging,
+    candidate: &Candidate,
+    signer_pins: &str,
+) -> Result<VerifiedSetup, &'static str> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(windows)]
@@ -144,7 +151,7 @@ fn verify(staging: Staging, candidate: &Candidate) -> Result<VerifiedSetup, &'st
         .open(&staging.file)
         .map_err(|_| "Could not lock the staged installer for verification.")?;
     verify_digest(&mut locked, candidate)?;
-    verify_signature(&staging.file)?;
+    verify_signature(&staging.file, signer_pins)?;
     Ok(VerifiedSetup {
         _locked: locked,
         staging,
@@ -180,7 +187,7 @@ fn verify_digest(mut reader: impl Read, candidate: &Candidate) -> Result<(), &'s
 }
 
 #[cfg(windows)]
-fn verify_signature(path: &Path) -> Result<(), &'static str> {
+fn verify_signature(path: &Path, signer_pins: &str) -> Result<(), &'static str> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     use std::time::Instant;
@@ -191,9 +198,18 @@ fn verify_signature(path: &Path) -> Result<(), &'static str> {
         .join("System32/WindowsPowerShell/v1.0");
     let mut child = Command::new(powershell_home.join("powershell.exe"))
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-            "$s = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $env:VESPERA_SETUP_VERIFY; if ($s.Status -eq 'Valid' -and $s.SignatureType -eq 'Authenticode') { exit 0 }; exit 1"])
+            r#"
+            $ErrorActionPreference = 'Stop'
+            $s = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:VESPERA_SETUP_VERIFY
+            if ($s.Status -ne 'Valid' -or $s.SignatureType -ne 'Authenticode' -or !$s.SignerCertificate) { exit 1 }
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            $fingerprint = [System.BitConverter]::ToString($sha256.ComputeHash($s.SignerCertificate.RawData)).Replace('-', '')
+            if ($env:VESPERA_SETUP_SIGNERS.Split(',') -contains $fingerprint) { exit 0 }
+            exit 2
+            "#])
         .env("PSModulePath", powershell_home.join("Modules"))
         .env("VESPERA_SETUP_VERIFY", path)
+        .env("VESPERA_SETUP_SIGNERS", signer_pins)
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .spawn().map_err(|_| "Windows signature verification is unavailable.")?;
@@ -201,6 +217,9 @@ fn verify_signature(path: &Path) -> Result<(), &'static str> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) if status.code() == Some(2) => {
+                return Err("Setup was not signed by an approved Vespera publisher.");
+            }
             Ok(Some(_)) => return Err("Setup does not have a trusted Windows code signature."),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
             _ => {
@@ -213,13 +232,16 @@ fn verify_signature(path: &Path) -> Result<(), &'static str> {
 }
 
 #[cfg(not(windows))]
-fn verify_signature(_: &Path) -> Result<(), &'static str> {
+fn verify_signature(_: &Path, _: &str) -> Result<(), &'static str> {
     Err("Windows signature verification is unavailable on this platform.")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    const UNRELATED_PIN: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
     #[test]
     fn rejects_a_truncated_or_modified_payload_and_unapproved_redirects() {
@@ -256,7 +278,7 @@ mod tests {
         let stage = Staging::new().unwrap();
         fs::write(&stage.file, b"unsigned setup fixture").unwrap();
         assert_eq!(
-            verify_signature(&stage.file),
+            verify_signature(&stage.file, UNRELATED_PIN),
             Err("Setup does not have a trusted Windows code signature.")
         );
     }
@@ -264,7 +286,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "downloads a 67 MB signed GitHub fixture and never runs it"]
-    fn downloads_and_verifies_a_signed_github_release_asset() {
+    fn rejects_a_signed_github_release_asset_from_an_unrelated_publisher() {
         // A pinned Git for Windows release exercises the real GitHub CDN redirect
         // and Windows trust check while the Vespera channel has no signed asset.
         let candidate = Candidate {
@@ -277,11 +299,10 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let setup = runtime.block_on(prepare(candidate)).unwrap();
-        let path = setup.staging.file.clone();
-        assert!(path.is_file());
-        drop(setup);
-        assert!(!path.exists());
+        assert_eq!(
+            runtime.block_on(prepare(candidate, UNRELATED_PIN)).err(),
+            Some("Setup was not signed by an approved Vespera publisher.")
+        );
     }
 
     #[cfg(windows)]
@@ -336,6 +357,9 @@ mod tests {
         };
         let stage = Staging::new().unwrap();
         fs::write(&stage.file, &bytes).unwrap();
-        verify(stage, &candidate).expect("trusted signature and digest must verify")
+        let fingerprint = std::env::var("VESPERA_TEST_SIGNER_SHA256")
+            .expect("set the signed fixture certificate's SHA-256 fingerprint");
+        verify(stage, &candidate, &fingerprint)
+            .expect("trusted pinned signature and digest must verify")
     }
 }

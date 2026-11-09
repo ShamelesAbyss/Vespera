@@ -11,16 +11,18 @@ must be immutable, use a `vMAJOR.MINOR.PATCH` tag, and provide an uploaded
 check uses HTTPS, runs off the UI thread, and reports a missing release or
 channel error on Home.
 
-The standard per-user Windows installation can select **Download update**.
+The standard per-user Windows installation can select **Download update** when
+the build contains approved signer fingerprints.
 Vespera downloads the Setup bundle into a new temporary directory and checks
 its exact published size and SHA-256. Windows must also recognize a valid
-embedded Authenticode signature. If preparation fails, use **Download update**
+embedded Authenticode signature from a configured Vespera signer. If
+preparation fails, use **Download update**
 again to retry or **Check for updates** to refresh the release. After
 verification, **Close and open Setup**
 uses the ordinary desktop shutdown flow before opening the interactive Setup
 window. Complete the update in Setup. Vespera preserves its separate user data
-directory through the standard installer. Portable and source builds show
-availability and can obtain the package from GitHub Releases.
+directory through the standard installer. Portable builds and builds without
+signer fingerprints show availability and use manual installation.
 
 For production verification, publish the approved signed Windows x64 Setup
 bundle as the exact versioned asset in a stable immutable GitHub release.
@@ -119,6 +121,26 @@ revision after recovery. The rehearsal uses an unsigned bundle and runs
 independently of the production update channel. [Hosted validation](https://github.com/ShamelesAbyss/Vespera/actions/runs/42583645819)
 
 ### Sign the Windows installer
+
+Before building the updater baseline, set `VESPERA_UPDATE_SIGNER_SHA256` in the
+build environment to the approved signing certificate's SHA-256 fingerprint.
+Hash the certificate's DER bytes, rather than using Windows' SHA-1 thumbprint.
+The value is public and is embedded at compile time. For a planned rotation,
+ship a baseline containing both fingerprints before switching signers. Separate
+64-digit hexadecimal fingerprints with commas and omit spaces. Builds with an
+unset or malformed value retain update discovery and require manual installation.
+
+```powershell
+$certificate = (Get-AuthenticodeSignature -LiteralPath $approvedSignedFixture).SignerCertificate
+if (!$certificate) { throw 'Expected the approved signer certificate.' }
+$env:VESPERA_UPDATE_SIGNER_SHA256 = [Convert]::ToHexString(
+    [Security.Cryptography.SHA256]::HashData($certificate.RawData)
+)
+```
+
+Use an independently approved certificate or signed fixture to establish the
+fingerprint. A release asset under verification cannot establish its own
+publisher identity.
 
 Use a fresh output directory and the approved signing service. If the MSI is
 distributed separately, sign it before building Setup so the standalone MSI

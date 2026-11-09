@@ -147,8 +147,10 @@ For an authenticated loopback server, choose **Credential reference** to use a l
 Home opens Hardware and a starter world before any provider is configured. **M** on Home toggles the saved reduced-motion preference. **F5** returns Home and **F6** opens Models & Providers. Grant delegation to a coordinator, then use **G** for **Draft + review** or **C** to author and preview a workflow with two to six steps and explicit dependencies. **F7** opens retained workflow checkpoints and can focus Swarm on one run. [Desktop walkthrough](docs/CLI.md#open-the-native-desktop) · [Workflow builder](docs/CLI.md#author-a-desktop-workflow) · [Workflow history](docs/CLI.md#browse-retained-desktop-workflows)
 
 On Windows x64, **Check for updates** on Home looks for a newer eligible
-official release. A standard per-user installation can download and verify
-Setup, then open it after Vespera shuts down. [Update channel requirements](docs/RELEASE.md#desktop-update-channel)
+official release. A standard per-user installation with an approved signer
+fingerprint can download and verify Setup, then open it after Vespera shuts
+down. Development builds without a fingerprint use manual installation.
+[Update channel requirements](docs/RELEASE.md#desktop-update-channel)
 
 To explore the island, choose **Create or resume world** on Home. Right-drag to orbit, scroll to zoom, and use **WASD** to pan. Click an entity to inspect it. **F** focuses the camera and **R** returns to the overview. **Space** commits one tick and **P** toggles playback. [Living World controls and replay](docs/WORLD_VISUALS.md)
 

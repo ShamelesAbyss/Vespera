@@ -1,5 +1,9 @@
 # Development log
 
+## Windows updater publisher identity
+
+Windows update preparation now requires a valid embedded Authenticode signature whose certificate SHA-256 matches a build-time Vespera signer fingerprint. Multiple approved fingerprints support planned rotation. Unsigned development builds still discover releases and can be installed manually. Windows fixture tests accepted the pinned Microsoft SDK executable, exercised its staging handoff, and rejected an unrelated trusted GitHub release executable. The existing unsigned `v0.1.2` draft remains pinned to its earlier qualification source. Build the public baseline from the hardened source after signer and distribution review.
+
 ## 2026-11-09 — First Windows x64 release candidate staged
 
 Rebuilt source `f818bb187f1b759b846bd6bb611e3c4f232aafad` from a fresh clone with locked Rust dependencies and WiX 5.0.2. Hosted CI passed. A fresh portable extraction verified 47 manifest entries, administrative MSI extraction matched 13 payload files, and the Setup bundle contained the exact standalone MSI. The unsigned Setup installed `0.1.2` per user. The installed CLI, native launcher, desktop and Start Menu shortcuts, and retained profile hashes passed local checks.

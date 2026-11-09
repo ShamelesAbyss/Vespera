@@ -32,6 +32,7 @@ pub(super) struct Updates {
     candidate: Option<Candidate>,
     prepared: Option<installer::VerifiedSetup>,
     installed: bool,
+    signer_pins: Option<&'static str>,
     pub handoff: Handoff,
     pub status: String,
 }
@@ -44,10 +45,18 @@ impl Default for Updates {
             candidate: None,
             prepared: None,
             installed: installer::standard_installation(),
+            signer_pins: valid_signer_pins(option_env!("VESPERA_UPDATE_SIGNER_SHA256")),
             handoff: Handoff::default(),
             status: format!("Running Vespera {}", env!("CARGO_PKG_VERSION")),
         }
     }
+}
+
+fn valid_signer_pins(pins: Option<&str>) -> Option<&str> {
+    pins.filter(|pins| {
+        pins.split(',')
+            .all(|pin| pin.len() == 64 && pin.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    })
 }
 
 impl Updates {
@@ -111,14 +120,14 @@ impl Updates {
         self.pending = None;
         self.status = match result {
             Ok(Some(candidate)) => {
-                let status = if self.installed {
+                let status = if self.installed && self.signer_pins.is_some() {
                     format!(
                         "Vespera {} is available. Select Download update to prepare Setup.",
                         candidate.version
                     )
                 } else {
                     format!(
-                        "Vespera {} is available. Portable builds can get Setup from GitHub Releases.",
+                        "Vespera {} is available. This build requires manual installation from GitHub Releases.",
                         candidate.version
                     )
                 };
@@ -136,7 +145,11 @@ impl Updates {
     pub(super) fn install_label(&self) -> Option<&'static str> {
         if self.prepared.is_some() {
             Some("Close and open Setup")
-        } else if self.installed && self.candidate.is_some() && self.preparing.is_none() {
+        } else if self.installed
+            && self.signer_pins.is_some()
+            && self.candidate.is_some()
+            && self.preparing.is_none()
+        {
             Some("Download update")
         } else {
             None
@@ -156,6 +169,9 @@ impl Updates {
         if !self.installed || self.preparing.is_some() {
             return false;
         }
+        let Some(signer_pins) = self.signer_pins else {
+            return false;
+        };
         let Some(candidate) = self.candidate.clone() else {
             return false;
         };
@@ -170,7 +186,7 @@ impl Updates {
                 .enable_all()
                 .build()
                 .map_err(|_| "Could not start the installer download.")
-                .and_then(|runtime| runtime.block_on(installer::prepare(candidate)));
+                .and_then(|runtime| runtime.block_on(installer::prepare(candidate, signer_pins)));
             let _ = send.send(result);
         });
         false
@@ -284,10 +300,37 @@ fn select_candidate(release: &Value, current: &str) -> Check {
 mod tests {
     use super::*;
 
+    const TEST_PIN: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn unpinned_build_cannot_prepare_an_installer() {
+        let mut updates = Updates {
+            installed: true,
+            signer_pins: None,
+            candidate: Some(Candidate {
+                version: "0.2.0".into(),
+                url: String::new(),
+                bytes: 3,
+                sha256: String::new(),
+            }),
+            ..Updates::default()
+        };
+        assert_eq!(updates.install_label(), None);
+        assert!(!updates.install());
+        assert!(updates.preparing.is_none());
+        assert_eq!(valid_signer_pins(Some(TEST_PIN)), Some(TEST_PIN));
+        let rotation = format!("{TEST_PIN},{}", "A".repeat(64));
+        assert_eq!(valid_signer_pins(Some(&rotation)), Some(rotation.as_str()));
+        assert_eq!(valid_signer_pins(Some("")), None);
+        assert_eq!(valid_signer_pins(Some(&format!("{TEST_PIN},"))), None);
+        assert_eq!(valid_signer_pins(Some(&"x".repeat(64))), None);
+    }
+
     #[test]
     fn failed_setup_download_can_be_retried_without_checking_again() {
         let mut updates = Updates {
             installed: true,
+            signer_pins: Some(TEST_PIN),
             candidate: Some(Candidate {
                 version: "0.2.0".into(),
                 url: String::new(),
