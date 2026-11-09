@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 13 — Browse and replay retained world comparisons
+
+Experiments now opens the newest saved comparison and navigates to older and newer reports. The selected seed and arm reconstruct their committed world revision in the panel. The worker checks the arm's fixed filename, simulation values, seed and advance event against the report. A damaged report can be skipped while browsing.
+
+The optimized Windows Bevy regression ran two comparisons, reopened the panel, browsed past a damaged report, verified all six arm replays, and rejected altered seed, event and path references. The test verified that the trial databases and live world retained identical bytes. All 290 workspace tests and doctests, 57 optimized graphics tests, strict Clippy with graphics and formatting passed. The interactive foreground walkthrough and 3D trial rendering remain open. [Desktop experiment controls](CLI.md#compare-two-world-policies)
+
 ## Milestone 14 — Rehearse preservation of the world, memory and inbox
 
 The disposable installer test at `42288688358e76735f14d0607999b0aa3eb930ff` writes a world, an agent-owned memory and a local inbox message through the prior installed CLI. It checks the original bytes after rollback, upgrade, downgrade rejection, uninstall and reinstall. It also reads the retained records through the installed CLI, checks inbox isolation, and verifies backup and restore of the memory record after upgrade. The PowerShell syntax check and isolated fixture checks passed against the packaged CLI at `d7de4c91fceee41dd7352a52551ed75de792e244`, including a negative hash check. [Expanded hosted lifecycle](https://github.com/ShamelesAbyss/Vespera/actions/runs/42691367834)

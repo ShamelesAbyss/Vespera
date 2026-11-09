@@ -465,10 +465,15 @@ In the native desktop, open **World experiments** from Home or press **F8**.
 Choose forager or builder suspension. The desktop runs 60 ticks per arm over
 three paired seeds using the starter world and a five-shelter target. The
 comparison saves a report and six replay databases under `experiments` in
-the desktop data directory. The panel reopens the latest completed report
-and displays the target hits and each seed's shelter counts. The live
-Living World database is separate. Use the CLI for a custom specification
-or trial settings.
+the desktop data directory. The panel opens the newest saved report and
+shows target hits and shelter counts by seed. Use **Older report** and
+**Newer report** (**3** and **4**) to browse earlier runs. Use **Next seed**
+(**5**) to select a pair, then **Replay baseline** or **Replay intervention**
+(**6** or **7**) to reconstruct that trial's committed revision in the panel.
+The readout shows the seed, tick, revision, active residents, shelters, shared
+stock and recorded advance event. A missing or mismatched replay database
+produces an error. Replay leaves the experiment files and the live Living
+World unchanged. Use the CLI for a custom specification or trial settings.
 
 ```powershell
 cargo run --locked -p vespera-app -- experiment-world --spec config/world.example.json --evidence-dir target/world-policy-evidence --ticks 60 --seeds 3 --suspend-role forager --target-shelters 5 > target/world-policy-report.json
