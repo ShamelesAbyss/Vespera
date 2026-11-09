@@ -201,6 +201,10 @@ enum OperatorRequest<'a> {
         after: Option<BrokerEventCursor>,
         limit: u32,
     },
+    ReplayTaskAudit {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 #[derive(Serialize)]
@@ -274,6 +278,20 @@ impl OperatorClient {
     ) -> Result<BrokerEventPage, ClientError> {
         self.0
             .post(&OperatorRequest::Replay { after, limit })
+            .await?
+            .json(StatusCode::OK)
+            .await
+    }
+    /// Read task transitions from a retention window separate from mailbox activity.
+    ///
+    /// Use a cursor issued by this method to resume a task audit.
+    pub async fn replay_task_audit(
+        &self,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, ClientError> {
+        self.0
+            .post(&OperatorRequest::ReplayTaskAudit { after, limit })
             .await?
             .json(StatusCode::OK)
             .await

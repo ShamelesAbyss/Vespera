@@ -470,6 +470,124 @@ async fn mailbox_reserves_capacity_for_other_senders_after_policy_change() {
 }
 
 #[tokio::test]
+async fn durable_task_audit_survives_mailbox_traffic_and_restart() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let db = DatabaseFixture(
+        std::env::temp_dir().join(format!("vespera-broker-{}.sqlite3", Uuid::new_v4())),
+    );
+    let start = || {
+        let policy = routed_policy(first, second);
+        let mut access: Value = serde_json::from_slice(&std::fs::read(&policy).unwrap()).unwrap();
+        access["operator_mailbox_receipts"] = json!(true);
+        std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
+        launch_command(server_command(&policy, Some(&db.0)), policy)
+    };
+    let (process, base) = start();
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let sender = WorkerClient::new(endpoint, first, SigningKey::from_hex(FIRST).unwrap()).unwrap();
+    let receiver =
+        WorkerClient::new(endpoint, second, SigningKey::from_hex(SECOND).unwrap()).unwrap();
+    let task = TaskId::new();
+    let mut submission = Submission {
+        task_id: task,
+        prompt: "private task audit fixture".into(),
+        required_capabilities: ["text-generation".parse().unwrap()].into(),
+        eligible_workers: [first].into(),
+        lifetime_seconds: 60,
+        max_attempts: 1,
+    };
+    let mixed_cursor = operator.replay(None, 8).await.unwrap().next_cursor;
+    operator.submit(&submission).await.unwrap();
+    let submitted = operator.replay_task_audit(None, 1).await.unwrap();
+    assert_eq!(submitted.entries.len(), 1);
+    assert_eq!(operator.cancel(task).await.unwrap(), TaskState::Cancelled);
+
+    for _ in 0..128 {
+        let id = Uuid::new_v4();
+        sender
+            .send_message(second, id, "mailbox traffic")
+            .await
+            .unwrap();
+        receiver.acknowledge_message(first, id).await.unwrap();
+    }
+    assert!(matches!(
+        operator.replay(Some(mixed_cursor), 8).await,
+        Err(ClientError::Rejected {
+            status: 410,
+            code: Some(ErrorCode::CursorExpired),
+        })
+    ));
+    let mixed = operator.replay(None, 8).await.unwrap();
+    assert_eq!(mixed.discarded_through, 2);
+    assert!(mixed.entries.iter().all(|entry| matches!(
+        entry.event.kind,
+        EventKind::AgentMessageSent { .. } | EventKind::AgentMessageAcknowledged { .. }
+    )));
+    assert!(matches!(
+        operator.replay_task_audit(Some(mixed.next_cursor), 8).await,
+        Err(ClientError::Rejected {
+            status: 409,
+            code: Some(ErrorCode::ForeignCursor),
+        })
+    ));
+    drop(process);
+
+    let (_restarted, base) = start();
+    let endpoint = base.strip_prefix("http://").unwrap().parse().unwrap();
+    let operator = OperatorClient::new(endpoint, SigningKey::from_hex(OPERATOR).unwrap()).unwrap();
+    let audit = operator
+        .replay_task_audit(Some(submitted.next_cursor), 8)
+        .await
+        .unwrap();
+    assert_eq!(audit.discarded_through, 0);
+    assert_eq!(audit.entries.len(), 1);
+    assert!(matches!(
+        audit.entries[0].event.kind,
+        EventKind::ExternalTaskChanged {
+            task_id,
+            change: ExternalTaskChange::Cancelled,
+            ..
+        } if task_id == task
+    ));
+    assert_eq!(
+        audit.next_cursor.sequence,
+        submitted.next_cursor.sequence + 1
+    );
+    assert_eq!(audit.next_cursor.stream_id, submitted.next_cursor.stream_id);
+    assert!(!audit.has_more);
+
+    let wire = Wire {
+        client: Client::new(),
+        base,
+        first,
+        second,
+    };
+    let request = json!({"action":"replay_task_audit","limit":8});
+    assert_eq!(
+        wire.post("worker", FIRST, request.clone()).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        wire.post("operator", FIRST, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    submission.task_id = TaskId::new();
+    operator.submit(&submission).await.unwrap();
+    let resumed = operator
+        .replay_task_audit(Some(audit.next_cursor), 8)
+        .await
+        .unwrap();
+    assert_eq!(resumed.entries.len(), 1);
+    assert_eq!(
+        resumed.entries[0].event.correlation_task_id,
+        Some(submission.task_id)
+    );
+}
+
+#[tokio::test]
 async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy() {
     let first = AgentId::new();
     let second = AgentId::new();
@@ -480,7 +598,11 @@ async fn durable_mailbox_recovers_order_and_deduplication_under_current_policy()
     drop(initial);
     rusqlite::Connection::open(&db.0)
         .unwrap()
-        .execute_batch("DROP TABLE broker_mailbox; PRAGMA user_version = 2;")
+        .execute_batch(
+            "DROP TABLE broker_mailbox;
+             DELETE FROM broker_feed WHERE owner = 'operator_tasks';
+             PRAGMA user_version = 2;",
+        )
         .unwrap();
     let start = |grant| {
         let policy = if grant {

@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use vespera_core::{AgentId, Task, TaskState};
 
-use crate::events::{EventFeeds, Feed};
+use crate::events::{EventFeeds, Feed, FeedScope};
 use crate::http::mailbox::Mailboxes;
 use crate::{
     AcceptedResult, ActiveLease, Fence, LeaseBroker, MAX_CAPABILITIES, MAX_LIFETIME, MAX_TASKS,
@@ -14,12 +14,13 @@ use crate::{
 };
 
 const APPLICATION_ID: i64 = 0x56534252;
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const MAX_MAILBOX_BYTES: i64 = 524288;
 const MAX_RECORD_BYTES: usize = 1024 * 1024;
 const MAX_REVOCATIONS: usize = 4096;
 const MAX_FEED_BYTES: i64 = 256 * 1024;
 const OPERATOR_FEED: &str = "operator";
+const TASK_AUDIT_FEED: &str = "operator_tasks";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -229,7 +230,7 @@ impl Store {
             )
             .map_err(db)?;
         }
-        if version < SCHEMA_VERSION {
+        if version < 3 {
             tx.execute_batch(
                 "CREATE TABLE broker_mailbox (
                     owner TEXT PRIMARY KEY NOT NULL CHECK(length(owner)=36),
@@ -237,8 +238,6 @@ impl Store {
                 ) STRICT;",
             )
             .map_err(db)?;
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)
-                .map_err(db)?;
         }
         let watermark: i64 = tx
             .query_row(
@@ -273,7 +272,8 @@ impl Store {
                     .map_err(|_| StoreError::Format)?;
             }
         }
-        restore_feeds(&tx, &mut broker.events)?;
+        let migrating = version < SCHEMA_VERSION;
+        restore_feeds(&tx, &mut broker.events, migrating)?;
         restore_mailboxes(&tx, mailboxes)?;
         {
             let mut statement = tx
@@ -296,6 +296,12 @@ impl Store {
                 broker.tasks.push(record.recover(clock, watermark, now)?);
             }
         }
+        if migrating {
+            broker.events.seed_task_audit();
+            save_feeds(&tx, &broker.events)?;
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(db)?;
+        }
         tx.commit().map_err(db)?;
         broker.reconcile(Instant::now());
         let mut store = Self(connection);
@@ -315,6 +321,7 @@ impl Store {
             && mailboxes.dirty.is_empty()
             && !broker.tasks.iter().any(|task| task.dirty)
             && !broker.events.operator.dirty
+            && !broker.events.task_audit.dirty
             && !broker.events.workers.values().any(|feed| feed.dirty)
         {
             return Ok(());
@@ -374,6 +381,7 @@ impl Store {
             task.dirty = false;
         }
         broker.events.operator.dirty = false;
+        broker.events.task_audit.dirty = false;
         for feed in broker.events.workers.values_mut() {
             feed.dirty = false;
         }
@@ -440,9 +448,14 @@ fn save_mailboxes(
     Ok(())
 }
 
-fn restore_feeds(tx: &Transaction<'_>, feeds: &mut EventFeeds) -> Result<(), StoreError> {
+fn restore_feeds(
+    tx: &Transaction<'_>,
+    feeds: &mut EventFeeds,
+    migrating: bool,
+) -> Result<(), StoreError> {
     let mut retired = Vec::new();
     let mut stream_ids = BTreeSet::new();
+    let mut found_task_audit = false;
     {
         let mut statement = tx
             .prepare(
@@ -451,41 +464,43 @@ fn restore_feeds(tx: &Transaction<'_>, feeds: &mut EventFeeds) -> Result<(), Sto
             )
             .map_err(db)?;
         let mut rows = statement
-            .query(params![MAX_FEED_BYTES, MAX_WORKERS as i64 + 2])
+            .query(params![MAX_FEED_BYTES, MAX_WORKERS as i64 + 3])
             .map_err(db)?;
         let mut count = 0;
         while let Some(row) = rows.next().map_err(db)? {
             count += 1;
-            if count > MAX_WORKERS + 1 {
+            if count > MAX_WORKERS + 2 {
                 return Err(StoreError::Format);
             }
             let owner: String = row.get(0).map_err(db)?;
-            let worker = if owner == OPERATOR_FEED {
-                None
-            } else {
-                let id: AgentId = owner.parse().map_err(|_| StoreError::Format)?;
-                if owner != id.to_string() {
-                    return Err(StoreError::Format);
+            let (scope, target) = match owner.as_str() {
+                OPERATOR_FEED => (FeedScope::Operator, &mut feeds.operator),
+                TASK_AUDIT_FEED if !migrating => {
+                    found_task_audit = true;
+                    (FeedScope::TaskAudit, &mut feeds.task_audit)
                 }
-                Some(id)
-            };
-            let target = match worker {
-                None => &mut feeds.operator,
-                Some(id) => match feeds.workers.get_mut(&id) {
-                    Some(feed) => feed,
-                    None => {
+                _ => {
+                    let id: AgentId = owner.parse().map_err(|_| StoreError::Format)?;
+                    if owner != id.to_string() {
+                        return Err(StoreError::Format);
+                    }
+                    let Some(feed) = feeds.workers.get_mut(&id) else {
                         retired.push(owner);
                         continue;
-                    }
-                },
+                    };
+                    (FeedScope::Worker(id), feed)
+                }
             };
             let bytes: Vec<u8> = row.get(1).map_err(|_| StoreError::Format)?;
             let feed: Feed = serde_json::from_slice(&bytes).map_err(|_| StoreError::Format)?;
-            if !feed.valid_for(worker) || !stream_ids.insert(feed.stream_id) {
+            if !feed.valid_for(scope) || !stream_ids.insert(feed.stream_id) {
                 return Err(StoreError::Format);
             }
             *target = feed;
         }
+    }
+    if !migrating && !found_task_audit {
+        return Err(StoreError::Format);
     }
     for owner in retired {
         tx.execute("DELETE FROM broker_feed WHERE owner = ?1", [owner])
@@ -509,6 +524,7 @@ fn save_feeds(tx: &Transaction<'_>, feeds: &EventFeeds) -> Result<(), StoreError
         Ok(())
     };
     save(OPERATOR_FEED, &feeds.operator)?;
+    save(TASK_AUDIT_FEED, &feeds.task_audit)?;
     for (worker, feed) in &feeds.workers {
         if feed.dirty {
             save(&worker.to_string(), feed)?;
@@ -585,6 +601,7 @@ mod tests {
             .flush(&mut broker, &mut Mailboxes::default(), None, false)
             .unwrap();
         let previous = broker.replay(None, None, 8).unwrap();
+        let previous_audit = broker.replay_task_audit(None, 8).unwrap();
         let previous_worker = broker.replay(Some(worker), None, 8).unwrap().next_cursor;
         broker.cancel(original).unwrap();
         let next = submit(&mut broker, worker);
@@ -593,7 +610,7 @@ mod tests {
             .0
             .execute_batch(
                 "CREATE TRIGGER reject_fixture BEFORE INSERT ON broker_feed
-                 WHEN NEW.owner = 'operator' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+                 WHEN NEW.owner = 'operator_tasks' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
             )
             .unwrap();
         assert!(matches!(
@@ -613,12 +630,65 @@ mod tests {
             restored.replay(None, None, 8).unwrap().entries,
             previous.entries
         );
+        let audit = restored.replay_task_audit(None, 8).unwrap();
+        assert_eq!(audit.entries, previous_audit.entries);
+        assert_eq!(audit.next_cursor, previous_audit.next_cursor);
         assert!(
             restored
                 .replay(Some(worker), Some(previous_worker), 8)
                 .unwrap()
                 .entries
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn migrates_v3_task_history_without_changing_the_mixed_cursor() {
+        let database = DatabaseFixture::new();
+        let worker = AgentId::new();
+        let peer = AgentId::new();
+        let mut broker = LeaseBroker::default();
+        broker.approve_worker(worker, BTreeSet::new()).unwrap();
+        let (mut store, _) =
+            Store::open(&database.0, &mut broker, &mut Mailboxes::default()).unwrap();
+        let task = submit(&mut broker, worker);
+        broker.events.publish_message(worker, peer);
+        broker.cancel(task).unwrap();
+        let mixed = broker.replay(None, None, 8).unwrap();
+        store
+            .flush(&mut broker, &mut Mailboxes::default(), None, false)
+            .unwrap();
+        store
+            .0
+            .execute(
+                "DELETE FROM broker_feed WHERE owner = ?1",
+                [TASK_AUDIT_FEED],
+            )
+            .unwrap();
+        store.0.pragma_update(None, "user_version", 3).unwrap();
+        drop(store);
+
+        let mut restored = LeaseBroker::default();
+        restored.approve_worker(worker, BTreeSet::new()).unwrap();
+        let (store, _) =
+            Store::open(&database.0, &mut restored, &mut Mailboxes::default()).unwrap();
+        let restored_mixed = restored.replay(None, None, 8).unwrap();
+        assert_eq!(restored_mixed.entries, mixed.entries);
+        assert_eq!(restored_mixed.next_cursor, mixed.next_cursor);
+        let audit = restored.replay_task_audit(None, 8).unwrap();
+        assert_eq!(audit.entries.len(), 2);
+        assert_eq!(audit.entries[0].event, mixed.entries[0].event);
+        assert_eq!(audit.entries[1].event, mixed.entries[2].event);
+        assert_ne!(audit.next_cursor.stream_id, mixed.next_cursor.stream_id);
+        drop(store);
+
+        let mut reopened = LeaseBroker::default();
+        reopened.approve_worker(worker, BTreeSet::new()).unwrap();
+        let (_store, _) =
+            Store::open(&database.0, &mut reopened, &mut Mailboxes::default()).unwrap();
+        assert_eq!(
+            reopened.replay_task_audit(None, 8).unwrap().next_cursor,
+            audit.next_cursor
         );
     }
 

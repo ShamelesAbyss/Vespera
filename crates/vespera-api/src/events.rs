@@ -13,6 +13,13 @@ use crate::BrokerError;
 const RETENTION: usize = 256;
 const MAX_PAGE: u32 = 64;
 
+#[derive(Clone, Copy)]
+pub(super) enum FeedScope {
+    Operator,
+    TaskAudit,
+    Worker(AgentId),
+}
+
 pub(super) struct Transition {
     pub(super) task_id: TaskId,
     pub(super) change: ExternalTaskChange,
@@ -61,7 +68,7 @@ impl Feed {
         });
     }
 
-    pub(super) fn valid_for(&self, worker: Option<AgentId>) -> bool {
+    pub(super) fn valid_for(&self, scope: FeedScope) -> bool {
         if self.stream_id.is_nil()
             || self.latest > i64::MAX as u64
             || self.events.len() as u64 != self.latest.min(RETENTION as u64)
@@ -77,9 +84,12 @@ impl Feed {
                         task_id, attempt, ..
                     } => {
                         entry.event.correlation_task_id == Some(task_id)
-                            && worker.is_none_or(|worker| {
-                                attempt.is_some_and(|attempt| attempt.worker_id == worker)
-                            })
+                            && match scope {
+                                FeedScope::Worker(worker) => {
+                                    attempt.is_some_and(|attempt| attempt.worker_id == worker)
+                                }
+                                FeedScope::Operator | FeedScope::TaskAudit => true,
+                            }
                     }
                     EventKind::AgentMessageSent {
                         from_agent_id,
@@ -89,7 +99,7 @@ impl Feed {
                         from_agent_id,
                         to_agent_id,
                     } => {
-                        worker.is_none()
+                        matches!(scope, FeedScope::Operator)
                             && entry.event.correlation_task_id.is_none()
                             && from_agent_id != to_agent_id
                     }
@@ -144,10 +154,19 @@ impl Feed {
 #[derive(Default)]
 pub(super) struct EventFeeds {
     pub(super) operator: Feed,
+    pub(super) task_audit: Feed,
     pub(super) workers: BTreeMap<AgentId, Feed>,
 }
 
 impl EventFeeds {
+    pub(super) fn seed_task_audit(&mut self) {
+        for entry in &self.operator.events {
+            if matches!(entry.event.kind, EventKind::ExternalTaskChanged { .. }) {
+                self.task_audit.push(entry.event.clone());
+            }
+        }
+    }
+
     pub(super) fn approve(&mut self, worker: AgentId) {
         self.workers.insert(worker, Feed::default());
     }
@@ -180,6 +199,7 @@ impl EventFeeds {
         {
             worker_feed.push(event.clone());
         }
+        self.task_audit.push(event.clone());
         self.operator.push(event);
     }
 
@@ -214,6 +234,14 @@ impl EventFeeds {
             None => &self.operator,
         };
         feed.replay(after, limit)
+    }
+
+    pub(super) fn replay_task_audit(
+        &self,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, BrokerError> {
+        self.task_audit.replay(after, limit)
     }
 }
 

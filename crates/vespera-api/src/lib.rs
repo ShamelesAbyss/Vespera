@@ -424,6 +424,15 @@ impl LeaseBroker {
         self.events.replay(worker, after, limit)
     }
 
+    fn replay_task_audit(
+        &mut self,
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    ) -> Result<BrokerEventPage, BrokerError> {
+        self.reconcile(Instant::now());
+        self.events.replay_task_audit(after, limit)
+    }
+
     fn reconcile(&mut self, now: Instant) {
         for record in &mut self.tasks {
             if let Some(event) = record.expire(now) {

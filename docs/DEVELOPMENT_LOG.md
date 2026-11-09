@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 10 — Separate operator task audit retention
+
+The signed operator endpoint and SDK can replay a dedicated audit of the latest 256 task transitions. It has its own cursor and commits with task state in the broker transaction. Broker schema 4 migrates the task transitions still retained in the mixed feed. A pre-upgrade backup is required to reopen the database with an older broker.
+
+The Windows broker integration test generated 256 mailbox events and verified that the mixed cursor expired while the task audit resumed through a process restart. The test also verified worker denial and independent cursor validation. The migration fixture preserved mixed cursor and event identity across schema 3, and the injected write failure rolled back both feeds and task state. All 15 worker HTTP tests, 14 API and SDK tests, the SDK doctest, formatting, and strict Clippy passed. Separate physical-host TLS qualification remains pending.
+
 ## Milestone 14 — Refresh internal Windows qualification
 
 The optimized unsigned `0.1.2` package from `f2c3ae3` passed archive extraction, verification of 49 manifest entries, verification of 13 extracted MSI files and a hash match between the standalone and embedded MSI. The launcher opened the extracted desktop with a temporary profile and an unrelated working directory. Native captures showed the official mark on Home and in Living World. A tick committed revision 1, graphical replay showed revision 0 as read-only, and a second launch reopened the live database without changing its bytes. Packaged configuration validation and host diagnostics passed. The prior packaging attempt hit the Windows executable lock while its native test window was open. Closing the test window and rebuilding from the newer committed source resolved it.

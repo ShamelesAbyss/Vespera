@@ -336,6 +336,10 @@ enum OperatorRequest {
         after: Option<BrokerEventCursor>,
         limit: u32,
     },
+    ReplayTaskAudit {
+        after: Option<BrokerEventCursor>,
+        limit: u32,
+    },
 }
 
 #[derive(Deserialize)]
@@ -506,6 +510,9 @@ fn operate(service: &mut Service, operation: OperatorRequest) -> Result<Reply, H
         }
         OperatorRequest::Replay { after, limit } => {
             reply(StatusCode::OK, &broker.replay(None, after, limit)?)
+        }
+        OperatorRequest::ReplayTaskAudit { after, limit } => {
+            reply(StatusCode::OK, &broker.replay_task_audit(after, limit)?)
         }
     };
     Ok(reply)

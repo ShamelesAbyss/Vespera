@@ -106,7 +106,7 @@ Add authorized bounded delivery and durable history where required; envelope typ
 
 ## Milestone 10 — External agent interoperability
 
-The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) support directed, operator-granted external messaging. Signed loopback tests cover revocation, route changes and recovery. The [non-loopback TLS rehearsal](PROTOCOL.md#rehearse-a-non-loopback-tls-deployment) passed between the Windows SDK and an Ubuntu WSL2 guest, including broker restart and event resume. Deployment between separate physical hosts remains open.
+The [worker service](PROTOCOL.md#implemented-loopback-worker-api) and [Rust SDK](PROTOCOL.md#rust-sdk) support directed, operator-granted external messaging. Signed loopback tests cover revocation, route changes and recovery. [Operator task replay](PROTOCOL.md#broker-event-replay) has its own retention window and passed a restart after mailbox traffic exhausted the mixed feed. The [non-loopback TLS rehearsal](PROTOCOL.md#rehearse-a-non-loopback-tls-deployment) passed between the Windows SDK and an Ubuntu WSL2 guest, including broker restart and event resume. Deployment between separate physical hosts remains open.
 
 - An authenticated test agent registers with approved authority, receives a task lease, submits a result, and reads authorized events.
 - Reject invalid credentials, expired/revoked leases, stale attempts, duplicate conflicts, auth replay, and unauthorized identity/namespace/permission changes.
