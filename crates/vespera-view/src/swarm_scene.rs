@@ -229,18 +229,28 @@ impl Evidence {
             })
     }
 
-    fn latest_workflow(&self, agent: AgentId) -> Option<TaskId> {
-        self.edges.iter().rev().find_map(|edge| {
-            if edge.from != agent && edge.to != agent {
-                return None;
-            }
-            match edge.relation {
-                Relation::Delegation { workflow, .. } | Relation::Dependency { workflow, .. } => {
-                    workflow
+    fn next_workflow(&self, agent: AgentId, current: Option<TaskId>) -> Option<TaskId> {
+        let mut seen = BTreeSet::new();
+        let linked: Vec<_> = self
+            .edges
+            .iter()
+            .rev()
+            .filter_map(|edge| {
+                if edge.from != agent && edge.to != agent {
+                    return None;
                 }
-                _ => None,
-            }
-        })
+                match edge.relation {
+                    Relation::Delegation { workflow, .. }
+                    | Relation::Dependency { workflow, .. } => workflow,
+                    _ => None,
+                }
+            })
+            .filter(|root| seen.insert(*root))
+            .collect();
+        let next = current
+            .and_then(|root| linked.iter().position(|&id| id == root))
+            .and_then(|index| linked.get(index + 1));
+        next.or_else(|| linked.first()).copied()
     }
 
     fn for_workflow(mut self, root: TaskId) -> Self {
@@ -689,7 +699,7 @@ fn sync(
         && keys.just_pressed(KeyCode::KeyG)
         && let Some(root) = layout
             .selected
-            .and_then(|agent| feed.evidence.latest_workflow(agent))
+            .and_then(|agent| feed.live.next_workflow(agent, selected_workflow.0))
         && selected_workflow.0 != Some(root)
     {
         selected_workflow.0 = Some(root);
@@ -1170,7 +1180,7 @@ fn inspect(
         format!("Workflow focus\n{root}\nBackspace clears workflow focus\n")
     });
     readout.0 = format!(
-        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nG focus workflow (live)\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
+        "VESPERA / SWARM\n{timeline}\n{}\n{history}{workflow}{} visible agents / {} links observed\n{}\n\n{detail}\n\nCyan delegation | Green dependency\nAmber message | Pink acknowledgement\nUpper beacon: observed runtime\nLower: Amber accepted | Green complete\nRed failure | Violet cancelled / suspended\nT freeze / live | [ ] step evidence\nTab filter | N select | F focus\nG cycle workflows (live)\nR reset | WASD pan | Scroll zoom\nRight drag orbit",
         feed.live.status,
         layout.agents.len(),
         evidence.edges.len(),
@@ -1220,10 +1230,18 @@ mod tests {
                 evidence.push(index as u64 * 3 + offset, event);
             }
         }
-        assert_eq!(evidence.latest_workflow(owner), Some(roots[1]));
-        assert_eq!(evidence.latest_workflow(peers[0]), Some(roots[0]));
+        assert_eq!(evidence.next_workflow(owner, None), Some(roots[1]));
+        assert_eq!(
+            evidence.next_workflow(owner, Some(roots[1])),
+            Some(roots[0])
+        );
+        assert_eq!(
+            evidence.next_workflow(owner, Some(roots[0])),
+            Some(roots[1])
+        );
+        assert_eq!(evidence.next_workflow(peers[0], None), Some(roots[0]));
         let focused = evidence.for_workflow(roots[0]);
-        assert_eq!(focused.latest_workflow(owner), Some(roots[0]));
+        assert_eq!(focused.next_workflow(owner, None), Some(roots[0]));
         assert_eq!(focused.edges.len(), 1);
         assert_eq!(focused.visible_agents(), BTreeSet::from([owner, peers[0]]));
         assert_eq!(focused.outcome(roots[0], 0), Some(TaskState::Completed));
