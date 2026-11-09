@@ -24,6 +24,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
+      - name: Package integrity verifier tests
+        run: cargo test --locked -p vespera-app --example verify-package
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -78,6 +80,8 @@ jobs:
         run: cargo build --locked -p vespera-view --features graphics --bins
       - name: Portable packaging tests
         run: cargo test --locked -p vespera-app --example package-local
+      - name: Package integrity verifier tests
+        run: cargo test --locked -p vespera-app --example verify-package
       - name: Build installer CLI fixture
         run: cargo build --locked -p vespera-app --bin vespera
       - name: Rehearse per-user install, upgrade and restore

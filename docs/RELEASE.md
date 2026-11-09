@@ -18,6 +18,19 @@ On Windows, open `bin\vespera-launcher.exe` for the native desktop without a con
 
 ## Verify and start
 
+From the repository root, the Rust verifier works in PowerShell and POSIX shells:
+
+```sh
+cargo run --locked -p vespera-app --example verify-package -- --package target/vespera-local
+```
+
+It checks schema 1 manifest entries against file sizes and SHA-256 hashes and
+rejects missing files, duplicate paths, path traversal and symbolic-link entries.
+Use a staged or freshly extracted directory with no concurrent writers. The
+manifest is not signed: this checks listed-file integrity, not authenticity,
+unlisted files, distribution rights or release readiness. It never executes
+packaged binaries or modifies the package.
+
 From the workspace root in PowerShell, verify the manifest and make a private scratch area inside the staged directory.
 
 ```powershell
