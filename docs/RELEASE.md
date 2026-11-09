@@ -120,6 +120,8 @@ Setup and restores the previous MSI. It verifies the saved world's bytes and
 revision after recovery. The rehearsal uses an unsigned bundle and runs
 independently of the production update channel. [Hosted validation](https://github.com/ShamelesAbyss/Vespera/actions/runs/42583645819)
 
+Run **Optimized Windows installer qualification** from GitHub Actions for a release rehearsal. The job builds the current revision and the qualified `0.1.1` source revision separately, verifies both manifests and logs the MSI and Setup checksums. It runs clean installation, upgrade, failure injection, downgrade rejection and recovery on a disposable hosted runner. [Qualification workflow](https://github.com/ShamelesAbyss/Vespera/actions/workflows/windows-installer-qualification.yml)
+
 ### Sign the Windows installer
 
 Before building the updater baseline, set `VESPERA_UPDATE_SIGNER_SHA256` in the
@@ -186,6 +188,20 @@ A profile using Windows Credential Manager stores the source choice and endpoint
 - Verify the fresh-directory walkthrough, headless and graphics builds, provider matrix, permission checks and backup recovery.
 - Regenerate the dependency graph and declared license inventory from the locked build. Review the actual artifacts, license texts and notices before distribution. [Dependency record](DEPENDENCIES.md)
 - Record remaining compatibility and release gates in the milestone ledger. [Milestone ledger](MILESTONE_LEDGER.md)
+
+### Windows x64 candidate with saved desktop discovery and identity editing
+
+The unsigned `0.1.2` build from `7defb68` verified 49 manifest files, 13 files from administrative MSI extraction, and the exact MSI recovered from Setup.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `d6ef590e45eefc0d77cd31a3c10ebb22ab716e534916d613e8d44bee649324cb` |
+| Standalone MSI | `1fbeb0691db7f34ad2110809af8141ca950e35882b41b84d25f2f6d3904b278b` |
+| Setup EXE | `da5c121f8fa92a3916525269219820c7f4abcd63cbf545d1bf8a49c8cc7ac6e2` |
+
+The portable launcher opened the native app from an unrelated working directory. A Living World commit survived a restart byte for byte. The packaged desktop saved discovery from an empty settings file, restored it after restart, discovered models through Ollama, and rejected a remote endpoint. The identity editor reopened the same agent's retained tasks after changing its name and role. The 53 default optimized graphics tests, strict graphics Clippy and formatting passed. The internal SBOM matches the locked inventory and passed CycloneDX schema validation. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42662227600)
+
+All four Atlas views opened from the extraction. Intelligence Network matched a signed broker attempt to the live Ollama scheduler task and worker. The 1200×800 Network sample measured a 7.43 ms p95 update interval across 600 Vulkan updates after 120 warmup updates on an RTX 4070 Laptop GPU.
 
 ### Windows x64 candidate with workflow editing and durable task audit
 

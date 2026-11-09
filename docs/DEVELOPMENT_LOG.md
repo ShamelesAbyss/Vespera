@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Package desktop settings and identity editing
+
+The unsigned Windows build from `7defb68` passed verification of the portable manifest, administrative MSI extraction and exact Setup payload. Native verification covered first launch, world commit and restart, discovery recovery from an empty settings file, real Ollama discovery, identity editing and task history. All four Atlas views rendered. Intelligence Network showed a live broker and scheduler match. The refreshed SBOM matched the locked dependency inventory and passed schema validation. The optimized installer qualification has a separate hosted workflow at `fd1a464`. [Release checksums](RELEASE.md#windows-x64-candidate-with-saved-desktop-discovery-and-identity-editing)
+
 ## Milestone 12 — Recover an interrupted first settings save
 
 Discovery settings now treat an empty settings file as an unfinished initialization. The next save initializes it transactionally. A format check protects foreign databases and files. The first-save recovery regression passed with the other 52 default optimized graphics tests, and strict graphics Clippy passed.
