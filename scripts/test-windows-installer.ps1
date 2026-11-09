@@ -25,13 +25,35 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"$').Mat
 $previous = '0.1.1'
 if ([version]$version -le [version]$previous) { throw 'Expected a newer installer version.' }
 
+$previousStage = Join-Path $fixture 'previous-stage'
+Copy-Item -LiteralPath $stage -Destination $previousStage -Recurse
+Add-Content -LiteralPath (Join-Path $previousStage 'LICENSE') -Value 'Prior MSI lifecycle fixture marker.'
+$previousLicenseHash = (Get-FileHash -LiteralPath (Join-Path $previousStage 'LICENSE')).Hash
+function Build-Msi($ProductStage, $ProductVersion, $Output, $Authoring) {
+    $wixArguments = @('build','-arch','x64','-d',"Stage=$ProductStage",'-d',"Version=$ProductVersion",
+        '-o',$Output,$Authoring)
+    & "$fixture/tools/wix.exe" @wixArguments
+    if ($LASTEXITCODE -ne 0) { throw "MSI build failed for $Output." }
+}
 foreach ($productVersion in $previous,$version) {
     $package = Join-Path $fixture "$productVersion.msi"
-    $wixArguments = @('build','-arch','x64','-d',"Stage=$stage",'-d',"Version=$productVersion",
-        '-o',$package,'packaging/windows/vespera.wxs')
-    & "$fixture/tools/wix.exe" @wixArguments
-    if ($LASTEXITCODE -ne 0) { throw "MSI build failed for $productVersion." }
+    $productStage = if ($productVersion -eq $previous) { $previousStage } else { $stage }
+    Build-Msi $productStage $productVersion $package 'packaging/windows/vespera.wxs'
 }
+
+# Add a Type 19 failure to temporary authoring, after old-product removal and before finalization.
+$rollbackMessage = 'Vespera installer fixture abort after old product removal'
+$rollbackAuthoring = Join-Path $fixture 'rollback-fault.wxs'
+$failureAction = @"
+    <CustomAction Id="VesperaRollbackFixture" Error="$rollbackMessage" />
+    <InstallExecuteSequence>
+      <Custom Action="VesperaRollbackFixture" Before="InstallFinalize" Condition="WIX_UPGRADE_DETECTED" />
+    </InstallExecuteSequence>
+  </Package>
+"@
+$authoring = Get-Content -LiteralPath 'packaging/windows/vespera.wxs' -Raw
+Set-Content -LiteralPath $rollbackAuthoring -Value $authoring.Replace('</Package>', $failureAction)
+Build-Msi $stage $version (Join-Path $fixture 'rollback-fault.msi') $rollbackAuthoring
 
 function Invoke-Installer($Operation, $ProductVersion, $Phase, $Expected = 0) {
     $log = Join-Path $fixture "$Phase.log"
@@ -77,6 +99,26 @@ if ($LASTEXITCODE -ne 0) { throw 'Installed CLI could not create the fixture wor
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI could not advance the fixture world.' }
 $worldHash = (Get-FileHash -LiteralPath $world).Hash
 
+Invoke-Installer /i 'rollback-fault' 'failed-upgrade' 1603
+$failedUpgrade = Join-Path $fixture 'failed-upgrade.log'
+$removal = Select-String -LiteralPath $failedUpgrade -Pattern 'Action ended .*RemoveExistingProducts\. Return value 1\.' | Select-Object -First 1
+$failure = Select-String -LiteralPath $failedUpgrade -Pattern $rollbackMessage -SimpleMatch | Select-Object -First 1
+if (!$removal -or !$failure -or $removal.LineNumber -ge $failure.LineNumber) {
+    Get-Content -LiteralPath $failedUpgrade -Tail 60
+    throw 'The fault did not run after successful old product removal.'
+}
+Assert-Version $previous
+if ((Get-FileHash -LiteralPath (Join-Path $installed 'LICENSE')).Hash -ne $previousLicenseHash) {
+    throw 'Automatic rollback did not restore the distinct prior payload.'
+}
+if ((Get-FileHash -LiteralPath $world).Hash -ne $worldHash) {
+    throw 'Failed upgrade changed the saved world bytes.'
+}
+$rollbackState = & $cli world --database $world inspect | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $rollbackState.revision -ne 3) {
+    throw 'Automatic rollback did not restore the prior installation.'
+}
+
 Invoke-Installer /i $version 'upgrade'
 Assert-Version $version
 foreach ($notice in 'LICENSE','THIRD_PARTY_NOTICES.md','licenses/FiraMono-LICENSE.txt','licenses/windows-x64-cargo-inventory.txt') {
@@ -102,4 +144,4 @@ if ($LASTEXITCODE -ne 0 -or $state.revision -ne 3) {
 }
 Invoke-Installer /x $previous 'remove-fixture'
 if (!(Test-Path -LiteralPath $world)) { throw 'Uninstall removed the fixture world.' }
-Write-Output "Verified per-user MSI install, upgrade to $version, downgrade rejection, and restore of $previous with the committed world preserved."
+Write-Output "Verified per-user MSI install, automatic rollback after a failed upgrade, upgrade to $version, downgrade rejection, and restore of $previous with the committed world preserved."
