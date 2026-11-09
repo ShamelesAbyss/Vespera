@@ -49,7 +49,15 @@ The Windows development rehearsal built and unpacked both versions with SDK 10.0
 
 Two additional installed rehearsals exercised real inference and workflow recovery. Ollama 0.40.15 on the Windows test host ran `hermes3:8b` through the packaged viewer. The completed task reported 103 output tokens and the provider confirmed the model was absent after cleanup. A controlled loopback fixture then stopped the viewer after its first workflow attempt committed. Restart continued the same workflow with the original committed attempt and one new provider request. Upgrade again preserved the world, tasks, workflow and memory bytes.
 
-The first Windows App Certification Kit report returned **Warning**. The DPI check could not verify the viewer and the optional blocked-executables check flagged its process-launch import. The next build embeds PerMonitorV2 and excludes the standalone updater. Windows Manifest Tool extracted the declaration and PE import inspection confirmed that `CreateProcessW` was absent. Microsoft Store certification and the actual Partner Center identity remain open.
+The first Windows App Certification Kit report returned **Warning**. The DPI check could not verify the viewer and the optional blocked-executables check flagged its process-launch import. The next build embeds PerMonitorV2 and excludes the standalone updater. Windows Manifest Tool extracted the declaration from the installed executable and the native window reported PerMonitorV2. PE import inspection confirmed that `CreateProcessW` was absent. The kit's installed-package run cleared the blocked-executables check and still reported a DPI warning. A second run against the signed MSIX file reported **Pass**, with 24 passed tests and no warnings, including DPI awareness. The same clean build ran `hermes3:8b` through Ollama 0.40.15 and retained its 111-token task result and world through upgrade. The package family used for these tests is the development identity. Microsoft Store certification and the actual Partner Center identity remain open.
+
+The clean-source development packages used for the signed-file check came from `5d19b001a32faadd62d4ce5176ebc42a475074fd`. Both MakeAppx payloads and their embedded Win32 manifests verified. Windows App Certification Kit 10.0.26100.7705 reported the result on Windows 11 build 26300. The test package and temporary signing certificate were removed afterward.
+
+| Revised unsigned development package | SHA-256 |
+| --- | --- |
+| MSIX `1.0.0.0` | `780afdef130424448b49ed1591a227c5af392c27046f8d5b5d941ad2e25ed09b` |
+| MSIX `1.0.1.0` | `bb6587e43f773885f039f10cc650e74bc5b876aca51a3dfc6756fba305910097` |
+| Revised development review ZIP | `8b7a3bc5fd63dc19be524b857d0a388294de091d46a2d895d2ba889b782a27d4` |
 
 The original clean-source unsigned packages were built at `399c2d015eae6aac506dcd02624a6caba258085c`. Both had 14 payload files verified through MakeAppx and the upgrade payload matched the installed test payload. The internal review ZIP contains the development package, listing tile, screenshot, CycloneDX 1.6 SBOM and collected notices. OSV returned zero matches for the 429 exact Cargo versions queried.
 

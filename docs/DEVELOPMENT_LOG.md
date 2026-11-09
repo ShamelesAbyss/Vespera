@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 14 — Verify Windows CI and the signed development MSIX
+
+GitHub's Windows native job on `399c2d0` failed in the experiment worker test at its eight-second deadline. The fix at `2dc4136` checks for a received result before enforcing a 60-second test-only deadline and reports the pending operation on timeout. The full Windows native, Linux native and foundation run passed. The test still executes both real paired comparisons and verifies all six retained replays. [Failed job](https://github.com/ShamelesAbyss/Vespera/actions/runs/42720608794/job/129513303171) · [Passing run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42722278132)
+
+The Windows App Certification Kit package-file report at `5d19b00` passed all 24 checks. The installed-package route reported one DPI warning even though the installed executable's manifest and native window both reported PerMonitorV2. The exact clean development packages completed live Ollama inference and upgrade, and the package and temporary certificate were removed. The revised review ZIP contains both unsigned packages, listing assets, the schema-validated SBOM, notices and sanitized certification summaries. [Store evidence](MICROSOFT_STORE.md#development-installation)
+
 ## Milestone 14 — Address the local Windows certification findings
 
 The installed development MSIX completed an Ollama 0.40.15 task on `hermes3:8b` and preserved its task database after upgrade. The provider reported 103 completion tokens and confirmed the model was unloaded. A separate fixture verified restart at a committed workflow boundary, one follow-up request, and byte-identical world, task, workflow and memory databases after the upgrade.
