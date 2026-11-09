@@ -169,7 +169,7 @@ fn input(keys: Res<ButtonInput<KeyCode>>, layers: Res<Layers>, mut panel: ResMut
         panel.pending = Some(background(move || {
             browse(&directory, None, Direction::Older).map(Outcome::Report)
         }));
-        panel.status = "Reading saved experiment results…".into();
+        panel.status = "Reading saved experiment results...".into();
     }
 }
 
@@ -183,7 +183,7 @@ fn apply(panel: &mut ExperimentPanel, action: Action) {
             panel.pending = Some(background(move || {
                 run(&directory, role).map(|report| Outcome::Report(Some(report)))
             }));
-            panel.status = "Running the paired simulation…".into();
+            panel.status = "Running the paired simulation...".into();
         }
         Action::Browse(direction) => {
             let root = panel.directory.clone();
@@ -198,7 +198,7 @@ fn apply(panel: &mut ExperimentPanel, action: Action) {
                 }
                 Ok(Outcome::Report(report))
             }));
-            panel.status = "Reading saved experiment results…".into();
+            panel.status = "Reading saved experiment results...".into();
         }
         Action::NextSeed => {
             if let Some(pairs) = panel.report.as_ref().and_then(Report::pairs) {
@@ -221,7 +221,7 @@ fn apply(panel: &mut ExperimentPanel, action: Action) {
             panel.pending = Some(background(move || {
                 replay(&directory, index, arm, &pair).map(Outcome::Replay)
             }));
-            panel.status = "Replaying the retained trial…".into();
+            panel.status = "Replaying the retained trial...".into();
         }
     }
 }
@@ -460,7 +460,7 @@ fn readout(
                     content,
                     "{}Seed {}  |  Shelters {} vs {}  |  Delta {}",
                     if index == panel.seed_index {
-                        "Selected · "
+                        "Selected | "
                     } else {
                         ""
                     },
@@ -475,7 +475,7 @@ fn readout(
     if let Some(replay) = &panel.replay {
         let _ = writeln!(
             content,
-            "\nRead-only {} replay · Seed {}\nTick {}  |  Revision {}  |  Active residents {}\nShelters {}  |  Shared stock {}\nAdvance event {}",
+            "\nRead-only {} replay | Seed {}\nTick {}  |  Revision {}  |  Active residents {}\nShelters {}  |  Shared stock {}\nAdvance event {}",
             replay.arm.name(),
             replay.seed,
             replay.tick,
@@ -486,11 +486,15 @@ fn readout(
             replay.advance_event,
         );
     }
-    if let Some(report) = &panel.report {
+    if let Some(name) = panel
+        .report
+        .as_ref()
+        .and_then(|report| report.directory.file_name())
+    {
         let _ = write!(
             content,
-            "\nReport and replay databases\n{}",
-            report.directory.display()
+            "\nReport and replay databases in the desktop profile\nexperiments/{}",
+            name.to_string_lossy()
         );
     }
     if text.0 != content {
