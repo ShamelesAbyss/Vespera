@@ -9,7 +9,21 @@ repository for its latest published stable release. A newer eligible release
 must be immutable, use a `vMAJOR.MINOR.PATCH` tag, and provide an uploaded
 `Vespera-Setup-MAJOR.MINOR.PATCH.exe` asset with a GitHub SHA-256 digest. The
 check uses HTTPS, runs off the UI thread, and reports a missing release or
-channel error on Home. Setup download, verification and launch are pending.
+channel error on Home.
+
+The standard per-user Windows installation can select **Download update**.
+Vespera downloads the Setup bundle into a new temporary directory and checks
+its exact published size and SHA-256. Windows must also recognize a valid
+embedded Authenticode signature. After verification, **Close and open Setup**
+uses the ordinary desktop shutdown flow before opening the interactive Setup
+window. Complete the update in Setup. Vespera preserves its separate user data
+directory through the standard installer. Portable and source builds show
+availability and can obtain the package from GitHub Releases.
+
+For production verification, publish the approved signed Windows x64 Setup
+bundle as the exact versioned asset in a stable immutable GitHub release.
+An unsigned internal rehearsal is rejected by the updater. Distribution
+review and a production upgrade rehearsal are still required.
 
 ## Build and stage
 

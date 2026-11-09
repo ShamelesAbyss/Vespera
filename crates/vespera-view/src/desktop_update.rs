@@ -1,6 +1,6 @@
 //! Release selection for the official Windows desktop update channel.
 
-use std::sync::{Mutex, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use bevy::prelude::Resource;
@@ -20,10 +20,19 @@ struct Candidate {
 }
 
 type Check = Result<Option<Candidate>, &'static str>;
+type Preparation = Result<installer::VerifiedSetup, &'static str>;
+pub(super) type Handoff = Arc<Mutex<Option<installer::VerifiedSetup>>>;
+
+mod installer;
 
 #[derive(Resource)]
 pub(super) struct Updates {
     pending: Option<Mutex<mpsc::Receiver<Check>>>,
+    preparing: Option<Mutex<mpsc::Receiver<Preparation>>>,
+    candidate: Option<Candidate>,
+    prepared: Option<installer::VerifiedSetup>,
+    installed: bool,
+    pub handoff: Handoff,
     pub status: String,
 }
 
@@ -31,6 +40,11 @@ impl Default for Updates {
     fn default() -> Self {
         Self {
             pending: None,
+            preparing: None,
+            candidate: None,
+            prepared: None,
+            installed: installer::standard_installation(),
+            handoff: Handoff::default(),
             status: format!("Running Vespera {}", env!("CARGO_PKG_VERSION")),
         }
     }
@@ -38,7 +52,7 @@ impl Default for Updates {
 
 impl Updates {
     pub(super) fn check(&mut self) {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.preparing.is_some() || self.prepared.is_some() {
             return;
         }
         if !cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -47,6 +61,7 @@ impl Updates {
         }
         let (send, receive) = mpsc::sync_channel(1);
         self.pending = Some(Mutex::new(receive));
+        self.candidate = None;
         self.status = "Checking the official Vespera release channel...".into();
         std::thread::spawn(move || {
             let result = tokio::runtime::Builder::new_current_thread()
@@ -59,6 +74,28 @@ impl Updates {
     }
 
     pub(super) fn poll(&mut self) {
+        if let Some(preparing) = &mut self.preparing {
+            let result = preparing
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .try_recv();
+            match result {
+                Ok(Ok(setup)) => {
+                    self.preparing = None;
+                    self.prepared = Some(setup);
+                    self.status = "Setup verified. Select Close and open Setup when ready.".into();
+                }
+                Ok(Err(error)) => {
+                    self.preparing = None;
+                    self.status = error.into();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.preparing = None;
+                    self.status = "The installer download stopped unexpectedly.".into();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         let Some(pending) = &mut self.pending else {
             return;
         };
@@ -73,16 +110,70 @@ impl Updates {
         };
         self.pending = None;
         self.status = match result {
-            Ok(Some(candidate)) => format!(
-                "Vespera {} is available from the official release channel.",
-                candidate.version
-            ),
+            Ok(Some(candidate)) => {
+                let status = if self.installed {
+                    format!(
+                        "Vespera {} is available. Select Download update to prepare Setup.",
+                        candidate.version
+                    )
+                } else {
+                    format!(
+                        "Vespera {} is available. Portable builds can get Setup from GitHub Releases.",
+                        candidate.version
+                    )
+                };
+                self.candidate = Some(candidate);
+                status
+            }
             Ok(None) => format!(
                 "No newer published release found for Vespera {}.",
                 env!("CARGO_PKG_VERSION")
             ),
             Err(error) => error.into(),
         };
+    }
+
+    pub(super) fn install_label(&self) -> Option<&'static str> {
+        if self.prepared.is_some() {
+            Some("Close and open Setup")
+        } else if self.installed && self.candidate.is_some() && self.preparing.is_none() {
+            Some("Download update")
+        } else {
+            None
+        }
+    }
+
+    /// Returns true when Home should enter its ordinary window-close flow.
+    pub(super) fn install(&mut self) -> bool {
+        if let Some(setup) = self.prepared.take() {
+            *self
+                .handoff
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(setup);
+            self.candidate = None;
+            return true;
+        }
+        if !self.installed || self.preparing.is_some() {
+            return false;
+        }
+        let Some(candidate) = self.candidate.take() else {
+            return false;
+        };
+        let (send, receive) = mpsc::sync_channel(1);
+        self.preparing = Some(Mutex::new(receive));
+        self.status = format!(
+            "Downloading and verifying Vespera {} Setup...",
+            candidate.version
+        );
+        std::thread::spawn(move || {
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| "Could not start the installer download.")
+                .and_then(|runtime| runtime.block_on(installer::prepare(candidate)));
+            let _ = send.send(result);
+        });
+        false
     }
 }
 

@@ -5793,6 +5793,7 @@ dependencies = [
  "nvml-wrapper",
  "png 0.17.16",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde_json",
  "sysinfo",

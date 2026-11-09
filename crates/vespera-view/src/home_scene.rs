@@ -8,6 +8,7 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy::ui::prelude::{UiPickingCamera, UiPickingSettings};
+use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use vespera_world::{World as Simulation, WorldStore};
 
 use crate::atlas::{self, Layer, Layers};
@@ -34,10 +35,17 @@ enum Action {
     Workflows,
     Motion,
     CheckUpdates,
+    InstallUpdate,
 }
 
 #[derive(Component)]
 struct UpdateStatus;
+
+#[derive(Component)]
+struct InstallControl;
+
+#[derive(Component)]
+struct InstallLabel;
 
 #[derive(Component)]
 struct WorldStatus;
@@ -124,7 +132,7 @@ fn save_motion(path: &Path, enabled: bool) -> io::Result<()> {
     }
 }
 
-pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
+pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) -> std::process::ExitCode {
     let data_dir = data_dir.or_else(default_data_dir);
     let motion = MotionPreference::load(
         data_dir
@@ -170,7 +178,21 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
         Update,
         (actions, finish_open, readouts, update_motion, update_status).chain(),
     );
-    app.run();
+    let handoff = app.world().resource::<Updates>().handoff.clone();
+    if app.run() != AppExit::Success {
+        return std::process::ExitCode::FAILURE;
+    }
+    let setup = handoff
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(setup) = setup
+        && let Err(error) = setup.launch()
+    {
+        eprintln!("Could not open verified Vespera Setup: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
+    std::process::ExitCode::SUCCESS
 }
 
 fn default_data_dir() -> Option<PathBuf> {
@@ -305,6 +327,18 @@ fn setup(
                     Text::new(&updates.status),
                     TextFont::from_font_size(14.0)
                 ),
+                (
+                    InstallControl,
+                    Node {
+                        display: Display::None,
+                        ..default()
+                    },
+                    children![button_with_label(
+                        Action::InstallUpdate,
+                        "Download update",
+                        InstallLabel
+                    )]
+                ),
             ],
         ))
         .observe(
@@ -313,7 +347,9 @@ fn setup(
              mut layers: ResMut<Layers>,
              mut local: ResMut<LocalWorld>,
              mut motion: ResMut<MotionPreference>,
-             mut updates: ResMut<Updates>| {
+             mut updates: ResMut<Updates>,
+             primary: Single<Entity, With<PrimaryWindow>>,
+             mut close: MessageWriter<WindowCloseRequested>| {
                 if layers.active == Layer::Home && event.button == PointerButton::Primary {
                     match actions.get(event.original_event_target()) {
                         Ok(Action::Machine) => layers.request(Layer::Machine),
@@ -323,6 +359,11 @@ fn setup(
                         Ok(Action::Workflows) => layers.request(Layer::Workflows),
                         Ok(Action::Motion) => motion.requested = true,
                         Ok(Action::CheckUpdates) => updates.check(),
+                        Ok(Action::InstallUpdate) => {
+                            if updates.install() {
+                                close.write(WindowCloseRequested { window: *primary });
+                            }
+                        }
                         Err(_) => {}
                     }
                 }
@@ -330,10 +371,25 @@ fn setup(
         );
 }
 
-fn update_status(mut updates: ResMut<Updates>, mut label: Single<&mut Text, With<UpdateStatus>>) {
+fn update_status(
+    mut updates: ResMut<Updates>,
+    mut label: Single<&mut Text, (With<UpdateStatus>, Without<InstallLabel>)>,
+    mut control: Single<&mut Node, With<InstallControl>>,
+    mut install_label: Single<&mut Text, (With<InstallLabel>, Without<UpdateStatus>)>,
+) {
     updates.poll();
     if label.0 != updates.status {
         label.0.clone_from(&updates.status);
+    }
+    if let Some(text) = updates.install_label() {
+        if control.display != Display::Flex {
+            control.display = Display::Flex;
+        }
+        if install_label.0 != text {
+            install_label.0 = text.into();
+        }
+    } else if control.display != Display::None {
+        control.display = Display::None;
     }
 }
 
@@ -371,6 +427,14 @@ fn update_motion(
 }
 
 pub(super) fn button(action: impl Component, label: &'static str) -> impl Bundle {
+    button_with_label(action, label, ())
+}
+
+fn button_with_label(
+    action: impl Component,
+    label: &'static str,
+    marker: impl Bundle,
+) -> impl Bundle {
     (
         action,
         Pickable::default(),
@@ -381,6 +445,7 @@ pub(super) fn button(action: impl Component, label: &'static str) -> impl Bundle
         },
         BackgroundColor(Color::srgb(0.11, 0.23, 0.37)),
         children![(
+            marker,
             Text::new(label),
             TextFont::from_font_size(17.0),
             Pickable::IGNORE

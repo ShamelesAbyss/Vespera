@@ -122,8 +122,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if options.opens_home() {
-        home_scene::run(options.desktop_data, options.reduced_motion);
-        return ExitCode::SUCCESS;
+        return home_scene::run(options.desktop_data, options.reduced_motion);
     }
     if options.atlas {
         return match run_atlas(&mut options) {
