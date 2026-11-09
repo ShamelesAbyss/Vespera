@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Validate MSIX publisher and package family together
+
+The MSIX packager now asks Windows to derive the package family from the supplied manifest name and publisher. It rejects a mismatched Partner Center family before the build or staging directory is created. The negative fixture refused a syntactically valid but incorrect family. A development build matched the family reported by Windows for the locally installed test app. Draft privacy text and the public issue tracker are recorded for owner review. [Store identity and listing](MICROSOFT_STORE.md)
+
 ## Milestone 14 — Prepare the Vespera Nexus Studio Store edition
 
 Added an independent optimized Windows x64 MSIX path with an identity gate for Store product `9PNV5XMS74FW`, official package artwork and an isolated development identity. The Store viewer uses WinRT LocalState and routes updates through Microsoft Store. The classic installer and portable build retain their existing application paths.

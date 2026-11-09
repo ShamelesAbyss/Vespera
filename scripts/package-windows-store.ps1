@@ -41,6 +41,49 @@ if ($Development) {
 }
 $null = [Security.Cryptography.X509Certificates.X500DistinguishedName]::new($identity.publisher)
 
+# Ask Windows to derive the family instead of maintaining a publisher hash algorithm.
+if (!('VesperaStore.PackageIdentity' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace VesperaStore {
+    public static class PackageIdentity {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PackageId {
+            public uint Reserved;
+            public uint ProcessorArchitecture;
+            public ulong Version;
+            public string Name;
+            public string Publisher;
+            public string ResourceId;
+            public string PublisherId;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int PackageFamilyNameFromId(ref PackageId id, ref uint length, StringBuilder result);
+
+        public static string FamilyName(string name, string publisher) {
+            var id = new PackageId { Name = name, Publisher = publisher };
+            var result = new StringBuilder(65);
+            uint length = (uint)result.Capacity;
+            int error = PackageFamilyNameFromId(ref id, ref length, result);
+            if (error != 0) {
+                throw new Win32Exception(error);
+            }
+            return result.ToString();
+        }
+    }
+}
+"@
+}
+$family = [VesperaStore.PackageIdentity]::FamilyName($identity.name, $identity.publisher)
+if (!$Development -and ![string]::Equals($family, $identity.packageFamilyName, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The supplied package family does not match the Windows identity for the supplied name and publisher.'
+}
+
 $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
 $makeAppx = Get-ChildItem -LiteralPath $sdkBin -Directory |
     Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } |
@@ -150,6 +193,7 @@ try {
         packageVersion = $Version
         architecture = 'x64'
         packageName = $identity.name
+        packageFamilyName = $family
         expectedPackageFamilyName = $identity.packageFamilyName
         packageSha256 = $hash
         viewerSha256 = (Get-FileHash -LiteralPath (Join-Path $payload 'bin/vespera-view.exe')).Hash.ToLowerInvariant()

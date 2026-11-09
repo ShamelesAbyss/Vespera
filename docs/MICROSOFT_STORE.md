@@ -14,7 +14,7 @@ Open the [Vespera Nexus Studio draft](https://partner.microsoft.com/en-us/dashbo
 | Package/Properties/PublisherDisplayName | `publisherDisplayName` |
 | Package Family Name | `packageFamilyName` |
 
-Also confirm that **Packages** accepts a Windows Desktop x64 MSIX for this draft. No authenticated Partner Center session or provisioned submission API was available during development. Keep the identity JSON in an operator-controlled location, such as `target/store-identity.json`. It contains identity metadata only. Microsoft account credentials and tokens belong in the owner's authorized authentication flow.
+Also confirm that **Packages** accepts a Windows Desktop x64 MSIX for this draft. No authenticated Partner Center session or provisioned submission API was available during development. Keep the identity JSON in an operator-controlled location, such as `target/store-identity.json`. It contains identity metadata only. Microsoft account credentials and tokens belong in the owner's authorized authentication flow. The build checks the supplied family against the Windows-derived family for the exact name and publisher before staging any files. [Windows package identity](https://learn.microsoft.com/windows/apps/desktop/modernize/package-identity-overview)
 
 ## Build an unsigned MSIX
 
@@ -81,7 +81,15 @@ Use the generated listing tile and native package captures. The 1464×841 Living
 
 **Privacy and permissions review**
 
-Prompts, responses, settings, task history, messages, memory and world data are stored locally when the relevant feature is used. An explicitly configured provider receives the task inputs it needs, which can include selected memory or preceding workflow outputs. The desktop reads host resource information for Machine and can read user-provided clipboard text during editing. The application uses full trust to run the native renderer, access its local SQLite files, and reach operator-configured local services. A reviewed privacy policy, the listing's final disclosure answers, and an owner-approved support contact are pending. Review third-party notices against the MSIX payload and resolve outstanding rights and attribution before distribution. [Privacy and support requirements](https://learn.microsoft.com/windows/apps/publish/publish-your-app/msix/support-info) · [Vespera release review](RELEASE.md)
+Prompts, responses, settings, task history, messages, memory and world data are stored locally when the relevant feature is used. An explicitly configured provider receives the task inputs it needs, which can include selected memory or preceding workflow outputs. The desktop reads host resource information for Machine and can read user-provided clipboard text during editing. The application uses full trust to run the native renderer, access its local SQLite files, and reach operator-configured local services. Review third-party notices against the MSIX payload and resolve outstanding rights and attribution before distribution. [Privacy and support requirements](https://learn.microsoft.com/windows/apps/publish/publish-your-app/msix/support-info) · [Vespera release review](RELEASE.md)
+
+**Proposed support URL for owner review** [Vespera issue tracker](https://github.com/ShamelesAbyss/Vespera/issues)
+
+**Draft privacy text for owner review**
+
+> Vespera Nexus Studio stores the work you create and the settings you choose in your Windows user profile. When you run an inference task, Vespera sends the prompt and any context you authorize to your selected model provider. Context can include saved memory or earlier workflow results. Your provider controls how it processes and retains that input. Vespera reads local hardware information for the Machine view and reads clipboard text when you paste it into an editor. Windows manages the installed package and its updates. If you report a problem through the public issue tracker, include only the details you want to make public. Keep backups of your work before removing the application.
+
+The privacy text, disclosure answers and support route need owner review before submission.
 
 ## Prepare the submission
 
