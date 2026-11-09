@@ -692,6 +692,8 @@ In **Models & Providers**, select a saved coordinator, grant it **Allow delegati
 
 Press **Enter** after each field, then review the assignments and prompt previews. Press **Enter** again to run the plan or **Esc** to discard it. After each later prompt, enter comma-separated earlier step numbers as inputs. Blank selects the immediately preceding step; `0` makes the step independent. For a four-step branch and join, use `1` for steps 2 and 3, then `2,3` for step 4. Forward references and duplicates are rejected. Review shows each input list. Selected results are supplied as untrusted input; dependency branches do not imply concurrent inference. The last step supplies the final result. Each step has one attempt, a 128-output-token limit and a 50-second deadline. The desktop records the run in the same workflow history and Swarm journal as **Draft + review**.
 
+From the review screen, press a step number to revise its prefilled fields. The coordinator owns step 1. For later steps, you can change the assigned agent, prompt and input list. **Esc** during a revision discards that edit and returns to review.
+
 The Windows desktop walkthrough authored and ran a four-step branch and join across three saved agents using Ollama. After restarting the desktop, Workflow history reopened the four completed attempts and opened Swarm with the selected workflow in focus. [Walkthrough evidence](DEVELOPMENT_LOG.md#milestone-12--desktop-pointer-routing-and-live-branching-workflow)
 
 For an opt-in execution rehearsal, set `VESPERA_TEST_BRANCH_DATA` to an isolated desktop data directory with a saved roster, a delegation-enabled coordinator and a running configured model provider. The test creates tasks, workflow history and event evidence in that directory; it does not drive the graphical editor.
@@ -707,6 +709,8 @@ Use **Ctrl+V** in a task or workflow prompt to append text from the system clipb
 Open **Workflow history** from Home or press **F7**. Use **Newer workflow** and **Older workflow**, or **Up** and **Down**, to inspect retained checkpoints in acceptance order. The panel shows the root ID, status, coordinator, step owners, and a preview of the selected response. Nonterminal records are marked interrupted after the writer exits. If the database is busy, use **Refresh** or **R** after the writer finishes. The history reader does not start providers.
 
 Select **Open in Swarm** or press **Enter** to focus the journal view on the selected root workflow. **Backspace** clears the focus. Use **F7** to return to Workflow history. The CLI's `workflow-history` command prints the full private checkpoint.
+
+Select **Edit a copy** or press **E** to open a retained desktop plan in the editor. The copy maps its assignments to the current roster by agent identity and uses the current saved provider bindings. Running it creates a new workflow ID and checkpoint. The original stays available in history.
 
 ### Switch layers in Atlas
 

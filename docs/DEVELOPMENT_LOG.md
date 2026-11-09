@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 12 — Edit workflow drafts and retained plans
+
+The workflow review accepts a step number to reopen its prefilled fields. Workflow history can copy a retained plan into that editor, resolving assignments by agent identity against the current roster. A new execution receives a fresh workflow ID.
+
+The optimized Windows walkthrough opened the copy with the pointer, abandoned an edit to step 1, then changed the third step's prompt and removed its dependency on step 1. Step 4 still joined steps 2 and 3. Ollama `hermes3:8b` completed all four steps, the CLI comparison matched the original checkpoint byte for byte, and Ollama reported zero resident models after cleanup. A separately authored two-step workflow also completed and retained its default dependency. The 49 default optimized graphics tests, formatting, and strict graphics Clippy passed.
+
 ## Milestone 10 — Separate operator task audit retention
 
 The signed operator endpoint and SDK can replay a dedicated audit of the latest 256 task transitions. It has its own cursor and commits with task state in the broker transaction. Broker schema 4 migrates the task transitions still retained in the mixed feed. A pre-upgrade backup is required to reopen the database with an older broker.

@@ -9,7 +9,7 @@ use vespera_orchestrator::{StoredWorkflow, StoredWorkflowSummary, WorkflowStore}
 use crate::atlas::{self, Layer, Layers};
 use crate::desktop_evidence::workflow_path;
 use crate::home_scene::button;
-use crate::provider_scene::preview;
+use crate::provider_scene::{Panel, preview};
 use crate::swarm_scene::WorkflowSelection;
 
 #[derive(Clone, Copy, Component)]
@@ -18,6 +18,7 @@ enum Action {
     Previous,
     Next,
     Swarm,
+    Copy,
     Home,
 }
 
@@ -37,6 +38,7 @@ struct History {
     pending: Option<Mutex<Receiver<Load>>>,
     checkpoints: Option<Checkpoints>,
     error: Option<String>,
+    copy_error: Option<&'static str>,
 }
 
 pub(super) fn install(app: &mut App, dir: PathBuf) {
@@ -46,6 +48,7 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         pending: None,
         checkpoints: None,
         error: None,
+        copy_error: None,
     })
     .add_systems(Startup, setup)
     .add_systems(Update, (navigate, receive, render).chain());
@@ -79,7 +82,7 @@ fn setup(mut commands: Commands) {
                     TextFont::from_font_size(34.0)
                 ),
                 (
-                    Text::new("Retained desktop checkpoints. Up and Down browse, F5 returns Home."),
+                    Text::new("Retained desktop checkpoints. Up and Down browse. E edits a copy. F5 returns Home."),
                     TextFont::from_font_size(16.0),
                 ),
                 (
@@ -94,6 +97,7 @@ fn setup(mut commands: Commands) {
                         button(Action::Previous, "Newer workflow"),
                         button(Action::Next, "Older workflow"),
                         button(Action::Swarm, "Open in Swarm"),
+                        button(Action::Copy, "Edit a copy"),
                         button(Action::Home, "Home"),
                     ],
                 ),
@@ -105,12 +109,13 @@ fn setup(mut commands: Commands) {
              actions: Query<&Action>,
              mut history: ResMut<History>,
              mut layers: ResMut<Layers>,
-             mut swarm: ResMut<WorkflowSelection>| {
+             mut swarm: ResMut<WorkflowSelection>,
+             mut panel: ResMut<Panel>| {
                 if layers.active == Layer::Workflows
                     && event.button == PointerButton::Primary
                     && let Ok(&action) = actions.get(event.original_event_target())
                 {
-                    apply(action, &mut history, &mut layers, &mut swarm);
+                    apply(action, &mut history, &mut layers, &mut swarm, &mut panel);
                 }
             },
         );
@@ -121,6 +126,7 @@ fn navigate(
     mut history: ResMut<History>,
     mut layers: ResMut<Layers>,
     mut swarm: ResMut<WorkflowSelection>,
+    mut panel: ResMut<Panel>,
 ) {
     if layers.active != Layer::Workflows {
         return;
@@ -133,10 +139,12 @@ fn navigate(
         Action::Next
     } else if keys.just_pressed(KeyCode::Enter) {
         Action::Swarm
+    } else if keys.just_pressed(KeyCode::KeyE) {
+        Action::Copy
     } else {
         return;
     };
-    apply(action, &mut history, &mut layers, &mut swarm);
+    apply(action, &mut history, &mut layers, &mut swarm, &mut panel);
 }
 
 fn apply(
@@ -144,6 +152,7 @@ fn apply(
     history: &mut History,
     layers: &mut Layers,
     swarm: &mut WorkflowSelection,
+    panel: &mut Panel,
 ) {
     if matches!(action, Action::Home) {
         layers.request(Layer::Home);
@@ -156,7 +165,7 @@ fn apply(
         checkpoints
             .selected
             .as_ref()
-            .map(|(index, stored)| (checkpoints, *index, stored.plan.task.id))
+            .map(|(index, stored)| (checkpoints, *index, stored))
     });
     let task = match action {
         Action::Refresh => None,
@@ -175,16 +184,28 @@ fn apply(
         }
         Action::Swarm => {
             if history.error.is_none()
-                && let Some((_, _, task)) = selected
+                && let Some((_, _, stored)) = selected
             {
-                swarm.0 = Some(task);
+                swarm.0 = Some(stored.plan.task.id);
                 layers.request(Layer::Swarm);
+            }
+            return;
+        }
+        Action::Copy => {
+            if history.error.is_none()
+                && let Some((_, _, stored)) = selected
+            {
+                history.copy_error = panel.queue_workflow_copy(&stored.plan).err();
+                if history.copy_error.is_none() {
+                    layers.request(Layer::Providers);
+                }
             }
             return;
         }
         Action::Home => return,
     };
     history.error = None;
+    history.copy_error = None;
     let path = history.path.clone();
     let (send, receive) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -247,7 +268,12 @@ fn render(layers: Res<Layers>, history: Res<History>, mut text: Single<&mut Text
     } else if let Some(checkpoints) = &history.checkpoints
         && let Some((index, workflow)) = &checkpoints.selected
     {
-        describe(*index, checkpoints.recent.len(), workflow)
+        let mut content = describe(*index, checkpoints.recent.len(), workflow);
+        if let Some(error) = history.copy_error {
+            content.push_str("\n\n");
+            content.push_str(error);
+        }
+        content
     } else {
         "No desktop workflows have been retained yet.".into()
     };

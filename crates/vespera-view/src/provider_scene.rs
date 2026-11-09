@@ -13,6 +13,7 @@ use vespera_agents::{AgentTaskStore, AgentTaskStoreError, StoredAgentTask, Store
 use vespera_app::runtime::{RuntimeError, configured_registry, windows_credential_target};
 use vespera_config::ProviderConfig;
 use vespera_core::{AgentId, Permission, ProviderKind};
+use vespera_orchestrator::{OutputPolicy, Workflow};
 use vespera_providers::{
     CancellationToken, DiscoveredModel, ProviderError, ProviderHealthReport,
     ProviderLifecycleSupport,
@@ -29,6 +30,16 @@ const PROMPT_LIMIT: usize = 1200;
 const ENDPOINT_LIMIT: usize = 160;
 const OLLAMA: &str = "http://127.0.0.1:11434";
 const COMPATIBLE: &str = "http://127.0.0.1:1234/v1";
+const NUMBER_KEYS: [KeyCode; 8] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+];
 
 #[derive(Component, Clone, Copy)]
 enum Action {
@@ -88,9 +99,75 @@ enum Edit {
 struct ChainDraft {
     count: Option<usize>,
     steps: Vec<StepRequest>,
+    revision: Option<usize>,
     assignee: Option<usize>,
     pending_prompt: Option<String>,
     input: String,
+}
+
+impl ChainDraft {
+    fn reviewing(&self) -> bool {
+        self.revision.is_none() && self.count == Some(self.steps.len())
+    }
+
+    fn step_index(&self) -> usize {
+        self.revision.unwrap_or(self.steps.len())
+    }
+
+    fn revise(&mut self, index: usize) {
+        let Some(step) = self.steps.get(index) else {
+            return;
+        };
+        self.revision = Some(index);
+        if index == 0 {
+            self.assignee = Some(step.agent);
+            self.input.clone_from(&step.prompt);
+        } else {
+            self.input = (step.agent + 1).to_string();
+        }
+    }
+
+    fn revision_inputs(&self) -> String {
+        let Some(index) = self.revision else {
+            return String::new();
+        };
+        let numbers = self.steps[index]
+            .dependencies
+            .iter()
+            .filter_map(|name| name.strip_prefix("step-"))
+            .collect::<Vec<_>>();
+        if numbers.is_empty() {
+            "0".into()
+        } else {
+            numbers.join(",")
+        }
+    }
+
+    fn record_step(&mut self, prompt: String, dependencies: Vec<String>) {
+        let index = self.step_index();
+        let step = StepRequest {
+            name: format!("step-{}", index + 1),
+            agent: self.assignee.take().expect("prompt has an assigned agent"),
+            prompt,
+            dependencies,
+        };
+        if self.revision.take().is_some() {
+            self.steps[index] = step;
+        } else {
+            self.steps.push(step);
+        }
+        self.input.clear();
+    }
+
+    fn cancel_revision(&mut self) -> bool {
+        if self.revision.take().is_none() {
+            return false;
+        }
+        self.assignee = None;
+        self.pending_prompt = None;
+        self.input.clear();
+        true
+    }
 }
 
 enum Work {
@@ -124,12 +201,13 @@ struct History {
 }
 
 #[derive(Resource)]
-struct Panel {
+pub(super) struct Panel {
     kind: ProviderKind,
     endpoint: String,
     credential: Option<String>,
     credential_windows: bool,
     draft: Option<Edit>,
+    pending_copy: Option<ChainDraft>,
     outcome: Option<ProbeResult>,
     page: usize,
     dir: Option<PathBuf>,
@@ -140,6 +218,63 @@ struct Panel {
     closing: bool,
     feedback: String,
     history: Option<History>,
+}
+
+impl Panel {
+    pub(super) fn queue_workflow_copy(&mut self, plan: &Workflow) -> Result<(), &'static str> {
+        if self.work.is_some() || self.closing {
+            return Err("Wait for the current provider operation to finish.");
+        }
+        let roster = self
+            .roster
+            .as_ref()
+            .ok_or("Set up the agent roster first.")?;
+        let unsupported = "This checkpoint is outside the desktop editor's workflow limits.";
+        if !(2..=MAX_CHAIN_STEPS).contains(&plan.steps.len())
+            || plan.steps[0].candidates.as_slice() != [plan.coordinator]
+            || !matches!(&plan.output, OutputPolicy::Step { step } if step == &plan.steps[plan.steps.len() - 1].name)
+        {
+            return Err(unsupported);
+        }
+        let mut steps = Vec::with_capacity(plan.steps.len());
+        for (index, step) in plan.steps.iter().enumerate() {
+            let [agent] = step.candidates.as_slice() else {
+                return Err(unsupported);
+            };
+            if step.prompt.chars().count() > PROMPT_LIMIT {
+                return Err(unsupported);
+            }
+            let agent = roster
+                .config()
+                .agents
+                .iter()
+                .position(|entry| entry.identity.id == *agent)
+                .ok_or("An assigned agent is missing from the current roster.")?;
+            let dependencies = step
+                .dependencies
+                .iter()
+                .map(|name| {
+                    plan.steps[..index]
+                        .iter()
+                        .position(|earlier| earlier.name == *name)
+                        .map(|input| format!("step-{}", input + 1))
+                        .ok_or(unsupported)
+                })
+                .collect::<Result<_, _>>()?;
+            steps.push(StepRequest {
+                name: format!("step-{}", index + 1),
+                agent,
+                prompt: step.prompt.clone(),
+                dependencies,
+            });
+        }
+        self.pending_copy = Some(ChainDraft {
+            count: Some(steps.len()),
+            steps,
+            ..default()
+        });
+        Ok(())
+    }
 }
 
 pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
@@ -169,6 +304,7 @@ pub(super) fn install(app: &mut App, dir: Option<PathBuf>) {
         credential,
         credential_windows,
         draft: None,
+        pending_copy: None,
         outcome: None,
         page: 0,
         dir,
@@ -546,6 +682,14 @@ fn keyboard(
         modifiers.reset_all();
         return;
     }
+    if let Some(draft) = panel.pending_copy.take() {
+        panel.selected = draft.steps[0].agent;
+        panel.rebind = false;
+        panel.history = None;
+        panel.feedback = "Editing a copy of the retained workflow.".into();
+        panel.draft = Some(Edit::Chain(draft));
+        input.clear();
+    }
     let primary = if cfg!(target_os = "macos") {
         [KeyCode::SuperLeft, KeyCode::SuperRight]
     } else {
@@ -590,18 +734,8 @@ fn keyboard(
                     apply(Action::Workflow, &mut panel);
                 } else if event.key_code == KeyCode::KeyC {
                     apply(Action::Chain, &mut panel);
-                } else if let Some(index) = [
-                    KeyCode::Digit1,
-                    KeyCode::Digit2,
-                    KeyCode::Digit3,
-                    KeyCode::Digit4,
-                    KeyCode::Digit5,
-                    KeyCode::Digit6,
-                    KeyCode::Digit7,
-                    KeyCode::Digit8,
-                ]
-                .iter()
-                .position(|key| *key == event.key_code)
+                } else if let Some(index) =
+                    NUMBER_KEYS.iter().position(|key| *key == event.key_code)
                 {
                     if panel.history.is_some() {
                         inspect_history(&mut panel, index);
@@ -614,7 +748,15 @@ fn keyboard(
         }
         match event.key_code {
             KeyCode::Enter if !event.repeat => submit(&mut panel),
-            KeyCode::Escape => panel.draft = None,
+            KeyCode::Escape => {
+                if let Some(Edit::Chain(draft)) = panel.draft.as_mut()
+                    && draft.cancel_revision()
+                {
+                    panel.feedback.clear();
+                } else {
+                    panel.draft = None;
+                }
+            }
             _ => {
                 if let Some(edit) = panel.draft.as_mut() {
                     update_edit(edit, event);
@@ -777,7 +919,14 @@ fn update_edit(edit: &mut Edit, event: &KeyboardInput) {
         Edit::Workflow { fields, index } => {
             (&mut fields[*index], PROMPT_LIMIT, |c| !c.is_control())
         }
-        Edit::Chain(draft) if draft.count == Some(draft.steps.len()) => return,
+        Edit::Chain(draft) if draft.reviewing() => {
+            if !event.repeat
+                && let Some(index) = NUMBER_KEYS.iter().position(|key| *key == event.key_code)
+            {
+                draft.revise(index);
+            }
+            return;
+        }
         Edit::Chain(draft) if draft.pending_prompt.is_some() => (&mut draft.input, 24, |c| {
             c.is_ascii_digit() || c == ',' || c == ' '
         }),
@@ -991,20 +1140,14 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
     let Some(roster) = &panel.roster else {
         return;
     };
-    if draft.count == Some(draft.steps.len()) {
+    if draft.reviewing() {
         start_workflow(panel, draft.steps);
         return;
     }
     if let Some(prompt) = draft.pending_prompt.take() {
-        match parse_predecessors(&draft.input, draft.steps.len()) {
+        match parse_predecessors(&draft.input, draft.step_index()) {
             Some(dependencies) => {
-                draft.steps.push(StepRequest {
-                    name: format!("step-{}", draft.steps.len() + 1),
-                    agent: draft.assignee.take().expect("prompt has an assigned agent"),
-                    prompt,
-                    dependencies,
-                });
-                draft.input.clear();
+                draft.record_step(prompt, dependencies);
                 panel.feedback.clear();
             }
             None => {
@@ -1022,6 +1165,7 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
             Ok(count) if (2..=MAX_CHAIN_STEPS).contains(&count) => {
                 draft.count = Some(count);
                 draft.assignee = Some(panel.selected);
+                draft.input.clear();
                 None
             }
             _ => Some("Enter a step count from 2 to 6."),
@@ -1042,30 +1186,26 @@ fn submit_chain(panel: &mut Panel, mut draft: ChainDraft) {
             }) {
                 Some((index, provider)) if Some(provider) == coordinator_provider => {
                     draft.assignee = Some(index);
+                    draft.input = draft
+                        .revision
+                        .map_or_else(String::new, |revision| draft.steps[revision].prompt.clone());
                     None
                 }
                 _ => Some("Choose a saved agent on the coordinator's provider."),
             }
         }
-        (Some(_), Some(_)) if !draft.input.trim().is_empty() && !draft.steps.is_empty() => {
+        (Some(_), Some(_)) if !draft.input.trim().is_empty() && draft.step_index() != 0 => {
             draft.pending_prompt = Some(std::mem::take(&mut draft.input));
+            draft.input = draft.revision_inputs();
             None
         }
-        (Some(_), Some(agent)) if !draft.input.trim().is_empty() => {
-            draft.steps.push(StepRequest {
-                name: format!("step-{}", draft.steps.len() + 1),
-                agent,
-                prompt: std::mem::take(&mut draft.input),
-                dependencies: vec![],
-            });
-            draft.assignee = None;
+        (Some(_), Some(_)) if !draft.input.trim().is_empty() => {
+            let prompt = std::mem::take(&mut draft.input);
+            draft.record_step(prompt, vec![]);
             None
         }
         _ => Some("Enter a prompt for this step."),
     };
-    if error.is_none() {
-        draft.input.clear();
-    }
     panel.feedback = error.unwrap_or_default().into();
     panel.draft = Some(Edit::Chain(draft));
 }
@@ -1408,7 +1548,7 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                 );
             }
             Edit::Chain(draft) => {
-                if draft.count == Some(draft.steps.len()) {
+                if draft.reviewing() {
                     content.push_str("\nReview this workflow before running it.\n");
                     for step in &draft.steps {
                         let owner = panel
@@ -1430,9 +1570,14 @@ fn readout(layers: Res<Layers>, panel: Res<Panel>, mut text: Single<&mut Text, W
                             }
                         );
                     }
-                    content.push_str("Enter runs the workflow. Selected dependency results are untrusted input. The last step supplies the output.");
+                    content.push_str("Press a step number to edit it, or Enter to run. Selected inputs are untrusted. The last step supplies the output.");
                 } else if let Some(count) = draft.count {
-                    let _ = writeln!(content, "\nStep {} of {count}", draft.steps.len() + 1);
+                    let action = if draft.revision.is_some() {
+                        "Editing step"
+                    } else {
+                        "Step"
+                    };
+                    let _ = writeln!(content, "\n{action} {} of {count}", draft.step_index() + 1);
                     if draft.pending_prompt.is_some() {
                         let _ = write!(
                             content,
@@ -1610,6 +1755,59 @@ mod tests {
         panel.draft = Some(Edit::Endpoint("http://127.0.0.1:8000".into()));
         submit(&mut panel);
         assert!(!panel_provider(&panel).credential_windows);
+    }
+
+    #[test]
+    fn revising_a_step_preserves_other_steps_and_their_input_links() {
+        let mut edit = Edit::Chain(ChainDraft {
+            count: Some(3),
+            steps: (1..=3)
+                .map(|number| StepRequest {
+                    name: format!("step-{number}"),
+                    agent: 0,
+                    prompt: format!("Original step {number}"),
+                    dependencies: (number > 1)
+                        .then(|| format!("step-{}", number - 1))
+                        .into_iter()
+                        .collect(),
+                })
+                .collect(),
+            ..default()
+        });
+
+        update_edit(
+            &mut edit,
+            &KeyboardInput {
+                key_code: KeyCode::Digit2,
+                logical_key: Key::Character("2".into()),
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            },
+        );
+        let Edit::Chain(mut draft) = edit else {
+            panic!("expected a workflow draft");
+        };
+        assert!(!draft.reviewing());
+        assert_eq!(draft.input, "1");
+        assert_eq!(draft.revision_inputs(), "1");
+        assert!(parse_predecessors("2", draft.step_index()).is_none());
+        draft.assignee = Some(1);
+        draft.record_step("New prompt".into(), vec![]);
+        assert!(draft.reviewing());
+        assert_eq!(draft.steps[1].name, "step-2");
+        assert_eq!(draft.steps[1].agent, 1);
+        assert_eq!(draft.steps[1].prompt, "New prompt");
+        assert!(draft.steps[1].dependencies.is_empty());
+        assert_eq!(draft.steps[2].dependencies, ["step-2"]);
+
+        draft.revise(0);
+        assert_eq!(draft.input, "Original step 1");
+        draft.input = "Discard this edit".into();
+        assert!(draft.cancel_revision());
+        assert!(draft.reviewing());
+        assert_eq!(draft.steps[0].prompt, "Original step 1");
     }
 
     #[test]
