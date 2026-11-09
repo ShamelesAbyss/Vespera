@@ -5,13 +5,13 @@ pub(super) mod mailbox;
 mod subscription;
 mod tls;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::fs::File;
 use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
@@ -39,6 +39,7 @@ use auth::{Authentication, Principal, Proof, SCHEME};
 const MAX_ACCESS_FILE: u64 = 128 * 1024;
 const MAX_BODY: usize = 512 * 1024;
 const MAX_CONNECTIONS: usize = 32;
+const MAX_CONNECTIONS_PER_PEER: usize = 16;
 type Reply = Response<Full<Bytes>>;
 
 #[derive(Debug, thiserror::Error)]
@@ -246,18 +247,30 @@ impl Server {
     /// Serve until the listener fails or the caller drops this future.
     pub async fn serve(self) -> Result<(), ServerError> {
         let mut connections = JoinSet::new();
+        let mut peer_slots = BTreeMap::new();
         let live_slots = Arc::new(Semaphore::new(8));
         let changed = Arc::new(Notify::new());
         loop {
             tokio::select! {
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 accepted = self.listener.accept(), if connections.len() < MAX_CONNECTIONS => {
-                    let (stream, _) = accepted?;
+                    let (stream, peer) = accepted?;
+                    peer_slots.retain(|_, slots: &mut Weak<Semaphore>| slots.strong_count() > 0);
+                    let entry = peer_slots.entry(peer.ip().to_canonical()).or_default();
+                    let peer_limit = entry.upgrade().unwrap_or_else(|| {
+                        let limit = Arc::new(Semaphore::new(MAX_CONNECTIONS_PER_PEER));
+                        *entry = Arc::downgrade(&limit);
+                        limit
+                    });
+                    let Ok(peer_slot) = peer_limit.try_acquire_owned() else {
+                        continue;
+                    };
                     let state = Arc::clone(&self.service);
                     let slots = Arc::clone(&live_slots);
                     let changed = Arc::clone(&changed);
                     let tls = self.tls.clone();
                     connections.spawn(async move {
+                        let _peer_slot = peer_slot;
                         if let Some(acceptor) = tls {
                             if let Ok(Ok(stream)) = tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await {
                                 serve_peer(stream, &state, &slots, &changed).await;
@@ -407,7 +420,10 @@ async fn handle(
     if (path == "/v2/operator") != (principal == Principal::Operator) {
         return Err(UNAUTHORIZED);
     }
-    let bytes = read_body(&parts.headers, body).await?;
+    state.lock().await.auth.check_header(&proof)?;
+    let bytes = tokio::time::timeout(Duration::from_secs(5), read_body(&parts.headers, body))
+        .await
+        .map_err(|_| HttpError(StatusCode::REQUEST_TIMEOUT, "body_timeout"))??;
     let mut service = state.lock().await;
     service.auth.verify(proof, path, &bytes)?;
     let result = service.apply(principal, &bytes);

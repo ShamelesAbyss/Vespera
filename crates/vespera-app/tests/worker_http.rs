@@ -6,6 +6,8 @@ use std::time::Duration;
 use reqwest::{Client, Response, StatusCode};
 use ring::hmac;
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use uuid::Uuid;
 use vespera_core::{AgentId, TaskId};
 use vespera_sdk::{
@@ -217,6 +219,69 @@ fn routed_policy(first: AgentId, second: AgentId) -> PathBuf {
     access["workers"][0]["message_targets"] = json!([second]);
     std::fs::write(&policy, serde_json::to_vec(&access).unwrap()).unwrap();
     policy
+}
+
+#[tokio::test]
+async fn broker_limits_idle_connections_from_one_peer_and_reclaims_slots() {
+    let (_process, base) = launch(AgentId::new(), AgentId::new());
+    let address = base.strip_prefix("http://").unwrap();
+    let mut occupied = Vec::new();
+    for _ in 0..16 {
+        occupied.push(TcpStream::connect(address).await.unwrap());
+    }
+    let mut excess = TcpStream::connect(address).await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(2), excess.read_u8())
+        .await
+        .expect("the over-quota connection should close before the header deadline");
+    assert!(result.is_err());
+    drop(occupied);
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(reply) = client.get(format!("{base}/v2/session")).send().await
+                && reply.status() == StatusCode::OK
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("closing a peer's connections should free its slots");
+}
+
+#[tokio::test]
+async fn broker_rejects_unknown_workers_and_times_out_stalled_request_bodies() {
+    let first = AgentId::new();
+    let second = AgentId::new();
+    let (_process, base) = launch(first, second);
+    let wire = Wire {
+        client: Client::new(),
+        base,
+        first,
+        second,
+    };
+    let address = wire.base.strip_prefix("http://").unwrap();
+    for (principal, seconds, expected) in [(AgentId::new(), 2, 401), (first, 8, 408)] {
+        let auth = wire
+            .sign("worker", &principal.to_string(), FIRST, "{}")
+            .await;
+        let mut socket = TcpStream::connect(address).await.unwrap();
+        let headers = format!(
+            "POST /v2/worker HTTP/1.1\r\nHost: {address}\r\nAuthorization: {auth}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+        );
+        socket.write_all(headers.as_bytes()).await.unwrap();
+        let mut reply = Vec::new();
+        tokio::time::timeout(Duration::from_secs(seconds), socket.read_to_end(&mut reply))
+            .await
+            .expect("the broker should respond before the connection deadline")
+            .unwrap();
+        assert!(reply.starts_with(format!("HTTP/1.1 {expected}").as_bytes()));
+    }
 }
 
 #[tokio::test]

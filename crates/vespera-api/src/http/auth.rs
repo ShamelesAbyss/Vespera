@@ -96,6 +96,24 @@ impl Authentication {
         self.started.elapsed().as_millis() as u64
     }
 
+    pub(super) fn check_header(&self, proof: &Proof<'_>) -> Result<(), HttpError> {
+        self.check_freshness(proof, self.elapsed_ms())?;
+        self.credentials
+            .contains_key(&proof.principal)
+            .then_some(())
+            .ok_or(UNAUTHORIZED)
+    }
+
+    fn check_freshness(&self, proof: &Proof<'_>, now: u64) -> Result<(), HttpError> {
+        if proof.session != self.session
+            || proof.issued_ms > now
+            || now - proof.issued_ms >= WINDOW_MS
+        {
+            return Err(UNAUTHORIZED);
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(
         &mut self,
         proof: Proof<'_>,
@@ -120,12 +138,7 @@ impl Authentication {
         body: &[u8],
         now: u64,
     ) -> Result<(), HttpError> {
-        if proof.session != self.session
-            || proof.issued_ms > now
-            || now - proof.issued_ms >= WINDOW_MS
-        {
-            return Err(UNAUTHORIZED);
-        }
+        self.check_freshness(&proof, now)?;
         let credential = self
             .credentials
             .get_mut(&proof.principal)

@@ -121,6 +121,7 @@ pub enum ErrorCode {
     ForeignCursor,
     CursorExpired,
     BodyLimit,
+    BodyTimeout,
     ExpectedJson,
     NonceCapacity,
     Capacity,

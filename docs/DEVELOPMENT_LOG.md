@@ -1,5 +1,9 @@
 # Development log
 
+## Broker connection admission hardening
+
+The broker limits each peer IP to 16 of the 32 connection slots and releases its share when the connection closes. Unknown principals and stale or foreign sessions fail before the body read. A five-second body deadline bounds stalled requests while full HMAC verification still precedes dispatch. Windows passed 13 HTTP integration tests, 12 API and SDK unit tests, the SDK doctest, and strict Clippy for the affected crates. Clients sharing an address share its cap. Distributed connection exhaustion and separate-host qualification remain outside this test.
+
 ## Windows updater publisher identity
 
 Windows update preparation now requires a valid embedded Authenticode signature whose certificate SHA-256 matches a build-time Vespera signer fingerprint. Multiple approved fingerprints support planned rotation. Unsigned development builds still discover releases and can be installed manually. Windows fixture tests accepted the pinned Microsoft SDK executable, exercised its staging handoff, and rejected an unrelated trusted GitHub release executable. The existing unsigned `v0.1.2` draft remains pinned to its earlier qualification source. Build the public baseline from the hardened source after signer and distribution review.
