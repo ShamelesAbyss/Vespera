@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Swarm evidence beacons and three-agent layout
+
+Checkpoint `ce79942f18aaf580479d516648427fbe17f75d98` adds distinct runtime and latest-attempt beacons to Swarm. An accepted attempt without a terminal observation stays amber. Frozen replay projects the same beacons from the selected evidence prefix. The live view can animate up to eight short transits for newly observed delegations, message enqueues or receipts. Reduced motion and frozen replay suppress transits.
+
+Windows graphics Clippy passed with warnings denied. The desktop suite passed 38 tests with three opt-in tests skipped, including the Swarm regression that removes the terminal beacon state when replay steps before completion. The native app rendered a 19-event synthetic branch-and-join fixture in two iterations. The linear arrangement obscured some paths. The second capture at `target/swarm-branch-triangle.png` shows three identities, separate relation paths, and distinct completed, failed, accepted and running cues. Visual verification of live transits, interactive focus and replay, close-up capture, performance measurement and the main-menu updater remain open.
+
 ## 2026-11-08 — Swarm Foundry visual foundation
 
 Checkpoint `45adc10de4b9df306c47c33c0e3148ebecd1cddb` replaces Swarm's agent spheres and relation arrows with an architectural gallery, UUID-derived faceted constructs, and separate material conduits for delegation, dependency, message and receipt observations. Static architecture carries no activity semantics. Agent selection and replay still use the existing evidence projection. The standalone journal view supports `--swarm-capture` for native PNG evidence.
