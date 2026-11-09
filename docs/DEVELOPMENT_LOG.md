@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-08 — Rust package integrity verifier
+
+Checkpoint `cef5b192c95595eb527822a5eefe5e8bdc743e70` adds the read-only `verify-package` Cargo example. It validates bounded schema 1 manifests, rejects unsafe and duplicate paths, and checks each listed regular file's size and SHA-256. The tool explicitly does not establish authenticity, inspect unlisted files or grant release approval. Use it without concurrent package writers. The release guide includes the cross-platform command, and Windows and Linux CI now run its regression.
+
+Windows and Ubuntu WSL2 tests passed for intact files, equal-length corruption, size changes, missing files, duplicate entries and unsafe paths. Linux additionally rejected a symbolic-link payload. Strict example Clippy passed on both systems; formatting and diff checks passed. The Windows executable verified all 45 entries in the existing extracted `0.1.2-rc2` candidate without changing that package. Signing, distribution review, independent-host testing and broader graphics qualification remain open.
 ## 2026-11-08 — Integrated source regression pass after desktop broker fixes
 
 Source checkpoint `6e21e3363012d002619dcb36dcf2ef5147f5a86d` passed a fresh Windows `cargo test --workspace --locked --offline`, including the CLI, broker, persistence, scale/replay and SDK documentation suites. Environment-dependent ignored tests retained their existing opt-in status. Strict workspace/all-targets Clippy passed, and workspace Rustdoc passed with `RUSTDOCFLAGS=-D warnings`. Formatting passed. Graphics-feature tests remain separately recorded in the preceding desktop checkpoints; this headless workspace pass does not substitute for rendering or installation tests.
