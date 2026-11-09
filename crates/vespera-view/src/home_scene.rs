@@ -11,6 +11,7 @@ use bevy::ui::prelude::{UiPickingCamera, UiPickingSettings};
 use vespera_world::{World as Simulation, WorldStore};
 
 use crate::atlas::{self, Layer, Layers};
+use crate::desktop_update::Updates;
 use crate::{machine_scene, provider_scene, scene, swarm_scene, world_scene};
 
 const PRESET: &str = include_str!("../../../config/world.example.json");
@@ -32,7 +33,11 @@ enum Action {
     Swarm,
     Workflows,
     Motion,
+    CheckUpdates,
 }
+
+#[derive(Component)]
+struct UpdateStatus;
 
 #[derive(Component)]
 struct WorldStatus;
@@ -158,11 +163,12 @@ pub(super) fn run(data_dir: Option<PathBuf>, reduced_motion: bool) {
         status,
     })
     .insert_resource(motion)
+    .init_resource::<Updates>()
     .add_systems(Startup, setup)
     .add_systems(Update, highlight)
     .add_systems(
         Update,
-        (actions, finish_open, readouts, update_motion).chain(),
+        (actions, finish_open, readouts, update_motion, update_status).chain(),
     );
     app.run();
 }
@@ -187,6 +193,7 @@ fn setup(
     layers: Res<Layers>,
     local: Res<LocalWorld>,
     motion: Res<MotionPreference>,
+    updates: Res<Updates>,
     brand: Res<crate::branding::Brand>,
 ) {
     let camera = commands
@@ -265,7 +272,8 @@ fn setup(
                         button(Action::Providers, "Models & Providers  [F6]"),
                         button(Action::Swarm, "Open Swarm  [F3]"),
                         button(Action::Workflows, "Workflow history  [F7]"),
-                        button(Action::Motion, "Reduced motion  [M]")
+                        button(Action::Motion, "Reduced motion  [M]"),
+                        button(Action::CheckUpdates, "Check for updates")
                     ]
                 ),
                 (
@@ -292,6 +300,11 @@ fn setup(
                     Text::new(motion.label()),
                     TextFont::from_font_size(14.0)
                 ),
+                (
+                    UpdateStatus,
+                    Text::new(&updates.status),
+                    TextFont::from_font_size(14.0)
+                ),
             ],
         ))
         .observe(
@@ -299,7 +312,8 @@ fn setup(
              actions: Query<&Action>,
              mut layers: ResMut<Layers>,
              mut local: ResMut<LocalWorld>,
-             mut motion: ResMut<MotionPreference>| {
+             mut motion: ResMut<MotionPreference>,
+             mut updates: ResMut<Updates>| {
                 if layers.active == Layer::Home && event.button == PointerButton::Primary {
                     match actions.get(event.original_event_target()) {
                         Ok(Action::Machine) => layers.request(Layer::Machine),
@@ -308,11 +322,19 @@ fn setup(
                         Ok(Action::Swarm) => layers.request(Layer::Swarm),
                         Ok(Action::Workflows) => layers.request(Layer::Workflows),
                         Ok(Action::Motion) => motion.requested = true,
+                        Ok(Action::CheckUpdates) => updates.check(),
                         Err(_) => {}
                     }
                 }
             },
         );
+}
+
+fn update_status(mut updates: ResMut<Updates>, mut label: Single<&mut Text, With<UpdateStatus>>) {
+    updates.poll();
+    if label.0 != updates.status {
+        label.0.clone_from(&updates.status);
+    }
 }
 
 fn update_motion(

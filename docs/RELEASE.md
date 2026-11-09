@@ -2,6 +2,15 @@
 
 Vespera has an internal release candidate workflow. Christopher Dodd approved the Proprietary Freeware License v1.0 as the project's software licensing policy. Public distribution still requires independent legal review, third-party rights verification, artifact-specific notices, and Windows signing. Keep the owner-approved license and third-party notices with internal packages. [License](../LICENSE) · [Third-party notices](../THIRD_PARTY_NOTICES.md)
 
+## Desktop update channel
+
+On Windows x64, **Check for updates** on Home checks the official Vespera
+repository for its latest published stable release. A newer eligible release
+must be immutable, use a `vMAJOR.MINOR.PATCH` tag, and provide an uploaded
+`Vespera-Setup-MAJOR.MINOR.PATCH.exe` asset with a GitHub SHA-256 digest. The
+check uses HTTPS, runs off the UI thread, and reports a missing release or
+channel error on Home. Setup download, verification and launch are pending.
+
 ## Build and stage
 
 Use the pinned Rust toolchain, Git and the platform build tools. Start from a commit with a clean tracked worktree. Run the packager from the workspace root. [Build requirements](../README.md#requirements)
