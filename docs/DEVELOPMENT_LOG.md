@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Native Swarm message transit capture
+
+Checkpoint `fdd117d24a8019a3c85950f99ac0f03ff3a680a1` separates the controls and color legend from the provenance inspector. The first Windows capture exposed missing bullet glyphs in the bundled font, so the final panel uses plain separators. The opt-in fixture writer commits a synthetic message on Enter into its own new scratch journal. Standalone Swarm can capture the first observed transit at its midpoint.
+
+At live sequence 20, the native inspector showed the newly committed message. Rewinding to sequence 19 hid it and kept the separate controls visible. A fresh native capture at sequence 21 (`target/swarm-live-transit.png`) visibly shows the amber moving marker midway along the message conduit and the selected recipient's matching observation. This verifies synthetic live ingestion and actual rendering of the animation. Strict graphics Clippy, the native build, and desktop tests passed on Windows (38 passed, three opt-in skips). Concurrent inference validation and the main-menu updater remain open.
+
 ## 2026-11-08 — Interactive Swarm workflow cycling and replay
 
 Checkpoint `71cb4c4acaf4a95cb112eec0daec6f3ddd0c2345` cycles a selected agent's distinct linked workflow roots newest first with G. The earlier live walkthrough showed that choosing the latest root alone could leave the preceding branch-and-join workflow inaccessible from that agent. Windows graphics Clippy, the native build, formatting, and all four Swarm regressions passed.
