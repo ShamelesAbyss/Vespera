@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-09 — Trusted Windows executable handoff
+
+The opt-in updater test verified the SHA-256 and embedded Microsoft Authenticode signature of a staged Windows SDK SignTool executable, then started it through the same locked-file handoff used for Setup. SignTool ran without arguments, printed its expected usage, and exited with code 1. The test removed the staged fixture after exit. The separate signed-fixture lock and cleanup test also passed. Windows graphics validation passed 43 default tests, both signed-fixture tests, formatting, and strict Clippy. This covers Windows process creation from staging. The official channel still has no published release and a signed Vespera upgrade remains unverified.
+
 ## 2026-11-09 — Retry Windows Setup preparation from Home
 
 Home retains the selected immutable release after a failed Setup download or verification, so the operator can retry without rechecking the channel. A regression test exercises the asynchronous Home updater state through a failed request and confirms that the retry control returns. Windows graphics validation passed 43 tests with four opt-in tests skipped. Formatting and strict graphics Clippy passed. The official channel still returned HTTP 404, so this checkpoint does not establish a production upgrade.

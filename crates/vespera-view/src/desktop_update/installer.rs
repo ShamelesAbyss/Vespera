@@ -1,7 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::Duration;
 
 use ring::digest::{Context, SHA256};
@@ -62,12 +62,12 @@ pub(crate) struct VerifiedSetup {
 }
 
 impl VerifiedSetup {
-    pub(crate) fn launch(mut self) -> std::io::Result<()> {
-        Command::new(&self.staging.file)
+    pub(crate) fn launch(mut self) -> std::io::Result<Child> {
+        let child = Command::new(&self.staging.file)
             .current_dir(&self.staging.dir)
             .spawn()?;
         self.staging.handed_off = true;
-        Ok(())
+        Ok(child)
     }
 }
 
@@ -268,6 +268,37 @@ mod tests {
         let source = PathBuf::from(
             std::env::var_os("VESPERA_SIGNED_FIXTURE").expect("set a signed fixture executable"),
         );
+        let verified = verified_fixture(&source);
+        let path = verified.staging.file.clone();
+        assert!(OpenOptions::new().write(true).open(&path).is_err());
+        drop(verified);
+        assert!(!path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Windows SDK SignTool with an embedded Microsoft signature"]
+    fn launches_the_verified_executable_from_staging() {
+        let source = PathBuf::from(
+            std::env::var_os("VESPERA_SIGNTOOL_FIXTURE")
+                .expect("set the Windows SDK SignTool path"),
+        );
+        assert_eq!(
+            source.file_name(),
+            Some(std::ffi::OsStr::new("signtool.exe"))
+        );
+        let verified = verified_fixture(&source);
+        let path = verified.staging.file.clone();
+        let dir = verified.staging.dir.clone();
+        // SignTool with no arguments reports usage and exits without acting on any files.
+        let status = verified.launch().unwrap().wait().unwrap();
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+        assert_eq!(status.code(), Some(1));
+    }
+
+    #[cfg(windows)]
+    fn verified_fixture(source: &Path) -> VerifiedSetup {
         let bytes = fs::read(source).unwrap();
         let hash = ring::digest::digest(&SHA256, &bytes);
         let candidate = Candidate {
@@ -282,10 +313,6 @@ mod tests {
         };
         let stage = Staging::new().unwrap();
         fs::write(&stage.file, &bytes).unwrap();
-        let verified = verify(stage, &candidate).expect("trusted signature and digest must verify");
-        let path = verified.staging.file.clone();
-        assert!(OpenOptions::new().write(true).open(&path).is_err());
-        drop(verified);
-        assert!(!path.exists());
+        verify(stage, &candidate).expect("trusted signature and digest must verify")
     }
 }
