@@ -263,6 +263,29 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "downloads a 67 MB signed GitHub fixture and never runs it"]
+    fn downloads_and_verifies_a_signed_github_release_asset() {
+        // A pinned Git for Windows release exercises the real GitHub CDN redirect
+        // and Windows trust check while the Vespera channel has no signed asset.
+        let candidate = Candidate {
+            version: "2.56.0.4".into(),
+            url: "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe".into(),
+            bytes: 66_850_032,
+            sha256: "4961a4a8cc778d8b6e00a5819e5fe4d078b754555aff7aedc2d77a5d74c2de80".into(),
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let setup = runtime.block_on(prepare(candidate)).unwrap();
+        let path = setup.staging.file.clone();
+        assert!(path.is_file());
+        drop(setup);
+        assert!(!path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "requires a trusted embedded-signed Windows executable fixture"]
     fn verifies_and_locks_a_trusted_signed_fixture_without_launching_it() {
         let source = PathBuf::from(

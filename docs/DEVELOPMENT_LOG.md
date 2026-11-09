@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-09 — GitHub release asset download rehearsal
+
+The Windows updater downloaded a pinned 66,850,032-byte Git for Windows fixture through GitHub's `release-assets.githubusercontent.com` redirect. The production downloader verified its published size, SHA-256, and embedded Authenticode signature. Dropping the verified handle removed the staged file without executing it. The opt-in test passed, as did all 43 default Windows graphics tests, formatting, and strict Clippy. The Git for Windows fixture covers the delivery path only. Vespera still needs its own signed, immutable release for a production upgrade rehearsal. [Fixture release and published SHA-256](https://github.com/git-for-windows/git/releases/tag/v2.56.0.windows.4)
+
 ## 2026-11-09 — Trusted Windows executable handoff
 
 The opt-in updater test verified the SHA-256 and embedded Microsoft Authenticode signature of a staged Windows SDK SignTool executable, then started it through the same locked-file handoff used for Setup. SignTool ran without arguments, printed its expected usage, and exited with code 1. The test removed the staged fixture after exit. The separate signed-fixture lock and cleanup test also passed. Windows graphics validation passed 43 default tests, both signed-fixture tests, formatting, and strict Clippy. This covers Windows process creation from staging. The official channel still has no published release and a signed Vespera upgrade remains unverified.
