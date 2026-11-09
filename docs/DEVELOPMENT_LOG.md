@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-11-08 — Desktop cancellation stays within its observed broker session
+
+Checkpoint `5d96fa229710df66e1e3a41b6723fbff3a7fad50` binds Network confirmation and queued cancellation to the session that authenticated its event stream. The SDK checks the current session before posting and signs that same session. Reconnection cannot silently retarget an old cancellation to a replacement broker. Authorization rejection and invalid event frames stop the desktop subscription. Existing direct CLI and SDK cancellation remain explicit current-broker operations.
+
+A real loopback regression killed the broker, restarted on the same address, and reused the task ID. The stale-session cancellation returned `SessionChanged` and left the replacement task queued; a cancellation bound to the replacement stream succeeded. All 11 broker integration tests passed on Windows and Ubuntu WSL2. Desktop binary tests passed on Windows (33 passed, one hardware-dependent test ignored) and WSL2 (32 passed, one ignored). Strict app, SDK and graphics Clippy, formatting, and diff checks passed. No new graphical walkthrough or physical independent-host test was performed for this checkpoint. Installed application data and existing release artifacts were untouched.
+
+Hosted foundation, Windows native and Linux native jobs have now all passed for the [installer rollback rehearsal](https://github.com/ShamelesAbyss/Vespera/actions/runs/42555858349) and [resumable SDK subscriptions](https://github.com/ShamelesAbyss/Vespera/actions/runs/42556377775). Independent physical-host communication, broader graphics qualification, signing and independent legal/rights review remain release gates. See [protocol](PROTOCOL.md#live-websocket-subscriptions) and [desktop controls](CLI.md).
+
 ## 2026-11-08 — Resumable worker event subscriptions
 
 Checkpoint `94e76f2f7daa08ed1902487a2641b5045951ba36` adds opt-in read-only reconnects to the Rust worker and operator SDK. The subscriber resumes from its acknowledged position with a fresh proof, retains the current event until acknowledgement, and stops on authorization or cursor rejection. It checks feed identity and consecutive sequence numbers. Existing low-level subscriptions and mutation calls retain their behavior.
