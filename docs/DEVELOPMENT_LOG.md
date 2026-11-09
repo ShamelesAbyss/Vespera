@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-11-08 — Verified Windows Setup handoff from Home
+
+Checkpoint `cbd4dd0b568bb83a275562fc756ae83cba2aa96e` adds download and verified installer handoff for the standard Windows x64 installation. Setup downloads to a new temporary directory with bounded HTTPS redirects. The updater checks published size and SHA-256, asks Windows PowerShell's built-in Authenticode verifier for a trusted embedded signature, and holds a read-only sharing lock through launch. The **Close and open Setup** action uses the existing provider-aware window shutdown before spawning interactive Setup. Source and portable builds continue to check availability.
+
+Windows strict graphics Clippy, formatting and the native build passed. The desktop suite reported 41 passed and four opt-in skips. The digest test rejected altered and truncated bytes and foreign redirects. The Windows trust test rejected unsigned content. A separate opt-in test passed on a temporary copy of the trusted embedded-signed Ollama executable and verified write denial and cleanup without launching the fixture. The final native Home window checked the real release channel and reported no newer release. Production upgrade acceptance remains open until an approved signed Setup is available in the official immutable release channel. The fixture verifies staging and signature checks only.
+
 ## 2026-11-08 — Official update discovery on Home
 
 Checkpoint `036d10e3c83257de7b789399b6668020599b9cb1` adds Windows x64 update discovery to Home. The background HTTPS check accepts only newer immutable stable releases with a single official version-matched Setup asset, bounded size and SHA-256 digest. Tests covered numeric version comparison and rejection of untrusted asset locations, mutable releases, duplicate assets and invalid digests. The lockfile adds an existing HTTP dependency to the desktop package without changing resolved versions.
