@@ -570,7 +570,7 @@ fn finish_open(mut commands: Commands, mut layers: ResMut<Layers>, mut world: Re
     world.opening = None;
     match result {
         Ok(view) => {
-            commands.insert_resource(view);
+            commands.queue(move |world: &mut World| world_scene::insert_live(world, view));
             world.connected = true;
             world.status = "Local world connected. Return with F4 or Enter.";
             layers.set_available(Layer::World, true);

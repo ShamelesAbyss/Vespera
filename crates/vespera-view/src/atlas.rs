@@ -52,6 +52,7 @@ pub(super) struct Layers {
     roots: BTreeMap<Layer, Entity>,
     disabled: BTreeSet<Layer>,
     requested: Option<Layer>,
+    availability_changed: bool,
 }
 
 impl Layers {
@@ -63,6 +64,7 @@ impl Layers {
             roots: BTreeMap::new(),
             disabled: BTreeSet::new(),
             requested: None,
+            availability_changed: false,
         }
     }
 
@@ -75,11 +77,11 @@ impl Layers {
     }
 
     pub fn set_available(&mut self, layer: Layer, available: bool) {
-        if available {
-            self.disabled.remove(&layer);
+        self.availability_changed |= if available {
+            self.disabled.remove(&layer)
         } else {
-            self.disabled.insert(layer);
-        }
+            self.disabled.insert(layer)
+        };
     }
 
     pub fn request(&mut self, layer: Layer) {
@@ -221,11 +223,14 @@ fn switch(
     {
         layers.active = layer;
     }
-    if target.is_some_and(|target| {
-        cameras
-            .get(target.0)
-            .is_ok_and(|(_, layer, _)| *layer == layers.active)
-    }) && layers.active == previous
+    let availability_changed = std::mem::take(&mut layers.availability_changed);
+    if !availability_changed
+        && target.is_some_and(|target| {
+            cameras
+                .get(target.0)
+                .is_ok_and(|(_, layer, _)| *layer == layers.active)
+        })
+        && layers.active == previous
     {
         return;
     }

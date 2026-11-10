@@ -1,5 +1,13 @@
 # Development log
 
+## Milestone 13 — Inspect verified experiment trials in 3D
+
+The Experiments panel opens its verified replay snapshot in the existing Living World renderer. The preview has no database command channel and keeps the arm, seed, tick and revision visible. It saves the connected live view and restores that view, including camera and selection, when the preview closes. The desktop uses the same in-process path for the classic and MSIX editions.
+
+Windows rendered the intervention at tick 60 and revision 61 and the baseline at tick 60 and revision 60. The native test returned to the report before opening a live world, then repeated the preview with a connected live world. Its world and retained trial bytes were unchanged by preview controls. The restored live view then committed its next step. The optimized graphics suite passed 58 tests, including a regression that verifies control isolation, selection and camera restoration. [Experiment controls](CLI.md#compare-two-world-policies)
+
+The Store DPI source run passed foundation, Linux native and Windows native. The classic optimized Setup qualification at `399c2d0` passed the complete lifecycle and preserved world, memory and inbox data. [Source run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42723271917) · [Classic installer run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42720608656/job/129513302505)
+
 ## Milestone 14 — Verify Windows CI and the signed development MSIX
 
 GitHub's Windows native job on `399c2d0` failed in the experiment worker test at its eight-second deadline. The fix at `2dc4136` checks for a received result before enforcing a 60-second test-only deadline and reports the pending operation on timeout. The full Windows native, Linux native and foundation run passed. The test still executes both real paired comparisons and verifies all six retained replays. [Failed job](https://github.com/ShamelesAbyss/Vespera/actions/runs/42720608794/job/129513303171) · [Passing run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42722278132)

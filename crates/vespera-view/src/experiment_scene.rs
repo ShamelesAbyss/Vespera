@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use serde_json::Value;
 use vespera_app::world_experiment::{self, Settings};
 use vespera_core::EventId;
-use vespera_world::{Role, WorldStore};
+use vespera_world::{Replay, Role, WorldStore};
 
 use crate::atlas::{self, Layer, Layers};
 use crate::home_scene::{PRESET, button};
@@ -34,6 +34,7 @@ struct TrialReplay {
     shared_stock: u16,
     active_residents: usize,
     advance_event: EventId,
+    saved: Replay,
 }
 
 enum Outcome {
@@ -50,6 +51,7 @@ pub(super) struct ExperimentPanel {
     report: Option<Report>,
     seed_index: usize,
     replay: Option<TrialReplay>,
+    show_3d: bool,
     status: String,
 }
 
@@ -65,6 +67,7 @@ enum Action {
     Browse(Direction),
     NextSeed,
     Replay(Arm),
+    View3d,
 }
 
 #[derive(Clone, Copy)]
@@ -99,10 +102,11 @@ pub(super) fn install(app: &mut App, dir: &Path) {
         report: None,
         seed_index: 0,
         replay: None,
+        show_3d: false,
         status: String::new(),
     })
     .add_systems(Startup, setup)
-    .add_systems(Update, (input, receive, readout).chain());
+    .add_systems(Update, (input, receive, show_3d, readout).chain());
 }
 
 fn setup(mut commands: Commands) {
@@ -135,6 +139,7 @@ fn setup(mut commands: Commands) {
                 button(Action::NextSeed, "Next seed  [5]"),
                 button(Action::Replay(Arm::Baseline), "Replay baseline  [6]"),
                 button(Action::Replay(Arm::Intervention), "Replay intervention  [7]"),
+                button(Action::View3d, "Inspect trial in 3D  [8]"),
              ]),
             (Readout, Text::default(), TextFont::from_font_size(16.0)),
         ])],
@@ -159,6 +164,7 @@ fn input(keys: Res<ButtonInput<KeyCode>>, layers: Res<Layers>, mut panel: ResMut
         (KeyCode::Digit5, Action::NextSeed),
         (KeyCode::Digit6, Action::Replay(Arm::Baseline)),
         (KeyCode::Digit7, Action::Replay(Arm::Intervention)),
+        (KeyCode::Digit8, Action::View3d),
     ]
     .into_iter()
     .find_map(|(key, action)| keys.just_pressed(key).then_some(action));
@@ -178,6 +184,13 @@ fn apply(panel: &mut ExperimentPanel, action: Action) {
         return;
     }
     match action {
+        Action::View3d => {
+            if panel.replay.is_some() {
+                panel.show_3d = true;
+            } else {
+                panel.status = "Replay a trial before opening its 3D view.".into();
+            }
+        }
         Action::Compare(role) => {
             let directory = panel.directory.clone();
             panel.pending = Some(background(move || {
@@ -223,6 +236,20 @@ fn apply(panel: &mut ExperimentPanel, action: Action) {
             }));
             panel.status = "Replaying the retained trial...".into();
         }
+    }
+}
+
+fn show_3d(mut commands: Commands, mut layers: ResMut<Layers>, mut panel: ResMut<ExperimentPanel>) {
+    if std::mem::take(&mut panel.show_3d)
+        && layers.active == Layer::Experiments
+        && let Some(trial) = &panel.replay
+    {
+        crate::world_scene::request_trial(
+            &mut commands,
+            &mut layers,
+            &trial.saved,
+            format!("{} | Seed {}", trial.arm.name(), trial.seed),
+        );
     }
 }
 
@@ -422,6 +449,7 @@ fn replay(directory: &Path, index: usize, arm: Arm, pair: &Value) -> Result<Tria
         shared_stock: world.shared_stock,
         active_residents,
         advance_event: event.event_id,
+        saved,
     })
 }
 

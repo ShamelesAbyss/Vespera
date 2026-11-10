@@ -285,6 +285,14 @@ All four Atlas views opened from the extraction. Intelligence Network matched a 
 
 ### Hosted optimized Windows installer qualification
 
+The optimized installer run for `399c2d015eae6aac506dcd02624a6caba258085c` passed the classic Windows Setup lifecycle after the independent MSIX build was added. The run verified both portable manifests, clean Setup, injected rollback, upgrade, downgrade rejection, removal, and restoration with the world, memory and inbox files preserved. The installed CLI verified memory backup and restore. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42720608656/job/129513302505)
+
+| Hosted classic installer artifact | SHA-256 |
+| --- | --- |
+| Prior MSI | `0fc9864c27a196dacbeb6fa5486638bc962f043497356fb7d8d8882a64dfd49d` |
+| Candidate MSI | `43a817617c25177a1cb91c24b023f80087a65b0db5b056845f8315521d2b48b9` |
+| Candidate Setup | `6ccff4e41629d24d98b976178207eae650d7ee089aa77c561f4271c8e871a2c5` |
+
 The optimized lifecycle for `42288688358e76735f14d0607999b0aa3eb930ff` also passed with the expanded world, memory and inbox fixtures. The upgraded CLI backed up and restored the retained memory record. [Passing hosted run](https://github.com/ShamelesAbyss/Vespera/actions/runs/42691367834/job/129411637693)
 
 | Expanded lifecycle hosted artifact | SHA-256 |

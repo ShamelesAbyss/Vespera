@@ -149,7 +149,7 @@ Record reproducible bounded experiments, not model opinions presented as researc
 
 The [world policy runner](CLI.md#compare-two-world-policies) compares roster policies with paired seed rotations and durable replay. Live experiments compare [fixed local Ollama models](CLI.md#compare-two-live-model-bindings), [owned phrase retrieval](CLI.md#compare-live-retrieval-with-a-fixed-model) and [authored workflow plans](CLI.md#compare-two-live-workflow-plans) on paired private cases. Other provider families remain outside the live experiment runners.
 
-The desktop can browse retained starter-world reports and reconstruct either trial for a selected seed in the Experiments panel. An interactive 3D view of an experiment trial remains open.
+The desktop can browse retained starter-world reports and reconstruct either trial for a selected seed. The same verified revision opens in an interactive, read-only 3D preview.
 
 - Export configuration, seed, model/provider versions, event references, measured latency/resources, and known unknowns.
 - Reproduce a deterministic fixture's metrics; mark live-provider nondeterminism and missing measurements.

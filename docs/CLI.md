@@ -472,8 +472,12 @@ shows target hits and shelter counts by seed. Use **Older report** and
 (**6** or **7**) to reconstruct that trial's committed revision in the panel.
 The readout shows the seed, tick, revision, active residents, shelters, shared
 stock and recorded advance event. A missing or mismatched replay database
-produces an error. Replay leaves the experiment files and the live Living
-World unchanged. Use the CLI for a custom specification or trial settings.
+produces an error. Choose **Inspect trial in 3D** (**8**) after a successful
+replay to open that verified snapshot. Use the Living World camera and
+object inspector on the fixed revision. Press **F8** to return to the
+report, then **F4** to reopen a previously connected live world. Replay
+leaves the experiment files and the live Living World unchanged. Use
+the CLI for a custom specification or trial settings.
 
 ```powershell
 cargo run --locked -p vespera-app -- experiment-world --spec config/world.example.json --evidence-dir target/world-policy-evidence --ticks 60 --seeds 3 --suspend-role forager --target-shelters 5 > target/world-policy-report.json

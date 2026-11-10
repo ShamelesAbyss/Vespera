@@ -65,8 +65,8 @@ enum TimelineRequest {
 
 #[derive(Resource)]
 pub(super) struct View {
-    updates: watch::Receiver<Observation>,
-    commands: SyncSender<Request>,
+    transport: Option<Transport>,
+    trial: Option<String>,
     allow_control: bool,
     history: Option<HistoryPosition>,
     world: World,
@@ -79,6 +79,127 @@ pub(super) struct View {
     clock: Timer,
     entities: BTreeMap<Object, Entity>,
     shelters: Vec<Entity>,
+    content: Option<Entity>,
+    orbit: Option<Orbit>,
+}
+
+struct Transport {
+    updates: watch::Receiver<Observation>,
+    commands: SyncSender<Request>,
+}
+
+impl View {
+    fn new(observation: Observation, transport: Option<Transport>, allow_control: bool) -> Self {
+        Self {
+            transport,
+            trial: None,
+            allow_control,
+            history: observation.history,
+            world: observation.world,
+            status: observation.status,
+            reasoning: observation.reasoning,
+            completed_requests: observation.completed_requests,
+            pending: false,
+            scene_dirty: true,
+            playing: false,
+            clock: Timer::from_seconds(0.5, TimerMode::Repeating),
+            entities: BTreeMap::new(),
+            shelters: Vec::new(),
+            content: None,
+            orbit: None,
+        }
+    }
+}
+
+#[derive(Resource)]
+struct PendingTrial(View);
+
+#[derive(Resource)]
+struct TrialSession {
+    live: Option<View>,
+    selection: Option<Object>,
+}
+
+#[derive(Component)]
+struct MountedWorld;
+
+pub(super) fn request_trial(
+    commands: &mut Commands,
+    layers: &mut Layers,
+    saved: &Replay,
+    label: String,
+) {
+    let mut view = View::new(
+        Observation {
+            world: saved.world.clone(),
+            status: "Verified experiment snapshot",
+            reasoning: None,
+            history: Some(HistoryPosition::from(saved)),
+            completed_requests: 0,
+        },
+        None,
+        false,
+    );
+    view.trial = Some(label);
+    commands.insert_resource(PendingTrial(view));
+    layers.set_available(Layer::World, true);
+    layers.request(Layer::World);
+}
+
+pub(super) fn insert_live(world: &mut bevy::prelude::World, view: View) {
+    if let Some(mut trial) = world.get_resource_mut::<TrialSession>() {
+        trial.live = Some(view);
+    } else {
+        world.insert_resource(view);
+    }
+}
+
+fn clear_scene(world: &mut bevy::prelude::World) {
+    let mounted: Vec<_> = world
+        .query_filtered::<Entity, With<MountedWorld>>()
+        .iter(world)
+        .collect();
+    for entity in mounted {
+        world.despawn(entity);
+    }
+}
+
+fn switch_source(world: &mut bevy::prelude::World) {
+    if world.resource::<Layers>().active != Layer::World {
+        if let Some(session) = world.remove_resource::<TrialSession>() {
+            clear_scene(world);
+            world.remove_resource::<View>();
+            world.resource_mut::<Selected>().0 = session.selection;
+            let available = session.live.is_some();
+            if let Some(live) = session.live {
+                world.insert_resource(live);
+            }
+            world
+                .resource_mut::<Layers>()
+                .set_available(Layer::World, available);
+        }
+        return;
+    }
+    let Some(PendingTrial(preview)) = world.remove_resource::<PendingTrial>() else {
+        return;
+    };
+    let mut live = world.remove_resource::<View>();
+    if let Some(live) = &mut live {
+        let camera = world
+            .query_filtered::<Entity, (With<MountedWorld>, With<Camera>)>()
+            .single(world)
+            .ok();
+        live.orbit = camera.and_then(|camera| world.entity_mut(camera).take::<Orbit>());
+        live.content = None;
+        live.entities.clear();
+        live.shelters.clear();
+        live.playing = false;
+        live.scene_dirty = true;
+    }
+    let selection = world.resource_mut::<Selected>().0.take();
+    clear_scene(world);
+    world.insert_resource(TrialSession { live, selection });
+    world.insert_resource(preview);
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,6 +213,9 @@ enum Object {
 struct Selected(Option<Object>);
 
 pub(super) fn selected_agent(world: &bevy::prelude::World) -> Option<AgentId> {
+    if world.contains_resource::<TrialSession>() {
+        return None;
+    }
     match world.resource::<Selected>().0 {
         Some(Object::Resident(id)) => Some(id),
         _ => None,
@@ -139,31 +263,24 @@ pub(super) fn connect(
         let (world, reasoning) = read_observed(&path)?;
         (world, reasoning, "Database connected", None)
     };
-    let (observations, updates) = watch::channel(Observation {
-        world: world.clone(),
-        status,
-        reasoning,
-        history,
-        completed_requests: 0,
-    });
-    let (commands, actions) = mpsc::sync_channel(1);
-    std::thread::spawn(move || observe(path, observations, actions));
-    Ok(View {
-        updates,
-        commands,
-        allow_control,
-        history,
+    let initial = Observation {
         world,
         status,
         reasoning,
+        history,
         completed_requests: 0,
-        pending: false,
-        scene_dirty: true,
-        playing: false,
-        clock: Timer::from_seconds(0.5, TimerMode::Repeating),
-        entities: BTreeMap::new(),
-        shelters: Vec::new(),
-    })
+    };
+    let (observations, updates) = watch::channel(Observation {
+        world: initial.world.clone(),
+        ..initial
+    });
+    let (commands, actions) = mpsc::sync_channel(1);
+    std::thread::spawn(move || observe(path, observations, actions));
+    Ok(View::new(
+        initial,
+        Some(Transport { updates, commands }),
+        allow_control,
+    ))
 }
 
 pub(super) fn install_scene(app: &mut App, reduced_motion: bool) {
@@ -176,7 +293,25 @@ pub(super) fn install_scene(app: &mut App, reduced_motion: bool) {
         reduced_motion,
     })
     .init_resource::<Selected>()
-    .add_systems(Update, setup.run_if(resource_added::<View>).before(receive))
+    .add_systems(
+        Update,
+        (
+            switch_source.run_if(
+                |layers: Res<Layers>,
+                 pending: Option<Res<PendingTrial>>,
+                 session: Option<Res<TrialSession>>| {
+                    if layers.active == Layer::World {
+                        pending.is_some()
+                    } else {
+                        session.is_some()
+                    }
+                },
+            ),
+            setup.run_if(|view: Option<Res<View>>| view.is_some_and(|view| view.content.is_none())),
+        )
+            .chain()
+            .before(receive),
+    )
     .add_systems(
         Update,
         (
@@ -325,18 +460,28 @@ fn commit(path: &Path, command: Command) -> Result<World, WorldError> {
 
 fn setup(
     mut commands: Commands,
-    view: Res<View>,
+    view: ResMut<View>,
     mut focus: ResMut<Focus>,
     layers: Res<Layers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: (Res<AssetServer>, ResMut<Assets<Image>>),
 ) {
+    let view = view.into_inner();
     let (assets, mut images) = assets;
     let state = view.world.snapshot();
     let landscape = Landscape::new(&state);
     let models = Models::load(&assets);
-    let parent = layers.parent(Layer::World).0;
+    let parent = commands
+        .spawn((
+            MountedWorld,
+            layers.parent(Layer::World),
+            Transform::default(),
+            Visibility::Inherited,
+        ))
+        .id();
+    view.content = Some(parent);
+    focus.point = None;
     world_art::build(
         &mut commands,
         parent,
@@ -355,6 +500,7 @@ fn setup(
     let camera = commands
         .spawn((
             Layer::World,
+            MountedWorld,
             Camera {
                 is_active: layers.active == Layer::World,
                 clear_color: ClearColorConfig::Custom(world_art::SKY),
@@ -362,7 +508,7 @@ fn setup(
             },
             Camera3d::default(),
             Tonemapping::AcesFitted,
-            Orbit::at_home(&focus),
+            view.orbit.take().unwrap_or_else(|| Orbit::at_home(&focus)),
             AmbientLight {
                 color: Color::srgb(0.64, 0.77, 1.0),
                 brightness: 1050.0,
@@ -397,19 +543,25 @@ fn setup(
     ));
     commands.spawn((
         UiTargetCamera(camera),
+        MountedWorld,
         Node {
             position_type: PositionType::Absolute,
             top: px(22),
             left: px(24),
             ..default()
         },
-        Text::new("LIVING WORLD"),
+        Text::new(if view.trial.is_some() {
+            "EXPERIMENT TRIAL"
+        } else {
+            "LIVING WORLD"
+        }),
         TextFont::from_font_size(24.0),
         TextColor(Color::srgb(0.89, 0.96, 1.0)),
         Pickable::IGNORE,
     ));
     commands.spawn((
         UiTargetCamera(camera),
+        MountedWorld,
         Details,
         Node {
             position_type: PositionType::Absolute,
@@ -427,6 +579,7 @@ fn setup(
     ));
     commands.spawn((
         UiTargetCamera(camera),
+        MountedWorld,
         Node {
             position_type: PositionType::Absolute,
             left: px(24),
@@ -448,11 +601,14 @@ fn receive(mut view: ResMut<View>, layers: Res<Layers>) {
     if layers.active != Layer::World && view.playing {
         view.playing = false;
     }
-    if !view.updates.has_changed().unwrap_or(false) {
+    let Some(transport) = &mut view.transport else {
+        return;
+    };
+    if !transport.updates.has_changed().unwrap_or(false) {
         return;
     }
     let (world, status, reasoning, history, completed_requests) = {
-        let update = view.updates.borrow_and_update();
+        let update = transport.updates.borrow_and_update();
         (
             update.world.clone(),
             update.status,
@@ -481,12 +637,16 @@ fn controls(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     selected: Res<Selected>,
-    mut view: ResMut<View>,
+    view: ResMut<View>,
     layers: Res<Layers>,
 ) {
     if view.pending || layers.switched {
         return;
     }
+    let view = view.into_inner();
+    let Some(transport) = &view.transport else {
+        return;
+    };
     let revision = view.world.revision();
     let timeline = if keys.just_pressed(KeyCode::KeyT) {
         Some(if view.history.is_some() {
@@ -505,7 +665,11 @@ fn controls(
         None
     };
     if let Some(timeline) = timeline {
-        if view.commands.try_send(Request::Timeline(timeline)).is_ok() {
+        if transport
+            .commands
+            .try_send(Request::Timeline(timeline))
+            .is_ok()
+        {
             view.playing = false;
             view.pending = true;
         }
@@ -553,7 +717,7 @@ fn controls(
         None
     };
     if let Some(change) = action.or_else(|| step.then_some(WorldChange::Advance { ticks: 1 }))
-        && view
+        && transport
             .commands
             .try_send(Request::Control(Command {
                 revision: snapshot.revision,
@@ -660,7 +824,9 @@ fn sync_scene(
     }
     let changed = std::mem::replace(&mut view.scene_dirty, false);
     let snap = focus.reduced_motion || view.history.is_some();
-    let parent = layers.parent(Layer::World).0;
+    let Some(parent) = view.content else {
+        return;
+    };
     let mut remaining = std::mem::take(&mut view.entities);
     focus.point = None;
     let mut draw = |key: Object, transform: Transform, model: &Handle<WorldAsset>| {
@@ -1009,7 +1175,9 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
         Some(Object::Depot) => format!("DEPOT\nCell {}, {}\n{} stock | {} shelters", state.depot.x, state.depot.z, state.shared_stock, state.shelters),
         None => "Select a resident, resource site, or depot.".into(),
     };
-    let controls = if view.history.is_some() {
+    let controls = if view.trial.is_some() {
+        "F8 - return to experiments"
+    } else if view.history.is_some() {
         "[ / ] - earlier / later\nT - return to live"
     } else if view.allow_control {
         "Space  Step    P  Play/pause\nEnter  Activate/suspend\nArrows or IJKL  Move\nT  Freeze     [  Earlier"
@@ -1024,7 +1192,7 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
     });
     let text = format!(
         "SIMULATED STATE\n{}\nTick {} | Revision {}\n{}\nStock {}  |  Shelters {}{history}\n\n{detail}\n\n{controls}",
-        view.status,
+        view.trial.as_deref().unwrap_or(view.status),
         state.tick,
         state.revision,
         if view.history.is_some() {
@@ -1047,6 +1215,83 @@ fn inspect(view: Res<View>, selected: Res<Selected>, mut panel: Single<&mut Text
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn trial_preview_cannot_send_controls_and_restores_the_live_view() {
+        let path = std::env::temp_dir().join(format!(
+            "vespera-trial-preview-{}.sqlite3",
+            vespera_core::TaskId::new()
+        ));
+        let world = World::new(serde_json::from_str(crate::home_scene::PRESET).unwrap()).unwrap();
+        let resident = world.snapshot().residents[0].id;
+        WorldStore::initialize(&path, &world).unwrap();
+        let live_world = WorldStore::commit(
+            &path,
+            WorldFence::Current,
+            WorldChange::Advance { ticks: 3 },
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let saved = WorldStore::replay(&path, Some(0)).unwrap();
+        let initial = Observation {
+            world: live_world,
+            status: "Database connected",
+            reasoning: None,
+            history: None,
+            completed_requests: 0,
+        };
+        let (_observations, updates) = watch::channel(Observation {
+            world: initial.world.clone(),
+            ..initial
+        });
+        let (commands, _requests) = mpsc::sync_channel(1);
+        let mut app = App::new();
+        app.insert_resource(Layers::new(Layer::Experiments))
+            .insert_resource(Selected(Some(Object::Resident(resident))))
+            .insert_resource(View::new(
+                initial,
+                Some(Transport { updates, commands }),
+                true,
+            ))
+            .init_resource::<Time>()
+            .init_resource::<ButtonInput<KeyCode>>();
+        let scene = app
+            .world_mut()
+            .spawn((MountedWorld, Camera::default(), Orbit::default()))
+            .id();
+        app.world_mut()
+            .run_system_once(move |mut commands: Commands, mut layers: ResMut<Layers>| {
+                request_trial(&mut commands, &mut layers, &saved, "Fixture trial".into());
+            })
+            .unwrap();
+        app.world_mut().resource_mut::<Layers>().active = Layer::World;
+        switch_source(app.world_mut());
+        let preview = app.world().resource::<View>();
+        assert_eq!(preview.world.snapshot().tick, 0);
+        assert!(preview.transport.is_none());
+        assert!(!preview.allow_control);
+        assert!(app.world().get_entity(scene).is_err());
+        assert!(selected_agent(app.world()).is_none());
+
+        for key in [KeyCode::Space, KeyCode::Enter, KeyCode::KeyT, KeyCode::KeyP] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+        }
+        app.world_mut().run_system_once(controls).unwrap();
+        assert!(!app.world().resource::<View>().pending);
+        app.world_mut().resource_mut::<Layers>().active = Layer::Experiments;
+        switch_source(app.world_mut());
+        let live = app.world().resource::<View>();
+        assert_eq!(live.world.snapshot().tick, 3);
+        assert!(live.allow_control);
+        assert!(live.orbit.is_some());
+        assert_eq!(selected_agent(app.world()), Some(resident));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[tokio::test]
     async fn timeline_skips_batch_gaps_and_fences_controls_until_live() {
