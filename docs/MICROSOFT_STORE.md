@@ -33,7 +33,7 @@ Run **Windows Store development package qualification** from GitHub Actions to r
 | --- | --- |
 | Native entry point | Windows launches the optimized `vespera-view.exe` directly. Vespera's MSI and portable launcher keep their existing entry points. |
 | Runtime | Full-trust packaged desktop app at medium integrity, with `runFullTrust` and the Microsoft Visual C++ Desktop framework dependency. The MSIX does not bundle a driver or model server. |
-| Storage | WinRT `ApplicationData.LocalFolder` supplies the package's per-user LocalState. A package upgrade keeps the family and data. Copy backed-up data explicitly when migrating between the classic and Store distributions. Export important data before removing the MSIX. |
+| Storage | WinRT `ApplicationData.LocalFolder` supplies the package's per-user LocalState. A package upgrade keeps the family and data. Back up LocalState before removing the MSIX. [Profile backup and recovery](#back-up-and-restore-the-desktop-profile) |
 | Provider access | The desktop uses its existing loopback provider declarations and credential references. The provider daemon is installed and managed independently. No firewall rule, AppContainer loopback exemption or external executable installation is part of the MSIX. |
 | Child processes | The package starts the viewer directly. The standalone updater and its Setup handoff are excluded from the Store viewer at build time. |
 | Display scaling | The Store executable embeds a PerMonitorV2 DPI declaration. The packager checks the embedded Win32 manifest before creating the MSIX. |
@@ -76,6 +76,42 @@ The original clean-source unsigned packages were built at `399c2d015eae6aac506dc
 | Development MSIX `1.0.0.0` | `e023014df87ae78703928cac8cc13acef07955e389c2768c6c431165d93f183d` |
 | Development MSIX `1.0.1.0` | `b66d5bfabfb3105125ccb11956e26af0d4023483264f72dfa3ff2356c46b8d0f` |
 | Development review ZIP | `0702bc40f95a4eac46c29cd61009ffbba863798de6a58ee96a0c4e321c55d5b1` |
+
+## Back up and restore the desktop profile
+
+Work from the same Windows user account that runs Vespera. Close the viewer and stop any CLI commands writing to its files. Make a separate copy before uninstalling, resetting, or switching distributions. Keep the backup in a private location because it can include prompts, messages, results, memory and experiment records.
+
+The following PowerShell example resolves the installed development package family. For a Store install, set `$packageName` to the verified **Package/Identity/Name**. For a classic install with the default profile, the data directory is `$env:LOCALAPPDATA\Vespera`. Use the actual directory when the viewer was launched with `--desktop-data`.
+
+```powershell
+$packageName = 'Vespera.NexusStudio.Development'
+$package = @(Get-AppxPackage -Name $packageName)
+if ($package.Count -ne 1) { throw 'Expected one installed Vespera package.' }
+$profile = Join-Path $env:LOCALAPPDATA "Packages/$($package[0].PackageFamilyName)/LocalState"
+$backup = Join-Path $env:USERPROFILE "Vespera-profile-$(Get-Date -Format yyyyMMdd-HHmmss)"
+if (!(Test-Path -LiteralPath $profile -PathType Container) -or
+    (Test-Path -LiteralPath $backup)) { throw 'Check the profile and backup paths.' }
+robocopy $profile $backup /E /XJ /COPY:DAT /R:0 /W:0
+if ($LASTEXITCODE -ge 8) { throw 'Vespera profile backup failed.' }
+```
+
+Keep the complete backup together, including SQLite sidecar files when present. Before removing the app, verify that the backup contains the files you rely on. After reinstalling, resolve the destination again using the installed package. Restore to a fresh, empty profile while the viewer is closed. If the destination already has data, back it up separately and use a fresh profile.
+
+```powershell
+$package = @(Get-AppxPackage -Name $packageName)
+if ($package.Count -ne 1) { throw 'Expected one installed Vespera package.' }
+$profile = Join-Path $env:LOCALAPPDATA "Packages/$($package[0].PackageFamilyName)/LocalState"
+if (!(Test-Path -LiteralPath $backup -PathType Container)) { throw 'Backup is missing.' }
+if ((Test-Path -LiteralPath $profile) -and (Get-ChildItem -LiteralPath $profile -Force)) {
+    throw 'The restore destination must be empty.'
+}
+robocopy $backup $profile /E /XJ /COPY:DAT /R:0 /W:0
+if ($LASTEXITCODE -ge 8) { throw 'Vespera profile restore failed.' }
+```
+
+Start Vespera and check the saved world, experiments and operator records before relying on the restored profile. The backup carries credential references. Windows Credential Manager entries, environment secrets and provider installations are managed separately. Restore using a compatible application version and keep the original backup until you finish verification. [Classic upgrade and recovery](RELEASE.md#upgrade-and-recovery) · [Robocopy reference](https://learn.microsoft.com/windows-server/administration/windows-commands/robocopy)
+
+The signed development MSIX rehearsal at `0767da1` verified that uninstall removed the test profile, then reinstalled the same version and restored eight files from a separate backup. The viewer reopened the live world at revision 1 and the retained experiment at tick 60. All eight files, including the six trial databases, matched their pre-uninstall SHA-256 hashes after reopening. This rehearsal covered world and experiment data. Earlier upgrade tests cover task, workflow and memory data.
 
 ## Draft Store listing
 

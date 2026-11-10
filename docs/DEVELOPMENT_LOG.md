@@ -1,5 +1,9 @@
 # Development log
 
+## Milestone 14 — Recover a Store profile after package removal
+
+The signed development MSIX at `0767da1173e0c3f928dae5b03efe98282d1187b9` committed world revision 1 and saved a paired comparison. After closing the viewer, the recovery test copied LocalState to a private scratch directory and verified eight file hashes. Uninstall cleared the test LocalState. Reinstalling the same version and restoring the copy reopened revision 1 and the baseline trial at tick 60 in the native viewer. All eight hashes matched after reopening. The test package and temporary certificate were removed. [Store backup and restore](MICROSOFT_STORE.md#back-up-and-restore-the-desktop-profile)
+
 ## Milestones 12 and 14 — Rehearse desktop holds and automate MSIX qualification
 
 The optimized Windows portable viewer from `0767da1173e0c3f928dae5b03efe98282d1187b9` suspended one selected agent while leaving the second agent clear. After reopening the isolated profile, Task history showed the retained hold. A new task attempt displayed the suspension error and created no task record. Resume cleared the selected hold and refreshed the open history. Windows native, Linux native and foundation CI passed at that source revision. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42725426960)
