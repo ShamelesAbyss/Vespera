@@ -1,5 +1,11 @@
 # Development log
 
+## Milestone 14 — Qualify the packaged 3D experiment preview
+
+The unsigned Windows x64 candidate from `0767da1173e0c3f928dae5b03efe98282d1187b9` passed portable and installer payload verification. The extracted viewer rendered both experiment arms and stepped the live world after returning. The same source produced two development MSIX versions. Windows opened the installed preview, selected the depot and panned, then reopened the retained baseline after upgrade. The committed live world and all six trial databases were byte-identical. The signed development MSIX file passed 24 of 24 local Windows App Certification Kit checks. The package and temporary certificate were removed.
+
+The internal ZIP verifies 828 entries and contains both unsigned MSIX versions, native captures, the validated CycloneDX SBOM, collected notices and the certification summary. OSV returned zero matches for 429 exact Cargo versions. The Store identity, independent distribution review and production qualification remain open. [Classic package hashes and GitHub runs](RELEASE.md#windows-x64-candidate-with-3d-experiment-previews) · [MSIX evidence and screenshot](MICROSOFT_STORE.md#development-installation)
+
 ## Milestone 13 — Inspect verified experiment trials in 3D
 
 The Experiments panel opens its verified replay snapshot in the existing Living World renderer. The preview has no database command channel and keeps the arm, seed, tick and revision visible. It saves the connected live view and restores that view, including camera and selection, when the preview closes. The desktop uses the same in-process path for the classic and MSIX editions.

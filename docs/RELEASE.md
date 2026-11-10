@@ -190,6 +190,16 @@ For a rollback to a build that predates `fixed_with_capabilities`, use a pre-upg
 
 ## Release evidence
 
+### Windows x64 candidate with 3D experiment previews
+
+The optimized unsigned `0.1.2` candidate at `0767da1173e0c3f928dae5b03efe98282d1187b9` passed verification of 49 portable manifest files, 13 extracted MSI payload files and the exact MSI embedded in Setup. The extracted portable viewer opened both verified experiment arms in 3D. It returned to the live view and committed its next revision. Inspection preserved the tested live and trial databases. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42725426960) · [Hosted installer rehearsal](https://github.com/ShamelesAbyss/Vespera/actions/runs/42725615493) · [MSIX evidence](MICROSOFT_STORE.md#development-installation)
+
+| Internal artifact | SHA-256 |
+| --- | --- |
+| Portable ZIP | `0cc6ec514525acabaf2ed75447eaecf70f2fca6e04fcae65d6160943f61da66e` |
+| Windows MSI | `541b386420450b20fa9c6a7c6b062596e8e149e1c438a9a22a9b8984c52f25e1` |
+| Windows Setup | `9d9080bdd3a7028ef0c9f97e956b972e89f3f1fcd840872270eb213c824e917a` |
+
 ### Windows x64 candidate with desktop capability requirements
 
 The optimized unsigned `0.1.2` candidate at `d7de4c91fceee41dd7352a52551ed75de792e244` verified 49 portable manifest files, 13 MSI payload files, and the exact MSI embedded in Setup. The portable launcher opened Home from an unrelated working directory and the window closed with exit code 0. The CLI accepted a declared capability requirement and rejected a missing capability. Foreground operation of the new editor and live inference for the new policy remain open. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42689947277) · [Exact-source installer rehearsal](https://github.com/ShamelesAbyss/Vespera/actions/runs/42690783862)

@@ -47,6 +47,14 @@ Install using `Add-AppxPackage`, open **Vespera Nexus Studio (Development)** fro
 
 The Windows development rehearsal built and unpacked both versions with SDK 10.0.26100.0. SignTool signed isolated copies with a temporary non-exportable certificate. Windows installed both versions and started the branded native viewer from the package identity. A fresh profile committed a Living World tick, discovered an Ollama-protocol loopback fixture, registered two agents, and completed a two-agent workflow. It recalled the first agent's owned response in a later provider request. Swarm showed two agents and three observed links from the committed journal. The upgrade reopened world revision 1 and preserved the world, task, workflow and memory database bytes. The development package and certificate were removed after each run.
 
+At `0767da1173e0c3f928dae5b03efe98282d1187b9`, the installed viewer opened the intervention replay at tick 60, selected the depot and panned the camera. After upgrading to `1.0.1.0`, it reopened the saved baseline replay and the committed live world. The world and all six retained trial databases matched their pre-upgrade SHA-256 hashes. The Windows App Certification Kit passed all 24 checks on the signed development MSIX file, with no warnings and no partial run. The test package and temporary certificate were removed. The refreshed Windows x64 Store SBOM passed CycloneDX 1.6 schema validation. OSV returned zero matches for the 429 exact Cargo versions queried. The attribution and independent distribution review remain open.
+
+| 3D preview unsigned development package | SHA-256 |
+| --- | --- |
+| MSIX `1.0.0.0` | `ce9ad332837ba797baa1dce6957862c2db2e8eb830fce970c705a852f42c08c6` |
+| MSIX `1.0.1.0` | `8afe0a79fc1a91d694659dae35c024a73c545fc9108acbf7f41a9b97a222ead4` |
+| Internal development review ZIP | `6c610b8907a6f8f8bfea8db2c5c96fda51c5fb3f16caf8c326ecbd185447d3ab` |
+
 Two additional installed rehearsals exercised real inference and workflow recovery. Ollama 0.40.15 on the Windows test host ran `hermes3:8b` through the packaged viewer. The completed task reported 103 output tokens and the provider confirmed the model was absent after cleanup. A controlled loopback fixture then stopped the viewer after its first workflow attempt committed. Restart continued the same workflow with the original committed attempt and one new provider request. Upgrade again preserved the world, tasks, workflow and memory bytes.
 
 The first Windows App Certification Kit report returned **Warning**. The DPI check could not verify the viewer and the optional blocked-executables check flagged its process-launch import. The next build embeds PerMonitorV2 and excludes the standalone updater. Windows Manifest Tool extracted the declaration from the installed executable and the native window reported PerMonitorV2. PE import inspection confirmed that `CreateProcessW` was absent. The kit's installed-package run cleared the blocked-executables check and still reported a DPI warning. A second run against the signed MSIX file reported **Pass**, with 24 passed tests and no warnings, including DPI awareness. The same clean build ran `hermes3:8b` through Ollama 0.40.15 and retained its 111-token task result and world through upgrade. The package family used for these tests is the development identity. Microsoft Store certification and the actual Partner Center identity remain open.
@@ -91,6 +99,10 @@ Windows x64 and a working graphics driver for Bevy/wgpu rendering. Model inferen
 Use the generated listing tile and native package captures. The 1464×841 Living World image below comes from the installed development MSIX after committing the first simulation tick. Caption it “Living World shows a committed simulation revision and interactive resident and resource inspection.” Capture remaining views at 1366×768 or larger in PNG. Label fixture activity where shown and exclude account information, filesystem paths, private prompts and credentials. [Microsoft screenshot requirements](https://learn.microsoft.com/windows/apps/publish/publish-your-app/msix/screenshots-and-images)
 
 ![Living World running in the installed Vespera Nexus Studio development package](../assets/screenshots/store-living-world.png)
+
+The installed development package also captured the depot inspector during a verified experiment replay. The overlay identifies the intervention, seed, tick and revision and labels the state as read-only.
+
+![The depot selected in a read-only 3D trial from the installed development MSIX](../assets/screenshots/store-experiment-preview.png)
 
 **Privacy and permissions review**
 
