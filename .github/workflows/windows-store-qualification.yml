@@ -1,0 +1,42 @@
+name: Windows Store development package qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-store-qualification.yml'
+      - 'scripts/package-windows-store.ps1'
+      - 'packaging/windows/store/**'
+      - 'crates/vespera-view/windows-store.manifest'
+      - 'crates/vespera-view/build.rs'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  store-development-package:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.1
+      - name: Build and verify the unsigned development MSIX
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'vespera-store-development'
+          ./scripts/package-windows-store.ps1 -Development -Version 1.0.0.0 -Output $output
+          $record = Get-Content -LiteralPath (Join-Path $output 'build-evidence.json') -Raw | ConvertFrom-Json
+          $package = Join-Path $output 'Vespera-Nexus-Studio-1.0.0.0-x64-DEVELOPMENT-UNSIGNED.msix'
+          if (!$record.cleanSource -or $record.sourceRevision -cne $env:GITHUB_SHA -or
+              $record.mode -cne 'DEVELOPMENT-UNSIGNED' -or
+              $record.packageName -cne 'Vespera.NexusStudio.Development' -or
+              $record.packageSha256 -ne (Get-FileHash -LiteralPath $package).Hash) {
+              throw 'The development MSIX does not match its source or build evidence.'
+          }
+          Get-Content -LiteralPath (Join-Path $output 'build-evidence.json') -Raw

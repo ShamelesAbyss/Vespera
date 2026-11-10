@@ -1,5 +1,11 @@
 # Development log
 
+## Milestones 12 and 14 — Rehearse desktop holds and automate MSIX qualification
+
+The optimized Windows portable viewer from `0767da1173e0c3f928dae5b03efe98282d1187b9` suspended one selected agent while leaving the second agent clear. After reopening the isolated profile, Task history showed the retained hold. A new task attempt displayed the suspension error and created no task record. Resume cleared the selected hold and refreshed the open history. Windows native, Linux native and foundation CI passed at that source revision. [Source CI](https://github.com/ShamelesAbyss/Vespera/actions/runs/42725426960)
+
+Added a Windows Server 2025 workflow that builds an unsigned development MSIX from the locked source and checks its clean source revision, development identity and package hash. The workflow keeps the MSIX on the runner. Local checks accepted exact build evidence and rejected a mismatched revision. Installed GUI and certification checks remain separate. [Store qualification workflow](https://github.com/ShamelesAbyss/Vespera/actions/workflows/windows-store-qualification.yml)
+
 ## Milestone 14 — Qualify the packaged 3D experiment preview
 
 The unsigned Windows x64 candidate from `0767da1173e0c3f928dae5b03efe98282d1187b9` passed portable and installer payload verification. The extracted viewer rendered both experiment arms and stepped the live world after returning. The same source produced two development MSIX versions. Windows opened the installed preview, selected the depot and panned, then reopened the retained baseline after upgrade. The committed live world and all six trial databases were byte-identical. The signed development MSIX file passed 24 of 24 local Windows App Certification Kit checks. The package and temporary certificate were removed.

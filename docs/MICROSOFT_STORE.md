@@ -27,6 +27,8 @@ Use PowerShell 7 on a Windows x64 host with the pinned Rust toolchain, MSVC buil
 
 Each output directory must be new. Development uses a separate package family and a visible **Development** label in the Start Menu. The Store path requires a clean checkout and the actual identity file. Both build the optimized locked Rust/Bevy desktop, stage an explicit payload, validate and unpack it with MakeAppx, compare staged and unpacked hashes, and emit the unsigned MSIX, a 300×300 Store listing tile and build evidence. The Store package version is independent of the Rust application version. Start at `1.0.0.0` only if Partner Center confirms it is available. Increase the version for upgrades and leave the fourth component at zero. [Microsoft package version rules](https://learn.microsoft.com/windows/apps/publish/publish-your-app/app-package-requirements?pivots=store-installer-msix)
 
+Run **Windows Store development package qualification** from GitHub Actions to repeat optimized packaging and payload verification on Windows Server 2025. Changes to the Store packaging inputs also trigger the workflow on `main`. The runner logs the source revision and package hash and keeps the unsigned MSIX inside the runner. Use the local development installation below for graphical, upgrade and certification checks. [Store qualification workflow](https://github.com/ShamelesAbyss/Vespera/actions/workflows/windows-store-qualification.yml)
+
 | Package decision | Behavior |
 | --- | --- |
 | Native entry point | Windows launches the optimized `vespera-view.exe` directly. Vespera's MSI and portable launcher keep their existing entry points. |
